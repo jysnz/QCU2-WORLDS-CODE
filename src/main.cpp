@@ -56,11 +56,11 @@ float kI = 0.0;
 float kD = 0.5;
 
 // --- Motors ---
-pros::MotorGroup left_motor_group({-1, -2, -3, -4}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({11, 12, 13, 14}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-11, -12, -13, -14}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({1, 2, 3, 4}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
-pros::Motor intake(19, pros::MotorGears::green);
+pros::Motor intake(16, pros::MotorGears::green);
 pros::Motor matchloader(5, pros::MotorGears::red);
 pros::Motor discore(15, pros::MotorGears::green);
 
@@ -79,7 +79,7 @@ lemlib::Drivetrain drivetrain(&left_motor_group,          // left motor group
 );
 
 // --- Odometry ---
-pros::Imu imu(17);
+pros::Imu imu(10);
 pros::Rotation horizontal_encoder(20);
 pros::adi::Encoder vertical_encoder('C', 'D', true);
 
@@ -89,16 +89,16 @@ lemlib::TrackingWheel horizontal_tracking_wheel(&horizontal_encoder,
 lemlib::TrackingWheel vertical_tracking_wheel(&vertical_encoder,
                                               lemlib::Omniwheel::NEW_325, -2.5);
 
-lemlib::OdomSensors sensors(&vertical_tracking_wheel, // vertical wheel
+lemlib::OdomSensors sensors(nullptr, // vertical wheel
                             nullptr,                  // second vertical (none)
-                            &horizontal_tracking_wheel, // horizontal wheel
+                            nullptr, // horizontal wheel
                             nullptr, // second horizontal (none)
                             &imu     // imu
 );
 
 // Lateral & Angular PID
-lemlib::ControllerSettings lateral_controller(10, 0, 3, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(2, 0, 10, 0, 0, 0, 0, 0, 0);
+lemlib::ControllerSettings lateral_controller(10, 0, 25, 3, 1, 100, 3, 500, 20);
+lemlib::ControllerSettings angular_controller(1.8, 0, 10, 0, 0, 0, 0, 0, 0);
 
 // Expo drive curves
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
@@ -416,9 +416,11 @@ void drive_for_inches(double maxSpeed, double inches) {
 
   left_motor_group.tare_position();
   right_motor_group.tare_position();
+  imu.tare_rotation();
 
   const double accelRate = 2.0;
   const double decelStart = 0.6;
+  const double kP = 1.5;
 
   double currentSpeed = 0;
   double decelPoint = targetDegrees * decelStart;
@@ -428,43 +430,44 @@ void drive_for_inches(double maxSpeed, double inches) {
     double rightPos = std::abs(right_motor_group.get_position());
     double avgPos = (leftPos + rightPos) / 2.0;
 
-    // ACCELERATION
+    double heading = imu.get_rotation();
+    double correction = heading * kP;
+
     if (avgPos < decelPoint) {
       currentSpeed += accelRate;
       if (currentSpeed > maxSpeed)
         currentSpeed = maxSpeed;
-    }
-    // DECELERATION
-    else {
+    } else {
       double remaining = targetDegrees - avgPos;
       currentSpeed = maxSpeed * (remaining / (targetDegrees - decelPoint));
       if (currentSpeed < 10)
-        currentSpeed = 10; // lower min for smooth stop
+        currentSpeed = 10;
     }
 
-    // END CONDITION
     if (avgPos >= targetDegrees - 2)
       break;
 
-    left_motor_group.move_velocity(currentSpeed);
-    right_motor_group.move_velocity(currentSpeed);
+    left_motor_group.move_velocity(currentSpeed - correction);
+    right_motor_group.move_velocity(currentSpeed + correction);
 
     pros::delay(10);
   }
 
   // ----- SMOOTH FINAL STOP -----
-  double lastSpeed =
-      std::max(currentSpeed, 10.0); // start ramp-down from current speed
+  double lastSpeed = std::max(currentSpeed, 10.0);
   while (lastSpeed > 0) {
-    left_motor_group.move_velocity(lastSpeed);
-    right_motor_group.move_velocity(lastSpeed);
-    lastSpeed -= 2; // small decrement for smooth stop
+    double heading = imu.get_rotation();
+    double correction = heading * kP;
+
+    left_motor_group.move_velocity(lastSpeed - correction);
+    right_motor_group.move_velocity(lastSpeed + correction);
+
+    lastSpeed -= 2;
     if (lastSpeed < 0)
       lastSpeed = 0;
     pros::delay(10);
   }
 
-  // Hard stop
   left_motor_group.move_velocity(0);
   right_motor_group.move_velocity(0);
 }
@@ -884,12 +887,11 @@ void catapultShootForAuto(double SPEED) {
 
 void catapultControl() {
   const int MAX_SPEED = 127;
+  const int SLOW_SPEED = 50;  // Adjust this for how slow you want
   static bool controlsReversed = false;
+  static bool wasDownHeld = false;  // Track previous frame state
+  
   while (true) {
-    // pros::lcd::print(0, "X: %f", robot_x);
-    // pros::lcd::print(1, "Y: %f", robot_y);
-    // pros::lcd::print(2, "Theta: %f", robot_theta * (180/M_PI)); // Convert to
-    // degrees
     pros::delay(20);
 
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
@@ -903,20 +905,25 @@ void catapultControl() {
     bool matchLoadUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
     bool matchLoadDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
 
-    bool reverseControlTap =
-        controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN);
+    bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+    bool downTapped = downHeld && !wasDownHeld;  // Just pressed this frame
+    wasDownHeld = downHeld;  // Store for next frame
 
     int move = -controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
 
-    if (reverseControlTap)
+    // Toggle controls only on TAP
+    if (downTapped)
       controlsReversed = !controlsReversed;
 
     if (controlsReversed)
       move = -move;
 
-    int leftMotorSpeed = std::clamp(move + turn, -MAX_SPEED, MAX_SPEED);
-    int rightMotorSpeed = std::clamp(move - turn, -MAX_SPEED, MAX_SPEED);
+    // Apply slow speed if button is HELD
+    int maxSpeed = downHeld ? SLOW_SPEED : MAX_SPEED;
+
+    int leftMotorSpeed = std::clamp(move + turn, -maxSpeed, maxSpeed);
+    int rightMotorSpeed = std::clamp(move - turn, -maxSpeed, maxSpeed);
 
     left_motor_group.move(leftMotorSpeed);
     right_motor_group.move(rightMotorSpeed);
@@ -939,9 +946,9 @@ void catapultControl() {
     }
 
     if (intakeForward && !intakeReverse)
-      intake.move_velocity(200);
+      intake.move_velocity(600);
     else if (intakeReverse && !intakeForward)
-      intake.move_velocity(-200);
+      intake.move_velocity(-600);
     if (intakePause)
       intake.move_velocity(0);
 
@@ -1459,9 +1466,10 @@ void skillsV2() {
 
 void skills() {
   // Intake two balls
+  chassis.moveToPoint(0, 20, 5000);
   intake.move_velocity(-200);
   discore.move_absolute(850, 200);
-  drive_for_inches(80, 31.5);
+  drive_for_inches(80, 7);
 
   pros::delay(2000);
 
@@ -1661,9 +1669,10 @@ void skills() {
 }
 
 void test() {
-  left_motor_group.move(80);
-  pros::delay(1800);
-  left_motor_group.move(0);
+  chassis.moveToPoint(0, 38, 5000);
+  chassis.turnToHeading(90, 1000);
+  chassis.moveToPoint(5, 38, 2000);
+  chassis.moveToPoint(-15, 38, 2000, {.forwards = false}, true);
 }
 
 void park() {
@@ -1684,7 +1693,7 @@ void test1() {
   right_motor_group.move_velocity(0);
 }
 // --- Autonomous ---
-void autonomous() { test1(); }
+void autonomous() { test(); }
 
 // // Forward fire
 // catapult_start(200, false);
