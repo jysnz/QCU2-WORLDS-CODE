@@ -8,14 +8,16 @@ void test() {
   chassis.moveToPoint(0, 37, 3000);
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(90, 3000);
+  chassis.turnToHeading(90, 1000);
   chassis.waitUntilDone();
 
   chassis.setPose(0, 0, 0);
 
   chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 60});
   chassis.waitUntilDone();
-  chassis.moveToPoint(0, 15, 3000, {.forwards = false});
+  chassis.moveToPoint(0, -178, 3000, {.forwards = false});
+  chassis.waitUntilDone();
+  chassis.arcade(50, 10);
 }
 
 void path() {
