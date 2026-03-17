@@ -124,18 +124,19 @@ void drive_for_inches(double maxSpeed, double inches) {
         if (avgPos >= targetDegrees - 2 || pros::millis() - startTime > timeout)
             break;
 
-        left_motor_group.move_velocity((currentSpeed - correction) * direction);
-        right_motor_group.move_velocity((currentSpeed + correction) * direction);
+        left_motor_group.move_velocity((currentSpeed + correction) * direction);
+        right_motor_group.move_velocity((currentSpeed - correction) * direction);
         pros::delay(10);
     }
 
     // Smooth stop
     double lastSpeed = std::max(currentSpeed, 10.0);
+    
     while (lastSpeed > 0) {
         double heading    = imu.get_rotation();
         double correction = heading * kP;
-        left_motor_group.move_velocity((lastSpeed - correction) * direction);
-        right_motor_group.move_velocity((lastSpeed + correction) * direction);
+        left_motor_group.move_velocity((lastSpeed + correction) * direction);  // swap
+        right_motor_group.move_velocity((lastSpeed - correction) * direction); // swap
         lastSpeed -= 2;
         pros::delay(10);
     }

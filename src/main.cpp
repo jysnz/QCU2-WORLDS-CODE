@@ -19,7 +19,7 @@ pros::Motor matchloader (5,  pros::MotorGears::red);
 pros::Motor discore     (15, pros::MotorGears::green);
 pros::Motor arm         (6,  pros::MotorGears::red);
 
-pros::Imu            imu               (10);
+pros::Imu            imu               (9);
 pros::Rotation       horizontal_encoder(20);
 pros::adi::Encoder   vertical_encoder  ('C', 'D', true);
 pros::adi::Ultrasonic ultrasonic        ('A', 'B');
@@ -60,8 +60,6 @@ void initialize() {
     catapult_arm.tare_position();
     matchloader.tare_position();
     discore.tare_position();
-    left_motor_group.tare_position();
-    right_motor_group.tare_position();
 
     pros::lcd::initialize();
     chassis.calibrate();
@@ -75,6 +73,51 @@ void initialize() {
         const int BG_COLOR = 0x202020;
 
         while (true) {
+            // ── Left panel: IMU + Pose ────────────────────────────────────────
+            pros::screen::set_pen(BG_COLOR);
+            pros::screen::fill_rect(0, 0, 239, 240);
+
+            // IMU calibration status
+            bool imu_ok = !imu.is_calibrating() &&
+                          imu.get_heading() != PROS_ERR_F;
+
+            pros::screen::set_pen(imu_ok ? 0x00FF00 : 0xFF4444);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 10,
+                                "IMU: %s", imu_ok ? "OK" : "NOT READY");
+
+            // Raw IMU values
+            double raw_heading  = imu.get_heading();   // 0-360
+            double raw_rotation = imu.get_rotation();  // unbounded
+            double pitch        = imu.get_pitch();
+            double roll         = imu.get_roll();
+
+            pros::screen::set_pen(0xFFFFFF);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8,  40,
+                                "HDG : %6.1f deg", raw_heading);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8,  65,
+                                "ROT : %6.1f deg", raw_rotation);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8,  90,
+                                "PITCH: %5.1f deg", pitch);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 115,
+                                "ROLL : %5.1f deg", roll);
+
+            // Divider
+            pros::screen::set_pen(0x555555);
+            pros::screen::draw_line(8, 140, 230, 140);
+
+            // LemLib chassis pose (X, Y, theta)
+            lemlib::Pose pose = chassis.getPose();
+            pros::screen::set_pen(0x00CCFF);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 150, "-- POSE --");
+            pros::screen::set_pen(0xFFFFFF);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 175,
+                                "X: %6.2f in", pose.x);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 200,
+                                "Y: %6.2f in", pose.y);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 8, 220,
+                                "TH: %5.1f deg", pose.theta);
+
+            // ── Right panel background ────────────────────────────────────────
             pros::screen::set_pen(BG_COLOR);
             pros::screen::fill_rect(P_X, 0, 480, 240);
 
