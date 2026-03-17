@@ -29,7 +29,28 @@ void path() {
   chassis.moveToPoint(-31.086, -47.418, 90);
 }
 
+void parkingtest(){
+    chassis.moveToPoint(0, 100, 3000, {.maxSpeed = 400});
+    chassis.waitUntilDone();
+
+    chassis.turnToHeading(45, 1000);
+    chassis.waitUntilDone();
+
+    chassis.setPose(0,0,0);
+
+    chassis.moveToPoint(0, 10, 3000);
+    chassis.waitUntilDone();
+
+    chassis.turnToHeading(120, 1000);
+    chassis.waitUntilDone();
+
+    chassis.setPose(0,0,0);
+
+    chassis.moveToPoint(0, -13, 3000);
+    chassis.waitUntilDone();
+}
+
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { test(); }
+void runAutonomous() { parkingtest(); }
