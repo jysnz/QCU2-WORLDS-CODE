@@ -363,10 +363,21 @@ void catapultShootForAuto(double SPEED) {
 void catapultControl() {
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
+  const double IMU_CORRECTION_KP =
+      0.6; // Proportional gain for heading correction
+  const int IMU_CORRECTION_MIN_MOVE = 15; // Min move input to enable correction
+  const int IMU_CORRECTION_MAX_TURN =
+      5; // Max turn input to keep correction active
+  const double IMU_CORRECTION_THRESHOLD =
+      2.0; // Degrees of drift to trigger correction
+
   static bool controlsReversed = false;
   static bool wasDownHeld = false;
   static bool armRaised = false;
   static bool wasArmHeld = false;
+  static double targetHeading = 0.0; // Target heading for straight driving
+  static bool headingLocked =
+      false; // Whether we're correcting for a target heading
 
   while (true) {
     pros::delay(20);
@@ -393,6 +404,39 @@ void catapultControl() {
       controlsReversed = !controlsReversed;
     if (controlsReversed)
       move = -move;
+
+    // ─── IMU Heading Correction for Straight Driving ──────────────────────
+    // Lock onto heading when driving straight with minimal turn input
+    if (std::abs(move) > IMU_CORRECTION_MIN_MOVE &&
+        std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
+      if (!headingLocked) {
+        // Lock onto current heading
+        targetHeading = imu.get_heading();
+        headingLocked = true;
+      }
+
+      // Calculate heading error
+      double currentHeading = imu.get_heading();
+      double headingError = targetHeading - currentHeading;
+
+      // Normalize error to [-180, 180]
+      while (headingError > 180.0)
+        headingError -= 360.0;
+      while (headingError < -180.0)
+        headingError += 360.0;
+
+      // Apply correction only if drift is significant
+      if (std::abs(headingError) > IMU_CORRECTION_THRESHOLD) {
+        int correction = (int)(headingError * IMU_CORRECTION_KP);
+        correction =
+            std::clamp(correction, -20, 20); // Limit correction magnitude
+        turn += correction;
+      }
+    } else {
+      // Release heading lock when player starts turning or stops moving
+      headingLocked = false;
+    }
+    // ─────────────────────────────────────────────────────────────────────
 
     int maxSpeed = downHeld ? SLOW_SPEED : MAX_SPEED;
     left_motor_group.move(std::clamp(move + turn, -maxSpeed, maxSpeed));
