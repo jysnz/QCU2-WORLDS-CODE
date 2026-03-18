@@ -53,4 +53,4 @@ void parkingtest(){
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { parkingtest(); }
+void runAutonomous() { test(); }
