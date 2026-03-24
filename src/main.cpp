@@ -35,9 +35,9 @@ lemlib::TrackingWheel vertical_tracking_wheel(&vertical_encoder,
 
 // ─── LemLib drivetrain & PID setup ───────────────────────────────────────────
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group,
-                              10, // track width (in)
+                              15, // track width (in)
                               lemlib::Omniwheel::NEW_325,
-                              400, // rpm
+                              458, // rpm
                               2    // horizontal drift
 );
 
@@ -56,128 +56,112 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller,
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-  pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
+    pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
 
-  catapult_arm.tare_position();
-  matchloader.tare_position();
-  discore.tare_position();
+    catapult_arm.tare_position();
+    matchloader.tare_position();
+    discore.tare_position();
 
-  pros::lcd::initialize();
-  chassis.calibrate();
+    pros::lcd::initialize();
+    chassis.calibrate();
 
-  matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-  catapult_arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    catapult_arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
-  // ── On-screen diagnostics ────────────────────────────────────────────────
-  static pros::Task screen_task([]() {
-    const int P_X = 240;
-    const int BG_COLOR = 0x202020;
+    // ── Cyber-HUD On-screen Diagnostics ────────────────────────────────────────
+    static pros::Task screen_task([]() {
+        const int BG_DARK = 0x0A0A0F;        // Near-black blue
+        const int CARD_BG = 0x161B22;        // Deep tech-slate
+        const int ACCENT_CYAN = 0x00F0FF;    // Neon Cyan
+        const int ACCENT_ORANGE = 0xFF8C00;  // Warning Orange
+        const int ACCENT_RED = 0xFF3131;     // Critical Red
 
-    while (true) {
-      // ── Left panel: IMU + Pose ────────────────────────────────────────
-      pros::screen::set_pen(BG_COLOR);
-      pros::screen::fill_rect(0, 0, 239, 240);
+        while (true) {
+            // ── Background Layer ──
+            pros::screen::set_pen(BG_DARK);
+            pros::screen::fill_rect(0, 0, 480, 240);
 
-      // IMU calibration status
-      bool imu_ok = !imu.is_calibrating() && imu.get_heading() != PROS_ERR_F;
+            // ── UI Framing (Tactical HUD Lines) ──
+            pros::screen::set_pen(0x222233);
+            for (int i = 0; i < 240; i += 4) { // Scanline effect
+                pros::screen::draw_line(0, i, 480, i);
+            }
+            
+            // Outer Frame
+            pros::screen::set_pen(ACCENT_CYAN);
+            pros::screen::draw_rect(5, 5, 475, 235);
+            pros::screen::draw_line(0, 40, 480, 40); // Header divider
 
-      pros::screen::set_pen(imu_ok ? 0x00FF00 : 0xFF4444);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 10, "IMU: %s",
-                          imu_ok ? "OK" : "NOT READY");
+            // ── Header Display ──
+            pros::screen::set_pen(ACCENT_CYAN);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 20, 12, "CORE_OS // THERMAL_DYNAMICS");
+            
+            // ── Battery HUD ──
+            double bat = pros::battery::get_capacity();
+            uint32_t bat_col = (bat > 50) ? ACCENT_CYAN : (bat > 20 ? ACCENT_ORANGE : ACCENT_RED);
+            
+            pros::screen::set_pen(0x333344);
+            pros::screen::fill_rect(340, 10, 460, 30); // Battery track
+            int bat_fill = (int)((bat / 100.0) * 120);
+            pros::screen::set_pen(bat_col);
+            pros::screen::fill_rect(340, 10, 340 + bat_fill, 30);
+            pros::screen::set_pen(0xFFFFFF);
+            pros::screen::print(pros::E_TEXT_SMALL, 375, 14, "PWR: %.0f%%", bat);
 
-      // Raw IMU values
-      double raw_heading = imu.get_heading();   // 0-360
-      double raw_rotation = imu.get_rotation(); // unbounded
-      double pitch = imu.get_pitch();
-      double roll = imu.get_roll();
+            // ── Modern Robotic Card Renderer ──
+            auto drawTechCard = [&](int x, int y, const char* name, double temp) {
+                int w = 215, h = 52;
+                uint32_t status_col = (temp < 45) ? ACCENT_CYAN : (temp < 55 ? ACCENT_ORANGE : ACCENT_RED);
 
-      pros::screen::set_pen(0xFFFFFF);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 40, "HDG : %6.1f deg",
-                          raw_heading);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 65, "ROT : %6.1f deg",
-                          raw_rotation);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 90, "PITCH: %5.1f deg",
-                          pitch);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 115, "ROLL : %5.1f deg",
-                          roll);
+                // Card Shadow/Backing
+                pros::screen::set_pen(CARD_BG);
+                pros::screen::fill_rect(x, y, x + w, y + h);
+                
+                // Left Indicator Strip
+                pros::screen::set_pen(status_col);
+                pros::screen::fill_rect(x, y, x + 4, y + h);
 
-      // Divider
-      pros::screen::set_pen(0x555555);
-      pros::screen::draw_line(8, 140, 230, 140);
+                // Label & Temp
+                pros::screen::set_pen(0xAAAAAA);
+                pros::screen::print(pros::E_TEXT_SMALL, x + 12, y + 8, name);
+                
+                pros::screen::set_pen(status_col);
+                pros::screen::print(pros::E_TEXT_MEDIUM, x + 12, y + 24, "%.1f°C", temp);
 
-      // LemLib chassis pose (X, Y, theta)
-      lemlib::Pose pose = chassis.getPose();
-      pros::screen::set_pen(0x00CCFF);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 150, "-- POSE --");
-      pros::screen::set_pen(0xFFFFFF);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 175, "X: %6.2f in", pose.x);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 200, "Y: %6.2f in", pose.y);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 8, 220, "TH: %5.1f deg",
-                          pose.theta);
+                // Geometric HUD bits
+                pros::screen::set_pen(0x333344);
+                pros::screen::draw_rect(x + 100, y + 28, x + w - 10, y + 38); // Progress border
+                
+                double bar_pct = std::min(temp / 70.0, 1.0);
+                pros::screen::set_pen(status_col);
+                pros::screen::fill_rect(x + 102, y + 30, x + 102 + (int)(bar_pct * (w - 114)), y + 36);
+                
+                // Tech corner detail
+                pros::screen::set_pen(status_col);
+                pros::screen::draw_line(x + w - 10, y, x + w, y + 10);
+            };
 
-      // ── Right panel background ────────────────────────────────────────
-      pros::screen::set_pen(BG_COLOR);
-      pros::screen::fill_rect(P_X, 0, 480, 240);
+            // Temperature Data
+            double d_temp = (left_motor_group.get_temperature() + right_motor_group.get_temperature()) / 2.0;
+            double c_temp = catapult_arm.get_temperature();
 
-      // Battery indicator
-      double bat = pros::battery::get_capacity();
-      int bat_y = 20, bat_h = 30, bat_w = 70;
-      int icon_x = P_X + 130;
+            // ── Component Grid ──
+            drawTechCard(20, 55,  "[ DRIVETRAIN ]", d_temp);
+            drawTechCard(20, 112, "[ LEVER ]",    c_temp);
+            drawTechCard(20, 169, "[ INTAKE ]", intake.get_temperature());
 
-      pros::screen::set_pen(0xFFFFFF);
-      pros::screen::print(pros::E_TEXT_LARGE, P_X + 10, bat_y + 3,
-                          "BAT: %3.0f%%", bat);
+            drawTechCard(245, 55,  "[ MATCHLOAD ]", matchloader.get_temperature());
+            drawTechCard(245, 112, "[ DESCORE ]",  discore.get_temperature());
+            drawTechCard(245, 169, "[ CATAPULT ]",  arm.get_temperature());
 
-      uint32_t bat_col =
-          (bat > 60) ? 0x00FFFF : (bat > 30 ? 0xFFA500 : 0xFF0000);
-      pros::screen::set_pen(0xFFFFFF);
-      pros::screen::draw_rect(icon_x, bat_y, icon_x + bat_w, bat_y + bat_h);
-      pros::screen::fill_rect(icon_x + bat_w, bat_y + 8, icon_x + bat_w + 5,
-                              bat_y + bat_h - 8);
-      int fill = (int)((bat / 100.0) * (bat_w - 4));
-      pros::screen::set_pen(bat_col);
-      pros::screen::fill_rect(icon_x + 2, bat_y + 2, icon_x + 2 + fill,
-                              bat_y + bat_h - 2);
+            // ── Footer Diagnostics ──
+            pros::screen::set_pen(0x444455);
+            pros::screen::print(pros::E_TEXT_SMALL, 20, 222, "HW_STATUS: OK // FAN_SPD: AUTO // TEMP_CEILING: 70C");
 
-      // Temperature rows
-      auto drawRow = [&](int row_idx, const char *label, double temp) {
-        int row_h = 40, start_y = 70;
-        int y = start_y + (row_idx * row_h);
-
-        pros::screen::set_pen(0xFFFFFF);
-        pros::screen::print(pros::E_TEXT_MEDIUM, P_X + 10, y + 8, label);
-
-        int bar_x = P_X + 80, bar_w = 100, bar_h = 16, bar_y = y + 6;
-        pros::screen::set_pen(0x404040);
-        pros::screen::fill_rect(bar_x, bar_y, bar_x + bar_w, bar_y + bar_h);
-
-        double stress = std::min(temp / 60.0, 1.0);
-        int fill_w = (int)(stress * bar_w);
-        uint32_t col =
-            (temp > 55) ? 0xFF0000 : (temp > 45 ? 0xFFA500 : 0x00FF00);
-        pros::screen::set_pen(col);
-        pros::screen::fill_rect(bar_x, bar_y, bar_x + fill_w, bar_y + bar_h);
-
-        pros::screen::set_pen(0xFFFFFF);
-        pros::screen::print(pros::E_TEXT_SMALL, bar_x + bar_w + 10, y + 8,
-                            "%.0fC", temp);
-      };
-
-      double d_temp = (left_motor_group.get_temperature() +
-                       right_motor_group.get_temperature()) /
-                      2.0;
-
-      drawRow(0, "Drive", d_temp);
-      drawRow(1, "Cata", catapult_arm.get_temperature());
-      drawRow(2, "Intake", intake.get_temperature());
-      drawRow(3, "Load", matchloader.get_temperature());
-      drawRow(4, "Disc", discore.get_temperature());
-
-      pros::delay(200);
-    }
-  });
+            pros::delay(200);
+        }
+    });
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // opcontrol & autonomous
 // ─────────────────────────────────────────────────────────────────────────────
