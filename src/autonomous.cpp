@@ -5,19 +5,49 @@
 // ─── Test routine
 // ─────────────────────────────────────────────────────────────
 void test() {
-  chassis.moveToPoint(0, 37, 3000);
+  chassis.moveToPoint(0, 30, 3000);
   chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000);
+  intake.move_velocity(-600);
   chassis.waitUntilDone();
-
   chassis.setPose(0, 0, 0);
+  chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 30});
+  pros::delay(2000);
+  chassis.moveToPoint(0, -17, 3000, {.forwards = false});
+  chassis.waitUntilDone();
+  startCatapultShoot();
+  pros::delay(1000);
+  startCatapultShoot();
+  pros::delay(2000);
 
-  chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 60});
   chassis.waitUntilDone();
-  chassis.moveToPoint(0, -178, 3000, {.forwards = false});
+
+  chassis.moveToPoint(0, 15, 3000, {.maxSpeed = 30});
+  pros::delay(700);
   chassis.waitUntilDone();
-  chassis.arcade(50, 10);
+
+  chassis.moveToPoint(0, 0, 3000);
+  chassis.waitUntilDone();
+
+  startCatapultShoot();
+  pros::delay(1000);
+  chassis.moveToPoint(0, 17, 3000, {.maxSpeed = 30});
+  chassis.waitUntilDone();
+
+  pros::delay(2000);
+  chassis.moveToPoint(0, -10, 3000, {.forwards = false});
+  chassis.waitUntilDone();
+  matchloader.move_absolute(-1400, 100);
+  chassis.turnToHeading(123, 1000);
+  chassis.waitUntilDone();
+  chassis.setPose(0, 0, 0);
+  chassis.moveToPoint(0, 28, 3000);
+  chassis.waitUntilDone();
+  intake.move_velocity(0);
+  
+  intake.move_velocity(600);
+  // matchloader.move_absolute(0, 100);
 }
 
 void path() {

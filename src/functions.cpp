@@ -132,9 +132,6 @@ void catapultTask(void *) {
         // Trigger outtake when catapult reaches home position
         if (shotSuccess) {
           catShouldOuttake = true;
-          intake.move_velocity(-600); // Outtake
-          pros::delay(200);
-          intake.move_velocity(0); // Stop after brief outtake
         }
 
         if (shotSuccess || ++catAttempts >= MAX_ATTEMPTS) {
@@ -448,31 +445,32 @@ void catapultControl() {
     if (armTapped) {
       armRaised = !armRaised;
       arm.move_absolute(armRaised ? 900 : 0, 200);
+      discore.move_absolute(100, 200);
     }
 
-    if (discoreDown)
+    if (discoreUp)
       discore.move_absolute(0, 200);
-    else if (discoreUp)
-      discore.move_absolute(800, 200);
+    else if (discoreDown)
+      discore.move_absolute(500, 200);
 
-    if (matchLoadUp && !matchLoadDown) {
+    if (matchLoadDown && !matchLoadUp) {
       matchloader.move_absolute(0, 100);
-      discore.move_absolute(800, 200);
-    } else if (matchLoadDown && !matchLoadUp) {
-      matchloader.move_absolute(1400, 100);
+      discore.move_absolute(500, 200);
+    } else if (matchLoadUp && !matchLoadDown) {
+      matchloader.move_absolute(-1400, 100);
       discore.move_absolute(0, 200);
     }
 
     if (intakePause) {
       intake.move_velocity(0);
-      intakeCurrentVelocity = 0;
-      intakeStallTime = 0;
+      // intakeCurrentVelocity = 0;
+      // intakeStallTime = 0;
     } else if (intakeForward && !intakeReverse) {
       intake.move_velocity(600);
-      intakeCurrentVelocity = 1; // Track that intake is moving forward
+      // intakeCurrentVelocity = 1; // Track that intake is moving forward
     } else if (intakeReverse && !intakeForward) {
       intake.move_velocity(-600);
-      intakeCurrentVelocity = -1; // Track that intake is moving reverse
+      // intakeCurrentVelocity = -1; // Track that intake is moving reverse
     }
   }
 }

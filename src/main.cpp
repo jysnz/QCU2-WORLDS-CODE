@@ -57,7 +57,6 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller,
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
   pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
-  pros::Task intake_control(intakeTask, nullptr, "Intake Task");
 
   catapult_arm.tare_position();
   matchloader.tare_position();
