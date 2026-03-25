@@ -20,6 +20,8 @@ pros::Motor intake(16, pros::MotorGears::green);
 pros::Motor matchloader(5, pros::MotorGears::red);
 pros::Motor discore(15, pros::MotorGears::green);
 pros::Motor arm(6, pros::MotorGears::red);
+pros::Motor gate(17, pros::MotorGears::green);
+
 
 pros::Imu imu(9);
 pros::Rotation horizontal_encoder(20);

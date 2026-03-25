@@ -15,6 +15,7 @@ extern pros::Motor intake;
 extern pros::Motor matchloader;
 extern pros::Motor discore;
 extern pros::Motor arm;
+extern pros::Motor gate;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;

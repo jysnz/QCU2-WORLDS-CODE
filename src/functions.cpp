@@ -61,7 +61,8 @@ void intakeTask(void *) {
       if (intakeStallTime >= INTAKE_STALL_DELAY && intakeAutoReverse) {
         int savedDirection = intakeCurrentVelocity;
         int reverseVelocity = -savedDirection * 600;
-        intake.move_velocity(reverseVelocity);
+        int intakeMoveVel = reverseVelocity;
+        intake.move_velocity(intakeMoveVel);
 
         uint32_t reverseStart = pros::millis();
         while (pros::millis() - reverseStart < INTAKE_REVERSE_DURATION) {
@@ -171,9 +172,11 @@ void startCatapultShoot() {
   // Update state: Is the intake currently being used by the driver?
   intakeWasManual = (std::abs(intake.get_actual_velocity()) > INTAKE_STALL_THRESHOLD);
   
-  // Force intake negative immediately to clear the ball, 
-  // regardless of previous state to prevent jams.
+  // Force intake negative immediately to clear the ball
   intake.move_velocity(-600);
+
+  // Command gate to open to -150 when firing begins
+  gate.move_absolute(-150, 200);
   
   catAttempts = 0;
   stalledTime = 0;
@@ -282,14 +285,19 @@ void catapultControl() {
 
   static bool controlsReversed = false;
   static bool wasDownHeld = false;
-  static bool armRaised = false;
+  static bool armRaised = false; // "Resting" state of the arm (0 or 2000)
   static bool wasArmHeld = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
 
   while (true) {
+    // ONLY reset the gate to -220 if the catapult is not currently shooting.
+    // This allows the gate.move_absolute(-100) in startCatapultShoot to persist.
+    if (catState == CAT_IDLE) {
+      gate.move_absolute(-240, 200);
+    }
+    
     pros::delay(20);
-
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
     bool intakeReverse = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     bool intakePause = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
@@ -298,9 +306,12 @@ void catapultControl() {
     bool discoreUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool matchLoadUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
     bool matchLoadDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+    
+    // Arm logic state tracking
     bool armHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
     bool armTapped = armHeld && !wasArmHeld;
     wasArmHeld = armHeld;
+    
     bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool downTapped = downHeld && !wasDownHeld;
     wasDownHeld = downHeld;
@@ -336,13 +347,20 @@ void catapultControl() {
     left_motor_group.move(std::clamp(move + turn, -maxSpeed, maxSpeed));
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
-    if (catapultBtn)
+    if (catapultBtn){
       startCatapultShoot();
+    }
 
+    // ─── ARM MOMENTARY HOLD LOGIC ───
     if (armTapped) {
       armRaised = !armRaised;
-      arm.move_absolute(armRaised ? 2000 : 0, 200);
-      discore.move_absolute(100, 200);
+      discore.move_absolute(500, 200);
+    }
+
+    if (armHeld) {
+      arm.move_absolute(2200, 200);
+    } else {
+      arm.move_absolute(armRaised ? 1300 : 0, 200);
     }
 
     if (discoreUp)
@@ -358,8 +376,7 @@ void catapultControl() {
       discore.move_absolute(0, 200);
     }
 
-    // Only allow manual intake controls if the catapult isn't running its sequence.
-    // This prevents manual button holds from fighting the automatic negative/positive cycle.
+    // Manual intake controls
     if (catState == CAT_IDLE) {
         if (intakePause) {
           intake.move_velocity(0);
