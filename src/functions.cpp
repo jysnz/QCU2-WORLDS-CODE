@@ -176,7 +176,7 @@ void startCatapultShoot() {
   intake.move_velocity(-600);
 
   // Command gate to open to -150 when firing begins
-  gate.move_absolute(-150, 200);
+  gate.move_absolute(-120 , 200);
   
   catAttempts = 0;
   stalledTime = 0;
@@ -349,6 +349,7 @@ void catapultControl() {
 
     if (catapultBtn){
       startCatapultShoot();
+      intake.move_velocity(600);
     }
 
     // ─── ARM MOMENTARY HOLD LOGIC ───

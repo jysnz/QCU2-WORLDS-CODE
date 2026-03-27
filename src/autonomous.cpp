@@ -5,7 +5,8 @@
 // ─── Test routine
 // ─────────────────────────────────────────────────────────────
 void test() {
-  chassis.moveToPoint(0, 34, 3000);
+  gate.move_absolute(-240, 200);
+  chassis.moveToPoint(0, 37, 3000);
   chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000);
@@ -19,6 +20,7 @@ void test() {
   startCatapultShoot();
   pros::delay(1000);
   startCatapultShoot();
+  gate.move_absolute(-240, 200);
   pros::delay(2000);
 
   chassis.waitUntilDone();

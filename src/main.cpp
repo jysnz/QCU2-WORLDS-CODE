@@ -14,9 +14,9 @@
 pros::MotorGroup left_motor_group({-11, -12, -13, -14},
                                   pros::MotorGears::green);
 pros::MotorGroup right_motor_group({1, 2, 3, 4}, pros::MotorGears::green);
+pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
-pros::Motor intake(16, pros::MotorGears::green);
 pros::Motor matchloader(5, pros::MotorGears::red);
 pros::Motor discore(15, pros::MotorGears::green);
 pros::Motor arm(6, pros::MotorGears::red);
@@ -46,7 +46,7 @@ lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group,
 lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
 
 lemlib::ControllerSettings lateral_controller(10, 0, 25, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(1.8, 0, 10, 0, 0, 0, 0, 0, 0);
+lemlib::ControllerSettings angular_controller(1.8, 0.02, 10, 0, 0, 0, 0, 0, 0);
 
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
