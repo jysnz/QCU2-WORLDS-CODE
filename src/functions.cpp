@@ -222,6 +222,7 @@ void catapultControl() {
   static bool wasArmHeld = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
+  static double lastDiscorePos = 0.0;
 
   while (true) {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
@@ -291,13 +292,24 @@ void catapultControl() {
     // ─── ARM MOMENTARY HOLD LOGIC ───
     if (armTapped) {
       armRaised = !armRaised;
+      lastDiscorePos = discore.get_position();
     }
 
     if (armHeld) {
       midGoalArm();
-      descoreDownMiddle();
+
+      // Move descore down until it stalls
+      if (std::abs(discore.get_actual_velocity()) < 5 &&
+          std::abs(discore.get_position()) > 200) {
+        discore.move_velocity(0);
+      } else {
+        discore.move_velocity(100); // Adjust speed if needed
+      }
     } else {
       arm.move_absolute(armRaised ? 1300 : 0, 200);
+      if (wasArmHeld) {
+        discore.move_absolute(lastDiscorePos, 200);
+      }
     }
 
     if (discoreUp)

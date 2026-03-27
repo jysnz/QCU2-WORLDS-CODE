@@ -68,30 +68,182 @@ void parkingtest(){
 //chassis.turnToHeading(90, 1000);
 
 void skills(){
-  chassis.moveToPoint(0, 37, 3000);
+  chassis.moveToPoint(0, 38, 3000); //Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(87, 1000);
+  chassis.turnToHeading(87, 1000); //Turn to matchload
   chassis.waitUntilDone();
-  
   reset();
 
-  chassis.moveToPoint(0, -22, 3000, {.forwards = false});
+  chassis.moveToPoint(0, -22, 3000, {.forwards = false}); //Go back to shoot
   chassis.waitUntilDone();
 
-  startCatapultShoot();
+  startCatapultShoot(); //Shoot 1
 
-  pros::delay(500);
-  leverReset();
+  pros::delay(500); 
 
   intakeBlock();
 
-  gateClose();
 
-  chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); 
+  chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 
+  gateClose();
   drivetrainLock();
 
   midGoalArm();
+  chassis.moveToPoint(0, -8, 3000, {.forwards = false}); //Adjust to 2nd matchload
+  chassis.waitUntilDone();
+
+  matchloadUp();
+
+  chassis.turnToHeading(-135, 1000); //Turn to 2nd matchload
+  chassis.waitUntilDone();
+  reset();
+  
+  chassis.moveToPoint(0, 18, 3000); //Forward to 2nd matchload
+  chassis.waitUntilDone();
+  pros::delay(500);
+
+  chassis.turnToHeading(-30, 1000); //Adjust to 2nd matchload
+  chassis.waitUntilDone();
+  reset();
+
+  // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(35, 1000); //Turn to 2nd matchload
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, -22, 3000,{.forwards = false}); //Go shootttt 2
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot(); //Shoot 2
+
+  // pros::delay(500); 
+  // leverReset();
+
+  // intakeBlock();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 2
+  // drivetrainLock();
+
+  // chassis.moveToPoint(0, -22, 3000, {.forwards = false}); //Go back to shoot 3
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot(); //Shoot 3
+
+  // pros::delay(500);
+  // leverReset();
+
+  // intakeBlock();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 3
+  // drivetrainLock();
+
+  // chassis.moveToPoint(0, -10, 3000, {.forwards = false}); //middle of field shoot
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(-90, 1000); //adjust to other side of field
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 75, 3000); //Go forward to other side of field
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(90, 1000); //Turn to 3rd matchload
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 17, 3000, {.maxSpeed = 40}); //Go to 3rd intake
+  // chassis.waitUntilDone();
+
+  // chassis.moveToPoint(0, -22, 3000, {.forwards = false}); //Go to shoot 4
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot(); //Shoot 4
+
+  // pros::delay(500);
+  // leverReset();
+
+  // intakeBlock();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 4
+  // drivetrainLock();
+
+  // chassis.moveToPoint(0, 10, 3000); //Adjust to 4th matchload
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(-135, 1000); //Turn to 4th matchload
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 17, 3000); //Go forward to 4th matchload
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(-30, 1000); //Turn to 4th matchload
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 70, 3000); //Go forward to 4th matchload
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(32, 1000); //Turn to 4th matchload
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, -22, 3000, {.forwards = false}); //Go forward to shoot 5
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot(); //Shoot 5
+
+  // pros::delay(500);
+  // leverReset();
+
+  // intakeBlock();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 5
+  // drivetrainLock();
+
+  // chassis.moveToPoint(0, -22, 3000, {.forwards = false}); //Go back to shoot 6
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot(); //Shoot 6
+
+  // pros::delay(500);
+  // leverReset();
+
+  // intakeBlock();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); //Go to intake 6
+  // drivetrainLock();
+
+  // chassis.turnToHeading(70, 1000); //turn to parking
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 22, 3000,{.maxSpeed = 60}); //Go to parking
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(20, 1000); //Turn to parking
+  // chassis.waitUntilDone();
+  // reset();
+
+  // chassis.moveToPoint(0, 20, 3000,{.maxSpeed = 60}); //Go to parking
+  // chassis.waitUntilDone();
+
+
+
+
 }
 
 // ─── Main autonomous entry point
