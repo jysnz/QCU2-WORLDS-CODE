@@ -9,13 +9,15 @@ const float PI = 3.14159f;
 const double wheelDiameter = 3.25; // inches
 const double ticksPerRev = 360.0;  // motor degrees per revolution
 
-// ─── Catapult state ───────────────────────────────────────────────────────────
+// ─── Catapult state
+// ───────────────────────────────────────────────────────────
 enum CatapultState { CAT_IDLE, CAT_FIRING, CAT_RELOADING };
 static CatapultState catState = CAT_IDLE;
 static int catAttempts = 0;
 static bool shotSuccess = false;
 static int stalledTime = 0;
-static bool intakeWasManual = false; // Tracks if intake was already running before shoot
+static bool intakeWasManual =
+    false; // Tracks if intake was already running before shoot
 
 const int LOAD_POS = 0;
 const int FIRE_POS = -600;
@@ -24,20 +26,25 @@ const int STALL_TIME = 250;
 const int CHECK_DELAY = 10;
 const int MAX_ATTEMPTS = 10;
 
-// ─── Intake stall detection state ─────────────────────────────────────────────
-static int intakeCurrentVelocity = 0; // Current direction: 1=forward, -1=reverse, 0=stopped
+// ─── Intake stall detection state
+// ─────────────────────────────────────────────
+static int intakeCurrentVelocity =
+    0; // Current direction: 1=forward, -1=reverse, 0=stopped
 static int intakeStallTime = 0;       // Time motor has been stalled
 static bool intakeAutoReverse = true; // Enable/disable auto-reverse on stall
 
 const int INTAKE_STALL_THRESHOLD = 5; // Velocity threshold to detect stall
 const int INTAKE_STALL_DELAY = 300;   // ms before reversing on stall
-const int INTAKE_REVERSE_DURATION = 200; // ms to run in reverse after stall detect
+const int INTAKE_REVERSE_DURATION =
+    200; // ms to run in reverse after stall detect
 
-// ─── Catapult outtake timing ──────────────────────────────────────────────────
+// ─── Catapult outtake timing
+// ──────────────────────────────────────────────────
 static int catReloadTime = 0;         // Time spent in reload state
 static bool catShouldOuttake = false; // Flag to trigger outtake after reload
 
-// ─── Odometry helpers ─────────────────────────────────────────────────────────
+// ─── Odometry helpers
+// ─────────────────────────────────────────────────────────
 float ticksToInches(float ticks) {
   return (ticks / ticksPerRev) * PI * (float)wheelDiameter;
 }
@@ -45,44 +52,6 @@ float ticksToInches(float ticks) {
 double inchesToDegrees(double inches) {
   double wheelCircumference = PI * wheelDiameter;
   return (inches / wheelCircumference) * 360.0;
-}
-
-// ─── Intake stall detection task (runs in background) ────────────────────────
-void intakeTask(void *) {
-  while (true) {
-    double currentVel = intake.get_actual_velocity();
-
-    if (std::abs(currentVel) > INTAKE_STALL_THRESHOLD) {
-      intakeCurrentVelocity = (currentVel > 0) ? 1 : -1;
-      intakeStallTime = 0; 
-    } else if (intakeCurrentVelocity != 0) {
-      intakeStallTime += CHECK_DELAY;
-
-      if (intakeStallTime >= INTAKE_STALL_DELAY && intakeAutoReverse) {
-        int savedDirection = intakeCurrentVelocity;
-        int reverseVelocity = -savedDirection * 600;
-        int intakeMoveVel = reverseVelocity;
-        intake.move_velocity(intakeMoveVel);
-
-        uint32_t reverseStart = pros::millis();
-        while (pros::millis() - reverseStart < INTAKE_REVERSE_DURATION) {
-          if (intakeCurrentVelocity == 0) {
-            intake.move_velocity(0);
-            intakeStallTime = 0;
-            break;
-          }
-          pros::delay(10);
-        }
-
-        if (intakeCurrentVelocity != 0) {
-          int resumeVelocity = savedDirection * 600;
-          intake.move_velocity(resumeVelocity);
-        }
-        intakeStallTime = 0;
-      }
-    }
-    pros::delay(CHECK_DELAY);
-  }
 }
 
 // ─── Catapult task (Updated with Dynamic Intake Logic) ───────────────────────
@@ -100,14 +69,16 @@ void catapultTask(void *) {
         shotSuccess = true;
         catState = CAT_RELOADING;
         catapult_arm.move_absolute(LOAD_POS, CAT_SPEED);
-        
+        intake.move_velocity(600); //Outtake
+        pros::delay(350);
+
         // Firing success: Rotate positive to bring the next ball in
-        intake.move_velocity(600);
-        
+        intake.move_velocity(-600);
+
         catReloadTime = 0;
         break;
       }
-      
+
       if (vel < 5)
         stalledTime += CHECK_DELAY;
       else
@@ -116,21 +87,21 @@ void catapultTask(void *) {
       if (stalledTime >= STALL_TIME) {
         catState = CAT_RELOADING;
         catapult_arm.move_absolute(LOAD_POS, CAT_SPEED);
-        
+
         // Stall case: Ensure intake stays negative to clear jam
-        intake.move_velocity(-600);
-        
+        intake.move_velocity(600);
+
         catReloadTime = 0;
       }
       break;
 
     case CAT_RELOADING:
       catReloadTime += CHECK_DELAY;
-      
-      // If the arm is returning after a stall, ensure it switches to positive 
+
+      // If the arm is returning after a stall, ensure it switches to positive
       // rotation once it begins moving back toward home.
       if (intake.get_target_velocity() < 0 && std::abs(pos - LOAD_POS) > 50) {
-          intake.move_velocity(600);
+        intake.move_velocity(-600);
       }
 
       if (std::abs(pos - LOAD_POS) < 10) {
@@ -151,10 +122,10 @@ void catapultTask(void *) {
         } else {
           catState = CAT_FIRING;
           stalledTime = 0;
-          
+
           // Clear path again for the retry
-          intake.move_velocity(-600);
-          
+          intake.move_velocity(600);
+
           catapult_arm.move_absolute(FIRE_POS, CAT_SPEED);
         }
       }
@@ -168,16 +139,19 @@ void catapultTask(void *) {
 void startCatapultShoot() {
   if (catState != CAT_IDLE)
     return;
-  
+
   // Update state: Is the intake currently being used by the driver?
-  intakeWasManual = (std::abs(intake.get_actual_velocity()) > INTAKE_STALL_THRESHOLD);
-  
-  // Force intake negative immediately to clear the ball
+  intakeWasManual =
+      (std::abs(intake.get_actual_velocity()) > INTAKE_STALL_THRESHOLD);
+
+  // Start with intake positive to gather the ball
+  // If catapult_arm stalls (blocked by a ball), catapultTask will switch to
+  // negative
   intake.move_velocity(-600);
 
   // Command gate to open to -150 when firing begins
-  gate.move_absolute(-120 , 200);
-  
+  gate.move_absolute(-120, 200);
+
   catAttempts = 0;
   stalledTime = 0;
   shotSuccess = false;
@@ -234,9 +208,9 @@ void catapultShootForAuto(double SPEED) {
 
   for (int attempt = 0; attempt < MA; attempt++) {
     bool success = false;
-    
+
     // Autonomous start: intake negative to clear
-    intake.move_velocity(-600);
+    intake.move_velocity(600);
     catapult_arm.move_absolute(F_POS, SPEED);
     int st = 0;
 
@@ -247,7 +221,7 @@ void catapultShootForAuto(double SPEED) {
       if (pos <= F_POS + 25) {
         success = true;
         // Intake positive on firing position reach
-        intake.move_velocity(600);
+        intake.move_velocity(-600);
         break;
       }
       if (vel < 5)
@@ -255,17 +229,17 @@ void catapultShootForAuto(double SPEED) {
       else
         st = 0;
       if (st >= ST) {
-          break;
+        break;
       }
     }
 
     // Move to Load position
     catapult_arm.move_absolute(L_POS, SPEED);
-    intake.move_velocity(600);
-    
+    intake.move_velocity(-600);
+
     while (std::abs(catapult_arm.get_position() - L_POS) > 10)
       pros::delay(10);
-    
+
     intake.move_velocity(0);
 
     if (success)
@@ -292,11 +266,12 @@ void catapultControl() {
 
   while (true) {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
-    // This allows the gate.move_absolute(-100) in startCatapultShoot to persist.
+    // This allows the gate.move_absolute(-100) in startCatapultShoot to
+    // persist.
     if (catState == CAT_IDLE) {
       gate.move_absolute(-240, 200);
     }
-    
+
     pros::delay(20);
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
     bool intakeReverse = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
@@ -306,12 +281,12 @@ void catapultControl() {
     bool discoreUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool matchLoadUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
     bool matchLoadDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-    
+
     // Arm logic state tracking
     bool armHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
     bool armTapped = armHeld && !wasArmHeld;
     wasArmHeld = armHeld;
-    
+
     bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool downTapped = downHeld && !wasDownHeld;
     wasDownHeld = downHeld;
@@ -324,15 +299,18 @@ void catapultControl() {
     if (controlsReversed)
       move = -move;
 
-    if (std::abs(move) > INU_CORRECTION_MIN_MOVE && std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
+    if (std::abs(move) > INU_CORRECTION_MIN_MOVE &&
+        std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
       if (!headingLocked) {
         targetHeading = imu.get_heading();
         headingLocked = true;
       }
       double currentHeading = imu.get_heading();
       double headingError = targetHeading - currentHeading;
-      while (headingError > 180.0) headingError -= 360.0;
-      while (headingError < -180.0) headingError += 360.0;
+      while (headingError > 180.0)
+        headingError -= 360.0;
+      while (headingError < -180.0)
+        headingError += 360.0;
 
       if (std::abs(headingError) > IMU_CORRECTION_THRESHOLD) {
         int correction = (int)(headingError * IMU_CORRECTION_KP);
@@ -347,9 +325,8 @@ void catapultControl() {
     left_motor_group.move(std::clamp(move + turn, -maxSpeed, maxSpeed));
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
-    if (catapultBtn){
+    if (catapultBtn) {
       startCatapultShoot();
-      intake.move_velocity(600);
     }
 
     // ─── ARM MOMENTARY HOLD LOGIC ───
@@ -379,13 +356,13 @@ void catapultControl() {
 
     // Manual intake controls
     if (catState == CAT_IDLE) {
-        if (intakePause) {
-          intake.move_velocity(0);
-        } else if (intakeForward && !intakeReverse) {
-          intake.move_velocity(600);
-        } else if (intakeReverse && !intakeForward) {
-          intake.move_velocity(-600);
-        }
+      if (intakePause) {
+        intake.move_velocity(0);
+      } else if (intakeForward && !intakeReverse) {
+        intake.move_velocity(600);
+      } else if (intakeReverse && !intakeForward) {
+        intake.move_velocity(-600);
+      }
     }
   }
 }
