@@ -65,9 +65,11 @@ void gateClose() { gate.move_absolute(-240, 200); }
 
 void descoreUp() { discore.move_absolute(0, 200); }
 
-void descoreDown() { discore.move_absolute(500, 200); }
+void descoreDown() { discore.move_absolute(150, 200); }
 
-void matchloadUp() { matchloader.move_absolute(-4000, 200); }
+void descoreDownMiddle() { discore.move_absolute(300, 200); }
+
+void matchloadUp() { matchloader.move_absolute(-350, 200); }
 
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
@@ -83,11 +85,11 @@ void outtakeBlock() { intake.move_velocity(600); }
 
 void reset() { chassis.setPose(0, 0, 0); }
 
-void leverReset(){
+void leverReset() {
   catapult_arm.move_velocity(-50);
   int lv = catapult_arm.get_actual_velocity();
 
-  if(lv <= 3){
+  if (lv <= 3) {
     catapult_arm.move_velocity(0);
     catapult_arm.tare_position();
   }
@@ -289,11 +291,11 @@ void catapultControl() {
     // ─── ARM MOMENTARY HOLD LOGIC ───
     if (armTapped) {
       armRaised = !armRaised;
-      descoreDown();
     }
 
     if (armHeld) {
       midGoalArm();
+      descoreDownMiddle();
     } else {
       arm.move_absolute(armRaised ? 1300 : 0, 200);
     }
@@ -302,7 +304,7 @@ void catapultControl() {
       descoreUp();
     else if (discoreDown)
       descoreDown();
-    
+
     if (matchLoadDown && !matchLoadUp) {
       matchloadDown();
     } else if (matchLoadUp && !matchLoadDown) {

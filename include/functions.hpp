@@ -16,6 +16,7 @@ void gateOpen();
 void gateClose();
 void descoreUp();
 void descoreDown();
+void descoreDownMiddle();
 void matchloadUp();
 void matchloadDown();
 void midGoalArm();
