@@ -61,27 +61,40 @@ void path() {
 }
 
 void parkingtest(){
-    chassis.moveToPoint(0, 100, 3000, {.maxSpeed = 400});
-    chassis.waitUntilDone();
+    startCatapultShoot();
+}
 
-    chassis.turnToHeading(45, 1000);
-    chassis.waitUntilDone();
+//chassis.moveToPoint(0, 10, 3000);
+//chassis.turnToHeading(90, 1000);
 
-    chassis.setPose(0,0,0);
+void skills(){
+  chassis.moveToPoint(0, 37, 3000);
+  chassis.waitUntilDone();
 
-    chassis.moveToPoint(0, 10, 3000);
-    chassis.waitUntilDone();
+  chassis.turnToHeading(87, 1000);
+  chassis.waitUntilDone();
+  
+  reset();
 
-    chassis.turnToHeading(120, 1000);
-    chassis.waitUntilDone();
+  chassis.moveToPoint(0, -22, 3000, {.forwards = false});
+  chassis.waitUntilDone();
 
-    chassis.setPose(0,0,0);
+  startCatapultShoot();
 
-    chassis.moveToPoint(0, -13, 3000);
-    chassis.waitUntilDone();
+  pros::delay(500);
+  leverReset();
+
+  intakeBlock();
+
+  gateClose();
+
+  chassis.moveToPoint(0, 17, 3000,{.maxSpeed = 40}); 
+  drivetrainLock();
+
+  midGoalArm();
 }
 
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { test(); }
+void runAutonomous() { skills(); }

@@ -54,6 +54,45 @@ double inchesToDegrees(double inches) {
   return (inches / wheelCircumference) * 360.0;
 }
 
+void drivetrainLock() {
+  left_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+}
+
+void gateOpen() { gate.move_absolute(-120, 200); }
+
+void gateClose() { gate.move_absolute(-240, 200); }
+
+void descoreUp() { discore.move_absolute(0, 200); }
+
+void descoreDown() { discore.move_absolute(500, 200); }
+
+void matchloadUp() { matchloader.move_absolute(-4000, 200); }
+
+void matchloadDown() { matchloader.move_absolute(0, 200); }
+
+void midGoalArm() { arm.move_absolute(1300, 200); }
+
+void underGoalArm() { arm.move_absolute(2200, 200); }
+
+void longGoalArm() { arm.move_absolute(0, 200); }
+
+void intakeBlock() { intake.move_velocity(-600); }
+
+void outtakeBlock() { intake.move_velocity(600); }
+
+void reset() { chassis.setPose(0, 0, 0); }
+
+void leverReset(){
+  catapult_arm.move_velocity(-50);
+  int lv = catapult_arm.get_actual_velocity();
+
+  if(lv <= 3){
+    catapult_arm.move_velocity(0);
+    catapult_arm.tare_position();
+  }
+}
+
 // ─── Catapult task (Updated with Dynamic Intake Logic) ───────────────────────
 void catapultTask(void *) {
   while (true) {
@@ -69,7 +108,7 @@ void catapultTask(void *) {
         shotSuccess = true;
         catState = CAT_RELOADING;
         catapult_arm.move_absolute(LOAD_POS, CAT_SPEED);
-        intake.move_velocity(600); //Outtake
+        intake.move_velocity(600); // Outtake
         pros::delay(350);
 
         // Firing success: Rotate positive to bring the next ball in
@@ -149,7 +188,7 @@ void startCatapultShoot() {
   // negative
   intake.move_velocity(-600);
 
-  // Command gate to open to -150 when firing begins
+  // Command gate to open to -120 when firing begins
   gate.move_absolute(-120, 200);
 
   catAttempts = 0;
@@ -157,95 +196,13 @@ void startCatapultShoot() {
   shotSuccess = false;
   catState = CAT_FIRING;
   catapult_arm.move_absolute(FIRE_POS, CAT_SPEED);
-}
 
-// ─── Utility functions ───────────────────────────────────────────────────────
-void wall_reset(int voltage, int settleTime) {
-  left_motor_group.move_voltage(voltage);
-  right_motor_group.move_voltage(voltage);
-
-  int stalled = 0;
-  while (stalled < settleTime) {
-    double lv = std::abs(left_motor_group.get_actual_velocity());
-    double rv = std::abs(right_motor_group.get_actual_velocity());
-    if (lv < 3 && rv < 3)
-      stalled += 10;
-    else
-      stalled = 0;
+  // For Autonomous: wait until the arm is back at home before returning control
+  // Only if this is being called from a blocking context (like Autonomous)
+  // Check if autonomous or competition state
+  while (pros::competition::is_autonomous() && catState != CAT_IDLE) {
     pros::delay(10);
   }
-
-  left_motor_group.move_voltage(0);
-  right_motor_group.move_voltage(0);
-  pros::delay(50);
-}
-
-void wall_reset_v2(int voltage, int settleTime, int direction, int timeout) {
-  voltage = std::abs(voltage) * direction;
-  left_motor_group.move_voltage(voltage);
-  right_motor_group.move_voltage(voltage);
-
-  int stalled = 0, elapsed = 0;
-  while (stalled < settleTime && elapsed < timeout) {
-    double lv = std::abs(left_motor_group.get_actual_velocity());
-    double rv = std::abs(right_motor_group.get_actual_velocity());
-    if (lv < 3 && rv < 3)
-      stalled += 10;
-    else
-      stalled = 0;
-    pros::delay(10);
-    elapsed += 10;
-  }
-
-  left_motor_group.move_voltage(0);
-  right_motor_group.move_voltage(0);
-  pros::delay(50);
-}
-
-void catapultShootForAuto(double SPEED) {
-  const int L_POS = 0, F_POS = -600;
-  const int ST = 250, CD = 10, MA = 10;
-
-  for (int attempt = 0; attempt < MA; attempt++) {
-    bool success = false;
-
-    // Autonomous start: intake negative to clear
-    intake.move_velocity(600);
-    catapult_arm.move_absolute(F_POS, SPEED);
-    int st = 0;
-
-    while (true) {
-      pros::delay(CD);
-      double pos = catapult_arm.get_position();
-      double vel = std::abs(catapult_arm.get_actual_velocity());
-      if (pos <= F_POS + 25) {
-        success = true;
-        // Intake positive on firing position reach
-        intake.move_velocity(-600);
-        break;
-      }
-      if (vel < 5)
-        st += CD;
-      else
-        st = 0;
-      if (st >= ST) {
-        break;
-      }
-    }
-
-    // Move to Load position
-    catapult_arm.move_absolute(L_POS, SPEED);
-    intake.move_velocity(-600);
-
-    while (std::abs(catapult_arm.get_position() - L_POS) > 10)
-      pros::delay(10);
-
-    intake.move_velocity(0);
-
-    if (success)
-      return;
-  }
-  catapult_arm.move_velocity(0);
 }
 
 // ─── Operator control ────────────────────────────────────────────────────────
@@ -269,7 +226,7 @@ void catapultControl() {
     // This allows the gate.move_absolute(-100) in startCatapultShoot to
     // persist.
     if (catState == CAT_IDLE) {
-      gate.move_absolute(-240, 200);
+      gateOpen();
     }
 
     pros::delay(20);
@@ -332,26 +289,24 @@ void catapultControl() {
     // ─── ARM MOMENTARY HOLD LOGIC ───
     if (armTapped) {
       armRaised = !armRaised;
-      discore.move_absolute(500, 200);
+      descoreDown();
     }
 
     if (armHeld) {
-      arm.move_absolute(2200, 200);
+      midGoalArm();
     } else {
       arm.move_absolute(armRaised ? 1300 : 0, 200);
     }
 
     if (discoreUp)
-      discore.move_absolute(0, 200);
+      descoreUp();
     else if (discoreDown)
-      discore.move_absolute(500, 200);
-
+      descoreDown();
+    
     if (matchLoadDown && !matchLoadUp) {
-      matchloader.move_absolute(0, 100);
-      discore.move_absolute(500, 200);
+      matchloadDown();
     } else if (matchLoadUp && !matchLoadDown) {
-      matchloader.move_absolute(-1400, 100);
-      discore.move_absolute(0, 200);
+      matchloadUp();
     }
 
     // Manual intake controls
@@ -359,9 +314,9 @@ void catapultControl() {
       if (intakePause) {
         intake.move_velocity(0);
       } else if (intakeForward && !intakeReverse) {
-        intake.move_velocity(600);
+        outtakeBlock();
       } else if (intakeReverse && !intakeForward) {
-        intake.move_velocity(-600);
+        intakeBlock();
       }
     }
   }

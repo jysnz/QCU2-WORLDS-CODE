@@ -10,6 +10,21 @@ void catapultShootForAuto(double speed);
 // ───────────────────────────────────────────────────────────────────
 void intakeTask(void *param);
 
+// Robot functions
+void drivetrainLock();
+void gateOpen();
+void gateClose();
+void descoreUp();
+void descoreDown();
+void matchloadUp();
+void matchloadDown();
+void midGoalArm();
+void underGoalArm();
+void intakeBlock();
+void outtakeBlock();
+void reset();
+void leverReset();
+
 // ─── Drive ───────────────────────────────────────────────────────────────────
 void drive_for_inches(double maxSpeed, double inches);
 void turn_to_heading(double targetHeading, double maxSpeed);
@@ -18,6 +33,8 @@ void turn_to_heading(double targetHeading, double maxSpeed);
 void wall_reset(int voltage = 8000, int settleTime = 200);
 void wall_reset_v2(int voltage = 8000, int settleTime = 200, int direction = 1,
                    int timeout = 1000);
+
+void intake_auto(int delay, int speed, int direction);
 
 // ─── Operator control
 // ─────────────────────────────────────────────────────────
