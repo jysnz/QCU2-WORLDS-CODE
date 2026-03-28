@@ -19,14 +19,7 @@ extern pros::Motor gate;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;
-extern pros::Rotation horizontal_encoder;
-extern pros::adi::Encoder vertical_encoder;
-extern pros::adi::Ultrasonic ultrasonic;
 extern pros::Controller controller;
-
-// ─── LemLib tracking wheels ──────────────────────────────────────────────────
-extern lemlib::TrackingWheel horizontal_tracking_wheel;
-extern lemlib::TrackingWheel vertical_tracking_wheel;
 
 // ─── LemLib chassis ──────────────────────────────────────────────────────────
 extern lemlib::Chassis chassis;

@@ -22,16 +22,7 @@ pros::Motor arm(6, pros::MotorGears::red);
 pros::Motor gate(17, pros::MotorGears::green);
 
 pros::Imu imu(9);
-pros::Rotation horizontal_encoder(20);
-pros::adi::Encoder vertical_encoder('C', 'D', true);
-pros::adi::Ultrasonic ultrasonic('A', 'B');
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
-
-lemlib::TrackingWheel horizontal_tracking_wheel(&horizontal_encoder,
-                                                lemlib::Omniwheel::NEW_325,
-                                                -5.75);
-lemlib::TrackingWheel vertical_tracking_wheel(&vertical_encoder,
-                                              lemlib::Omniwheel::NEW_325, -2.5);
 
 // ─── LemLib drivetrain & PID setup ───────────────────────────────────────────
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group,

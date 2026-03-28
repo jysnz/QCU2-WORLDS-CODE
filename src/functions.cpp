@@ -65,7 +65,7 @@ void gateClose() { gate.move_absolute(-240, 200); }
 
 void descoreUp() { descore.move_absolute(0, 200); }
 
-void descoreDown() { descore.move_absolute(-150, 200); }
+void descoreDown() { descore.move_absolute(-200, 200); }
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
@@ -73,11 +73,21 @@ void matchloadUp() { matchloader.move_absolute(-500, 200); }
 
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
-void midGoalArm() { arm.move_absolute(1300, 200); }
+void midGoalArm() {
+  arm.move_absolute(1300, 200); 
+  descore.move_absolute(-300, 200);
+}
 
-void underGoalArm() { arm.move_absolute(2200, 200); }
+void underGoalArm() {
+  arm.move_absolute(2000, 200); 
+  gate.move_absolute(0, 200); // Ensure gate is closed in under goal position
+  descore.move_absolute(-320, 200);
+}
 
-void longGoalArm() { arm.move_absolute(0, 200); }
+void longGoalArm() { 
+  arm.move_absolute(0, 200); 
+  descoreUp();
+}
 
 void intakeBlock() { intake.move_velocity(-600); }
 
@@ -344,16 +354,6 @@ void catapultControl() {
       descoreUp();
     else if (discoreDown)
       descoreDown();
-    // Only apply default manual stop logic if not in a state that automates
-    // descore
-    else if (currentArmState == LONG_GOAL) {
-      descoreUp();
-    } else if (currentArmState == MID_GOAL) {
-      descore.move_absolute(-300, 200);
-    } else if (currentArmState == UNDER_GOAL) {
-      gate.move_absolute(0, 200); // Ensure gate is closed in under goal position
-      descore.move_absolute(-320, 200);
-    }
 
     if (matchLoadDown && !matchLoadUp) {
       matchloadDown();

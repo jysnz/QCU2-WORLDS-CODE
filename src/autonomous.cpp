@@ -111,6 +111,10 @@ void skills(){
   drivetrainLock();
 
   midGoalArm();
+
+  reset();
+
+  chassis.moveToPose(-15, -20, 0, 3000, {.forwards = false}); //Go back to shoot 2
  
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
