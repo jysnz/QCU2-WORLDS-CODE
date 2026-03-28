@@ -4,51 +4,39 @@
 
 // ─── Test routine
 // ─────────────────────────────────────────────────────────────
-void test() {
-  gate.move_absolute(-240, 200);
-  chassis.moveToPoint(0, 37, 3000);
+void twoVtwo() {
+  // gateClose();
+  // chassis.moveToPoint(0, 38, 3000);
+  // chassis.waitUntilDone();
+
+  // chassis.turnToHeading(88, 1000);
+  // chassis.waitUntilDone();
+  // intakeBlock();
+  // reset();
+  // gateClose();
+
+  // chassis.moveToPoint(0, 12, 3000, {.maxSpeed = 50});
+  // chassis.waitUntilDone();  
+  // pros::delay(200);
+
+  // chassis.moveToPoint(0, -23, 3000, {.forwards = false});
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot();
+  // reset();
+
+  chassis.moveToPoint(0, 12, 3000);
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(90, 1000);
-  intake.move_velocity(-600);
+  chassis.turnToHeading(123, 1000);
   chassis.waitUntilDone();
-  chassis.setPose(0, 0, 0);
-  chassis.moveToPoint(0, 14, 3000, {.maxSpeed = 30});
-  pros::delay(2000);
-  chassis.moveToPoint(0, -21, 3000, {.forwards = false});
-  chassis.waitUntilDone();
-  startCatapultShoot();
-  pros::delay(1000);
-  startCatapultShoot();
-  gate.move_absolute(-240, 200);
-  pros::delay(2000);
+  reset();  
 
-  chassis.waitUntilDone();
+  matchloadUp();
 
-  chassis.moveToPoint(0, 19, 3000, {.maxSpeed = 30});
-  pros::delay(700);
+  chassis.moveToPoint(0, 42, 3000);
   chassis.waitUntilDone();
-
-  chassis.moveToPoint(0, -4, 3000);
-  chassis.waitUntilDone();
-
-  startCatapultShoot();
-  pros::delay(1000);
-  chassis.moveToPoint(0, 21, 3000, {.maxSpeed = 30});
-  chassis.waitUntilDone();
-
-  pros::delay(2000);
-  chassis.setPose(0,0,0);
-  chassis.moveToPoint(0, -12, 3000, {.forwards = false});
-  chassis.waitUntilDone();
-  matchloader.move_absolute(-1300, 100);
-  chassis.turnToHeading(129, 1000);
-  chassis.waitUntilDone();
-  chassis.setPose(0, 0, 0);
-  chassis.moveToPoint(0, 33, 3000);
-  chassis.waitUntilDone();
-  // intake.move_velocity(0);
-  
+  outtakeBlock();
 }
 
 void path() {
@@ -258,4 +246,4 @@ void skills(){
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { skills(); }
+void runAutonomous() { twoVtwo(); }

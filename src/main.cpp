@@ -16,7 +16,7 @@ pros::MotorGroup right_motor_group({1, 2, 3, 4}, pros::MotorGears::green);
 pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
-pros::Motor matchloader(5, pros::MotorGears::red);
+pros::Motor matchloader(5, pros::MotorGears::green);
 pros::Motor descore(15, pros::MotorGears::green);
 pros::Motor arm(6, pros::MotorGears::red);
 pros::Motor gate(17, pros::MotorGears::green);
@@ -47,7 +47,9 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller,
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
+  restoreMotorPositions(); // Re-apply last known positions before homing
   pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
+  pros::Task persistence_save(persistenceTask, nullptr, "Persistence Task");
 
   catapult_arm.tare_position();
   matchloader.tare_position();

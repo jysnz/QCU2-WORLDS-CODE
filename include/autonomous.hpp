@@ -1,6 +1,6 @@
 #pragma once
 
-void test();
+void twoVtwo();
 void path();
 void parkingtest();
 void runAutonomous();

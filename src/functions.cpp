@@ -61,7 +61,7 @@ void drivetrainLock() {
 
 void gateOpen() { gate.move_absolute(-120, 200); }
 
-void gateClose() { gate.move_absolute(-240, 200); }
+void gateClose() { gate.move_absolute(-500, 200); }
 
 void descoreUp() { descore.move_absolute(0, 200); }
 
@@ -93,6 +93,8 @@ void intakeBlock() { intake.move_velocity(-600); }
 
 void outtakeBlock() { intake.move_velocity(600); }
 
+void intakeStop() { intake.move_velocity(0); }
+
 void reset() { chassis.setPose(0, 0, 0); }
 
 void leverReset() {
@@ -122,6 +124,10 @@ void catapultTask(void *) {
       break;
 
     case CAT_FIRING:
+      // In Firing state, command the gate to stay open to ensure it doesn't
+      // close prematurely
+      gate.move_absolute(-120, 200);
+
       if (pos <= dynamicFirePos + 25) {
         shotSuccess = true;
         catState = CAT_RELOADING;
@@ -223,6 +229,37 @@ void startCatapultShoot() {
   // Check if autonomous or competition state
   while (pros::competition::is_autonomous() && catState != CAT_IDLE) {
     pros::delay(10);
+  }
+}
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+void restoreMotorPositions() {
+  FILE *usd_file_read = fopen("/usd/motor_pos.bin", "rb");
+  if (usd_file_read) {
+    double positions[5];
+    fread(positions, sizeof(double), 5, usd_file_read);
+    fclose(usd_file_read);
+
+    catapult_arm.move_absolute(positions[0], 100);
+    matchloader.move_absolute(positions[1], 100);
+    descore.move_absolute(positions[2], 100);
+    arm.move_absolute(positions[3], 100);
+    gate.move_absolute(positions[4], 100);
+  }
+}
+
+void persistenceTask(void *) {
+  while (true) {
+    FILE *usd_file_write = fopen("/usd/motor_pos.bin", "wb");
+    if (usd_file_write) {
+      double positions[5] = {catapult_arm.get_position(),
+                             matchloader.get_position(), descore.get_position(),
+                             arm.get_position(), gate.get_position()};
+      fwrite(positions, sizeof(double), 5, usd_file_write);
+      fflush(usd_file_write);
+      fclose(usd_file_write);
+    }
+    pros::delay(2000); // Save every 2 seconds to preserve SD health
   }
 }
 

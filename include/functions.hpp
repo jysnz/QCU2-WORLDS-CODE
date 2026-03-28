@@ -23,6 +23,7 @@ void midGoalArm();
 void underGoalArm();
 void intakeBlock();
 void outtakeBlock();
+void intakeStop();
 void reset();
 void leverReset();
 
@@ -36,6 +37,10 @@ void wall_reset_v2(int voltage = 8000, int settleTime = 200, int direction = 1,
                    int timeout = 1000);
 
 void intake_auto(int delay, int speed, int direction);
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+void persistenceTask(void *param);
+void restoreMotorPositions();
 
 // ─── Operator control
 // ─────────────────────────────────────────────────────────
