@@ -65,7 +65,7 @@ void gateClose() { gate.move_absolute(-240, 200); }
 
 void descoreUp() { descore.move_absolute(0, 200); }
 
-void descoreDown() { descore.move_absolute(-200, 200); }
+void descoreDown() { descore.move_absolute(-210, 200); }
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
@@ -74,18 +74,18 @@ void matchloadUp() { matchloader.move_absolute(-500, 200); }
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
 void midGoalArm() {
-  arm.move_absolute(1300, 200); 
+  arm.move_absolute(1300, 200);
   descore.move_absolute(-300, 200);
 }
 
 void underGoalArm() {
-  arm.move_absolute(2000, 200); 
+  arm.move_absolute(2000, 200);
   gate.move_absolute(0, 200); // Ensure gate is closed in under goal position
   descore.move_absolute(-320, 200);
 }
 
-void longGoalArm() { 
-  arm.move_absolute(0, 200); 
+void longGoalArm() {
+  arm.move_absolute(0, 200);
   descoreUp();
 }
 
@@ -245,6 +245,8 @@ void catapultControl() {
   static bool wasArmHeld = false;
   static uint32_t pressStartTime = 0;
   static double lastDiscorePos = 0.0;
+  static ArmState lastKnownState = LONG_GOAL;
+  static bool stateChanged = true; // Force first execution
 
   while (true) {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
@@ -314,46 +316,64 @@ void catapultControl() {
       pressStartTime = pros::millis();
     }
 
-    // ─── STATE TRANSITION LOGIC ───
+    // IMMEDIATE TRANSITION TO UNDER_GOAL IF HELD
+    if (armHeld && (pros::millis() - pressStartTime > 500) &&
+        currentArmState != UNDER_GOAL) {
+      currentArmState = UNDER_GOAL;
+      stateChanged = true;
+    }
+
+    // ─── STATE TRANSITION LOGIC (Taps) ───
     if (wasArmHeld && !armHeld) {
       // Button was just released - check how long it was held
       uint32_t holdTime = pros::millis() - pressStartTime;
 
-      if (holdTime > 500) {
-        // LONG PRESS: Lock into Under Goal
-        currentArmState = UNDER_GOAL;
-      } else {
+      if (holdTime <= 500) {
         // SHORT TAP: Cycle between Long and Mid
         if (currentArmState == LONG_GOAL) {
           currentArmState = MID_GOAL;
         } else {
           currentArmState = LONG_GOAL;
         }
+        stateChanged = true;
       }
     }
 
     // Update wasArmHeld at the very end of the loop or after checking taps
     wasArmHeld = armHeld;
 
-    // 5. Arm Execution (Combined Commands)
-    switch (currentArmState) {
-    case LONG_GOAL:
-      longGoalArm(); // Call your setup function
-      break;
+    // Detect if a manual descore button was JUST released
+    static bool wasDescoreUp = false;
+    static bool wasDescoreDown = false;
+    bool descoreReleased =
+        (wasDescoreUp && !discoreUp) || (wasDescoreDown && !discoreDown);
+    wasDescoreUp = discoreUp;
+    wasDescoreDown = discoreDown;
 
-    case MID_GOAL:
-      midGoalArm();
-      break;
-
-    case UNDER_GOAL:
-      underGoalArm();
-      break;
-    }
-
-    if (discoreUp)
+    // 5. Arm & Descore execution
+    if (discoreUp) {
       descoreUp();
-    else if (discoreDown)
+      stateChanged = false; // Override automatic motion
+    } else if (discoreDown) {
       descoreDown();
+      stateChanged = false; // Override automatic motion
+    } else {
+      // If the state JUST changed, apply the state-specific defaults
+      if (stateChanged) {
+        switch (currentArmState) {
+        case LONG_GOAL:
+          longGoalArm();
+          break;
+        case MID_GOAL:
+          midGoalArm();
+          break;
+        case UNDER_GOAL:
+          underGoalArm();
+          break;
+        }
+        stateChanged = false;
+      }
+    }
 
     if (matchLoadDown && !matchLoadUp) {
       matchloadDown();
