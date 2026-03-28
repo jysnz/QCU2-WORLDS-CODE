@@ -17,7 +17,7 @@ pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
 pros::Motor matchloader(5, pros::MotorGears::red);
-pros::Motor discore(15, pros::MotorGears::green);
+pros::Motor descore(15, pros::MotorGears::green);
 pros::Motor arm(6, pros::MotorGears::red);
 pros::Motor gate(17, pros::MotorGears::green);
 
@@ -60,7 +60,7 @@ void initialize() {
 
   catapult_arm.tare_position();
   matchloader.tare_position();
-  discore.tare_position();
+  descore.tare_position();
 
   pros::lcd::initialize();
   chassis.calibrate();
@@ -160,8 +160,9 @@ void initialize() {
       drawTechCard(20, 169, "[ INTAKE ]", intake.get_temperature());
 
       drawTechCard(245, 55, "[ MATCHLOAD ]", matchloader.get_temperature());
-      drawTechCard(245, 112, "[ DESCORE ]", discore.get_temperature());
+      drawTechCard(245, 112, "[ DESCORE ]", descore.get_temperature());
       drawTechCard(245, 169, "[ CATAPULT ]", arm.get_temperature());
+      drawTechCard(245, 226, "[ GATE ]", gate.get_temperature());
 
       // ── Footer Diagnostics ──
       pros::screen::set_pen(0x444455);
@@ -173,17 +174,17 @@ void initialize() {
 
       if (imu_calib) {
         pros::screen::set_pen(ACCENT_ORANGE);
-        pros::screen::print(pros::E_TEXT_SMALL, 20, 222,
+        pros::screen::print(pros::E_TEXT_SMALL, 20, 260,
                             "IMU_STATUS: CALIBRATING... // HEADING: %.1f",
                             imu.get_heading());
       } else if (imu_ok) {
         pros::screen::set_pen(ACCENT_CYAN);
-        pros::screen::print(pros::E_TEXT_SMALL, 20, 222,
+        pros::screen::print(pros::E_TEXT_SMALL, 20, 260,
                             "IMU_STATUS: OK // HEADING: %.1f",
                             imu.get_heading());
       } else {
         pros::screen::set_pen(ACCENT_RED);
-        pros::screen::print(pros::E_TEXT_SMALL, 20, 222,
+        pros::screen::print(pros::E_TEXT_SMALL, 20, 260,
                             "IMU_STATUS: ERROR/DAMAGED // CHECK_PORT_9");
       }
 

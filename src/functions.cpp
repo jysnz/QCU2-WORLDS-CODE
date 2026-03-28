@@ -63,11 +63,11 @@ void gateOpen() { gate.move_absolute(-120, 200); }
 
 void gateClose() { gate.move_absolute(-240, 200); }
 
-void descoreUp() { discore.move_absolute(0, 200); }
+void descoreUp() { descore.move_absolute(0, 200); }
 
-void descoreDown() { discore.move_absolute(150, 200); }
+void descoreDown() { descore.move_absolute(-150, 200); }
 
-void descoreDownMiddle() { discore.move_absolute(300, 200); }
+void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
 void matchloadUp() { matchloader.move_absolute(-500, 200); }
 
@@ -95,18 +95,24 @@ void leverReset() {
   }
 }
 
+// --- ARM STATE TRACKING ---
+enum ArmState { LONG_GOAL, MID_GOAL, UNDER_GOAL };
+static ArmState currentArmState = LONG_GOAL; // Default position
+
 // ─── Catapult task (Updated with Dynamic Intake Logic) ───────────────────────
 void catapultTask(void *) {
   while (true) {
     double pos = catapult_arm.get_position();
     double vel = std::abs(catapult_arm.get_actual_velocity());
 
+    int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
+
     switch (catState) {
     case CAT_IDLE:
       break;
 
     case CAT_FIRING:
-      if (pos <= FIRE_POS + 25) {
+      if (pos <= dynamicFirePos + 25) {
         shotSuccess = true;
         catState = CAT_RELOADING;
         catapult_arm.move_absolute(LOAD_POS, CAT_SPEED);
@@ -157,6 +163,7 @@ void catapultTask(void *) {
 
         if (shotSuccess || ++catAttempts >= MAX_ATTEMPTS) {
           catState = CAT_IDLE;
+          gateClose(); // Ensure gate locks after shoot or failure
           catAttempts = 0;
           shotSuccess = false;
           catShouldOuttake = false;
@@ -167,7 +174,7 @@ void catapultTask(void *) {
           // Clear path again for the retry
           intake.move_velocity(600);
 
-          catapult_arm.move_absolute(FIRE_POS, CAT_SPEED);
+          catapult_arm.move_absolute(dynamicFirePos, CAT_SPEED);
         }
       }
       break;
@@ -180,6 +187,8 @@ void catapultTask(void *) {
 void startCatapultShoot() {
   if (catState != CAT_IDLE)
     return;
+
+  int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
 
   // Update state: Is the intake currently being used by the driver?
   intakeWasManual =
@@ -197,7 +206,7 @@ void startCatapultShoot() {
   stalledTime = 0;
   shotSuccess = false;
   catState = CAT_FIRING;
-  catapult_arm.move_absolute(FIRE_POS, CAT_SPEED);
+  catapult_arm.move_absolute(dynamicFirePos, CAT_SPEED);
 
   // For Autonomous: wait until the arm is back at home before returning control
   // Only if this is being called from a blocking context (like Autonomous)
@@ -219,17 +228,20 @@ void catapultControl() {
   static bool controlsReversed = false;
   static bool wasDownHeld = false;
   static bool armRaised = false; // "Resting" state of the arm (0 or 2000)
-  static bool wasArmHeld = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
+
+  // --- ARM STATE TRACKING ---
+  static bool wasArmHeld = false;
+  static uint32_t pressStartTime = 0;
   static double lastDiscorePos = 0.0;
 
   while (true) {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
     // This allows the gate.move_absolute(-100) in startCatapultShoot to
     // persist.
-    if (catState == CAT_IDLE) {
-      gateOpen();
+    if (catState == CAT_IDLE && currentArmState == LONG_GOAL) {
+      gateClose();
     }
 
     pros::delay(20);
@@ -244,8 +256,6 @@ void catapultControl() {
 
     // Arm logic state tracking
     bool armHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
-    bool armTapped = armHeld && !wasArmHeld;
-    wasArmHeld = armHeld;
 
     bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool downTapped = downHeld && !wasDownHeld;
@@ -289,35 +299,61 @@ void catapultControl() {
       startCatapultShoot();
     }
 
-    // ─── ARM MOMENTARY HOLD LOGIC ───
-    if (armTapped) {
-      armRaised = !armRaised;
-      lastDiscorePos = discore.get_position();
+    // Logic to detect Tap vs. Hold
+    if (armHeld && !wasArmHeld) {
+      pressStartTime = pros::millis();
     }
 
-    if (armHeld) {
-      midGoalArm();
+    // ─── STATE TRANSITION LOGIC ───
+    if (wasArmHeld && !armHeld) {
+      // Button was just released - check how long it was held
+      uint32_t holdTime = pros::millis() - pressStartTime;
 
-      // Move descore down until it stalls
-      if (std::abs(discore.get_actual_velocity()) < 5 &&
-          std::abs(discore.get_position()) > 200) {
-        discore.move_velocity(0);
+      if (holdTime > 500) {
+        // LONG PRESS: Lock into Under Goal
+        currentArmState = UNDER_GOAL;
       } else {
-        discore.move_velocity(100); // Adjust speed if needed
+        // SHORT TAP: Cycle between Long and Mid
+        if (currentArmState == LONG_GOAL) {
+          currentArmState = MID_GOAL;
+        } else {
+          currentArmState = LONG_GOAL;
+        }
       }
-    } else {
-      arm.move_absolute(armRaised ? 1300 : 0, 200);
-      if (wasArmHeld) {
-        discore.move_absolute(lastDiscorePos, 200);
-      }
-      gate.move_velocity(0);
-      gateClose();
+    }
+
+    // Update wasArmHeld at the very end of the loop or after checking taps
+    wasArmHeld = armHeld;
+
+    // 5. Arm Execution (Combined Commands)
+    switch (currentArmState) {
+    case LONG_GOAL:
+      longGoalArm(); // Call your setup function
+      break;
+
+    case MID_GOAL:
+      midGoalArm();
+      break;
+
+    case UNDER_GOAL:
+      underGoalArm();
+      break;
     }
 
     if (discoreUp)
       descoreUp();
     else if (discoreDown)
       descoreDown();
+    // Only apply default manual stop logic if not in a state that automates
+    // descore
+    else if (currentArmState == LONG_GOAL) {
+      descoreUp();
+    } else if (currentArmState == MID_GOAL) {
+      descore.move_absolute(-300, 200);
+    } else if (currentArmState == UNDER_GOAL) {
+      gate.move_absolute(0, 200); // Ensure gate is closed in under goal position
+      descore.move_absolute(-320, 200);
+    }
 
     if (matchLoadDown && !matchLoadUp) {
       matchloadDown();

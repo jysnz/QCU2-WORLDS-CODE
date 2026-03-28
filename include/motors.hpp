@@ -13,7 +13,7 @@ extern pros::MotorGroup intake;
 
 extern pros::Motor catapult_arm;
 extern pros::Motor matchloader;
-extern pros::Motor discore;
+extern pros::Motor descore;
 extern pros::Motor arm;
 extern pros::Motor gate;
 
