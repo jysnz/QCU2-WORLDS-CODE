@@ -64,6 +64,27 @@ void parkingtest(){
     startCatapultShoot();
 }
 
+void curve(){
+  chassis.setPose(0, 0, 90);
+
+    // go around obstacle to prevent hitting it
+    chassis.moveToPose(
+        48,
+        -24,
+        90,
+        2000,
+        {.minSpeed=72, .earlyExitRange=8}
+        // a minSpeed of 72 means that the chassis will slow down as
+        // it approaches the target point, but it won't come to a full stop
+
+        // an earlyExitRange of 8 means the movement will exit 8" away from
+        // the target point
+    );
+
+    // go to target position
+    chassis.moveToPose(64, 3, 0, 2000);
+}
+
 //chassis.moveToPoint(0, 10, 3000);
 //chassis.turnToHeading(90, 1000);
 
@@ -90,23 +111,7 @@ void skills(){
   drivetrainLock();
 
   midGoalArm();
-  chassis.moveToPoint(0, -8, 3000, {.forwards = false}); //Adjust to 2nd matchload
-  chassis.waitUntilDone();
-
-  matchloadUp();
-
-  chassis.turnToHeading(-135, 1000); //Turn to 2nd matchload
-  chassis.waitUntilDone();
-  reset();
-  
-  chassis.moveToPoint(0, 18, 3000); //Forward to 2nd matchload
-  chassis.waitUntilDone();
-  pros::delay(500);
-
-  chassis.turnToHeading(-30, 1000); //Adjust to 2nd matchload
-  chassis.waitUntilDone();
-  reset();
-
+ 
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
 

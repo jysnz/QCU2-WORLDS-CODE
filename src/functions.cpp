@@ -69,7 +69,7 @@ void descoreDown() { discore.move_absolute(150, 200); }
 
 void descoreDownMiddle() { discore.move_absolute(300, 200); }
 
-void matchloadUp() { matchloader.move_absolute(-350, 200); }
+void matchloadUp() { matchloader.move_absolute(-500, 200); }
 
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
@@ -310,6 +310,8 @@ void catapultControl() {
       if (wasArmHeld) {
         discore.move_absolute(lastDiscorePos, 200);
       }
+      gate.move_velocity(0);
+      gateClose();
     }
 
     if (discoreUp)
