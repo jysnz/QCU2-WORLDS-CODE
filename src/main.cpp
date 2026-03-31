@@ -34,8 +34,8 @@ lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group,
 
 lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
 
-lemlib::ControllerSettings lateral_controller(10, 0, 25, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(1.8, 0, 10, 0, 0, 0, 0, 0, 0);
+lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
+lemlib::ControllerSettings angular_controller(1.5, 0, 10, 0, 0, 0, 0, 0, 0);
 
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);

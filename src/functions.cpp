@@ -20,7 +20,7 @@ static bool intakeWasManual =
     false; // Tracks if intake was already running before shoot
 
 const int LOAD_POS = 0;
-const int FIRE_POS = -600;
+const int FIRE_POS = -630;
 const int CAT_SPEED = 200;
 const int STALL_TIME = 250;
 const int CHECK_DELAY = 10;
@@ -57,6 +57,10 @@ double inchesToDegrees(double inches) {
 void drivetrainLock() {
   left_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+}
+
+void delay(int delay){
+  pros::delay(delay);
 }
 
 void gateOpen() { gate.move_absolute(-120, 200); }
@@ -126,7 +130,7 @@ void catapultTask(void *) {
     case CAT_FIRING:
       // In Firing state, command the gate to stay open to ensure it doesn't
       // close prematurely
-      gate.move_absolute(-120, 200);
+      // gateOpen();
 
       if (pos <= dynamicFirePos + 25) {
         shotSuccess = true;
@@ -179,7 +183,6 @@ void catapultTask(void *) {
 
         if (shotSuccess || ++catAttempts >= MAX_ATTEMPTS) {
           catState = CAT_IDLE;
-          gateClose(); // Ensure gate locks after shoot or failure
           catAttempts = 0;
           shotSuccess = false;
           catShouldOuttake = false;
@@ -216,7 +219,7 @@ void startCatapultShoot() {
   intake.move_velocity(-600);
 
   // Command gate to open to -120 when firing begins
-  gate.move_absolute(-120, 200);
+  gateOpen();
 
   catAttempts = 0;
   stalledTime = 0;
@@ -289,7 +292,8 @@ void catapultControl() {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
     // This allows the gate.move_absolute(-100) in startCatapultShoot to
     // persist.
-    if (catState == CAT_IDLE && currentArmState == LONG_GOAL) {
+    if (catState == CAT_IDLE && currentArmState == LONG_GOAL &&
+        !pros::competition::is_autonomous()) {
       gateClose();
     }
 

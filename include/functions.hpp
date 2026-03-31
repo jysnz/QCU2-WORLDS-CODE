@@ -11,6 +11,7 @@ void catapultShootForAuto(double speed);
 void intakeTask(void *param);
 
 // Robot functions
+void delay(int delay);
 void drivetrainLock();
 void gateOpen();
 void gateClose();
