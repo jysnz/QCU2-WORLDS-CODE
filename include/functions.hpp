@@ -23,7 +23,7 @@ void matchloadDown();
 void midGoalArm();
 void underGoalArm();
 void intakeBlock();
-void outtakeBlock();
+void outtakeBlock(double speed = 600);
 void intakeStop();
 void reset();
 void leverReset();

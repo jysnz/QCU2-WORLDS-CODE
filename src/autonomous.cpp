@@ -5,26 +5,26 @@
 // ─── Test routine
 // ─────────────────────────────────────────────────────────────
 void twoVtwo() {
-  // gateClose();
-  // chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload  
-  // chassis.waitUntilDone();
+  gateClose();
+  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload  
+  chassis.waitUntilDone();
 
-  // chassis.turnToHeading(90, 1000); // Turn to matchload
-  // chassis.waitUntilDone();
-  // intakeBlock();
-  // reset();
-  // gateClose();
+  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.waitUntilDone();
+  intakeBlock();
+  reset();
+  gateClose();
 
-  // chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
-  // chassis.waitUntilDone();
-  // pros::delay(300);
+  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.waitUntilDone();
+  pros::delay(300);
 
-  // chassis.moveToPoint(0, -25, 3000, {.forwards = false, .maxSpeed = 40}); // Go back to shoot
-  // chassis.waitUntilDone();
+  chassis.moveToPoint(0, -25, 3000, {.forwards = false, .maxSpeed = 40}); // Go back to shoot
+  chassis.waitUntilDone();
 
-  // startCatapultShoot(); // Shoot 1
-  // startCatapultShoot(); // Shoot 1
-  // reset();
+  startCatapultShoot(); // Shoot 1
+  startCatapultShoot(); // Shoot 1
+  reset();
 
   intakeBlock();
 
@@ -39,7 +39,7 @@ void twoVtwo() {
   pros::delay(3000);
   reset();
 
-  chassis.moveToPoint(0, -14.5, 3000, {.forwards = false, .maxSpeed = 40});
+  chassis.moveToPoint(0, -13, 3000, {.forwards = false, .maxSpeed = 40});
 
   chassis.turnToHeading(133, 1000);
   chassis.waitUntilDone();
@@ -47,10 +47,10 @@ void twoVtwo() {
 
   matchloadUp();
 
-  chassis.moveToPoint(0, 39, 3000, {.maxSpeed = 40}); //Go to middle goal
+  chassis.moveToPoint(0, 41, 3000, {.maxSpeed = 40}); //Go to middle goal
   chassis.waitUntilDone();
 
-  outtakeBlock();
+  outtakeBlock(100); //Outtake to descore
   pros::delay(1200);
 
   chassis.moveToPoint(0, 14, 3000, {.forwards = false, .maxSpeed = 40}); //Go back to shoot
@@ -61,8 +61,9 @@ void twoVtwo() {
   reset();
 
   descoreDown();
-  chassis.moveToPoint(0, 18, 3000, {.minSpeed = 127} ); //Go forward descore
+  chassis.moveToPoint(0, 15, 3000, {.minSpeed = 127} ); //Go forward descore
   chassis.waitUntilDone();
+  matchloadDown();
 
 }
 

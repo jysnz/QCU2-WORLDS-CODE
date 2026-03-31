@@ -95,7 +95,7 @@ void longGoalArm() {
 
 void intakeBlock() { intake.move_velocity(-600); }
 
-void outtakeBlock() { intake.move_velocity(600); }
+void outtakeBlock(double speed) { intake.move_velocity(speed); }
 
 void intakeStop() { intake.move_velocity(0); }
 
@@ -427,7 +427,7 @@ void catapultControl() {
       if (intakePause) {
         intake.move_velocity(0);
       } else if (intakeForward && !intakeReverse) {
-        outtakeBlock();
+        outtakeBlock(100);
       } else if (intakeReverse && !intakeForward) {
         intakeBlock();
       }
