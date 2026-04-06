@@ -71,7 +71,7 @@ void descoreDown() { descore.move_absolute(-210, 200); }
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
-void matchloadUp() { matchloader.move_absolute(-500, 200); }
+void matchloadUp() { matchloader.move_absolute(-450, 200); }
 
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
@@ -290,12 +290,14 @@ void catapultControl() {
   static ArmState lastKnownState = LONG_GOAL;
   static bool stateChanged = true; // Force first execution
 
+  static bool matchLoadToggled = false;
+  static bool wasMatchLoadTapped = false;
+
   while (true) {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
     // This allows the gate.move_absolute(-100) in startCatapultShoot to
     // persist.
-    if (catState == CAT_IDLE &&
-        (currentArmState == LONG_GOAL) &&
+    if (catState == CAT_IDLE && (currentArmState == LONG_GOAL) &&
         !pros::competition::is_autonomous()) {
       gateClose();
     } else if (currentArmState == MID_GOAL && catState == CAT_IDLE &&
@@ -308,10 +310,14 @@ void catapultControl() {
     bool intakeReverse = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     bool intakePause = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     bool catapultBtn = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-    bool discoreDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
-    bool discoreUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
-    bool matchLoadUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
-    bool matchLoadDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+    bool descoreHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+    bool matchLoadTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+
+    // Toggle logic for Matchload (Button Y)
+    if (matchLoadTapped && !wasMatchLoadTapped) {
+      matchLoadToggled = !matchLoadToggled;
+    }
+    wasMatchLoadTapped = matchLoadTapped;
 
     // Arm logic state tracking
     bool armHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
@@ -389,43 +395,35 @@ void catapultControl() {
     // Update wasArmHeld at the very end of the loop or after checking taps
     wasArmHeld = armHeld;
 
-    // Detect if a manual descore button was JUST released
-    static bool wasDescoreUp = false;
-    static bool wasDescoreDown = false;
-    bool descoreReleased =
-        (wasDescoreUp && !discoreUp) || (wasDescoreDown && !discoreDown);
-    wasDescoreUp = discoreUp;
-    wasDescoreDown = discoreDown;
-
     // 5. Arm & Descore execution
-    if (discoreUp) {
-      descoreUp();
-      stateChanged = false; // Override automatic motion
-    } else if (discoreDown) {
+    // Button B logic: descoreUp when held, descoreDown when released
+    if (descoreHeld) {
       descoreDown();
-      stateChanged = false; // Override automatic motion
     } else {
-      // If the state JUST changed, apply the state-specific defaults
-      if (stateChanged) {
-        switch (currentArmState) {
-        case LONG_GOAL:
-          longGoalArm();
-          break;
-        case MID_GOAL:
-          midGoalArm();
-          break;
-        case UNDER_GOAL:
-          underGoalArm();
-          break;
-        }
-        stateChanged = false;
-      }
+      descoreUp();
     }
 
-    if (matchLoadDown && !matchLoadUp) {
-      matchloadDown();
-    } else if (matchLoadUp && !matchLoadDown) {
+    // If the state JUST changed, apply the state-specific defaults
+    if (stateChanged) {
+      switch (currentArmState) {
+      case LONG_GOAL:
+        longGoalArm();
+        break;
+      case MID_GOAL:
+        midGoalArm();
+        break;
+      case UNDER_GOAL:
+        underGoalArm();
+        break;
+      }
+      stateChanged = false;
+    }
+
+    // Toggle matchload based on matchLoadToggled state (Button Y)
+    if (matchLoadToggled) {
       matchloadUp();
+    } else {
+      matchloadDown();
     }
 
     // Manual intake controls

@@ -168,7 +168,7 @@ void curve() {
 // chassis.turnToHeading(90, 1000);
 
 void skills() {
-  chassis.moveToPoint(0, 38, 3000); // Go to matchload
+  chassis.moveToPoint(0, 39, 3000); // Go to matchload
   chassis.waitUntilDone();
 
   chassis.turnToHeading(87, 1000); // Turn to matchload
@@ -179,18 +179,36 @@ void skills() {
   chassis.waitUntilDone();
 
   startCatapultShoot(); // Shoot 1
+  reset();
 
   pros::delay(500);
-
   intakeBlock();
 
   chassis.moveToPoint(0, 17, 3000, {.maxSpeed = 40}); // Go to intake
+  chassis.waitUntilDone();
   gateClose();
   drivetrainLock();
 
   midGoalArm();
 
+  chassis.moveToPoint(0, 14, 3000, {.forwards = false, .maxSpeed = 70}); // Go to middle goal
+  chassis.waitUntilDone();
+  matchloadDown();
+
+  startCatapultShoot(); // Shoot 2
   reset();
+
+  pros::delay(500); 
+  intakeBlock();
+
+  chassis.moveToPoint(-10, 30, 3000, {.maxSpeed = 40});
+  chassis.waitUntilDone();
+
+
+  
+
+
+  
 
   
 
@@ -332,4 +350,4 @@ void skills() {
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { twoVtwo_left(); }
+void runAutonomous() { skills(); }
