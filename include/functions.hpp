@@ -14,6 +14,8 @@ void intakeTask(void *param);
 // Robot functions
 void delay(int delay);
 void drivetrainLock();
+void curve_imu(double distance, double targetHeading, double maxSpeed,
+               double kp, double minSpeed);
 void gateOpen();
 void gateClose();
 void descoreUp();

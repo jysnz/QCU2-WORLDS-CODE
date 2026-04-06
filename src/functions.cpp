@@ -59,6 +59,49 @@ void drivetrainLock() {
   right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 }
 
+void curve_imu(double distance, double targetHeading, double maxSpeed,
+               double kp, double minSpeed) {
+  double targetPosition = inchesToDegrees(distance);
+  left_motor_group.tare_position();
+  right_motor_group.tare_position();
+
+  while (true) {
+    double currentPosition = (std::abs(left_motor_group.get_position()) +
+                              std::abs(right_motor_group.get_position())) /
+                             2.0;
+    double error = targetPosition - currentPosition;
+
+    if (std::abs(error) < 10)
+      break;
+
+    double currentHeading = imu.get_heading();
+    double headingError = targetHeading - currentHeading;
+
+    while (headingError > 180.0)
+      headingError -= 360.0;
+    while (headingError < -180.0)
+      headingError += 360.0;
+
+    int correction = (int)(headingError * kp);
+    int speed = (error > 0) ? maxSpeed : -maxSpeed;
+
+    // Slow down as we approach the target
+    if (std::abs(error) < 300) {
+      double scaledSpeed = (std::abs(error) / 300.0) * maxSpeed;
+      speed = (error > 0) ? std::max(scaledSpeed, minSpeed)
+                          : -std::max(scaledSpeed, minSpeed);
+    }
+
+    left_motor_group.move(speed + correction);
+    right_motor_group.move(speed - correction);
+
+    pros::delay(10);
+  }
+
+  left_motor_group.move(0);
+  right_motor_group.move(0);
+}
+
 void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(-120, 200); }

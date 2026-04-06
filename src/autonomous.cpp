@@ -201,16 +201,25 @@ void skills() {
   // chassis.waitUntilDone();
   // drivetrainLock();
 
-  reset();
+  // reset();
 
-  chassis.moveToPoint(0, -8, 3000, {.forwards = false, .maxSpeed = 100});
-  chassis.waitUntilDone();
+  // chassis.moveToPoint(0, -8, 3000, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
+  // matchloadUp();
+
+  // chassis.turnToHeading(-140, 500);
+  // chassis.waitUntilDone();
+
+  // reset();
+
+  // Drive 24 inches at 0 degrees, speed 80, with 1.0 correction strength
+  // 1. Move forward 24 inches while curving to face 45 degrees
   matchloadUp();
+  curve_imu(3.0, 45.0, 80, 1.0, 30);
 
-  chassis.turnToHeading(-140, 500);
-  chassis.waitUntilDone();
+  // // 2. Drive straight for another 12 inches at that 45-degree angle
+  // curve_imu(12.0, 0, 80, 1.0, 20);
 
-  reset();
 
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
