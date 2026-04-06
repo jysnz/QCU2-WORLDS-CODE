@@ -272,10 +272,10 @@ void persistenceTask(void *) {
 void catapultControl() {
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
-  const double IMU_CORRECTION_KP = 0.6;
+  const double IMU_CORRECTION_KP = 0.8;
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
-  const double IMU_CORRECTION_THRESHOLD = 2.0;
+  const double IMU_CORRECTION_THRESHOLD = 1.0;
 
   static bool controlsReversed = false;
   static bool wasDownHeld = false;
