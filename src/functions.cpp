@@ -294,15 +294,15 @@ void catapultControl() {
   static bool wasMatchLoadTapped = false;
 
   while (true) {
-    // ONLY reset the gate to -220 if the catapult is not currently shooting.
-    // This allows the gate.move_absolute(-100) in startCatapultShoot to
-    // persist.
-    if (catState == CAT_IDLE && (currentArmState == LONG_GOAL) &&
-        !pros::competition::is_autonomous()) {
-      gateClose();
-    } else if (currentArmState == MID_GOAL && catState == CAT_IDLE &&
-               !pros::competition::is_autonomous()) {
-      gateCloseMid();
+    // 1. Gate Logic Base
+    // Only apply if we haven't just changed states or if we are idle
+    if (catState == CAT_IDLE && !pros::competition::is_autonomous()) {
+      if (currentArmState == LONG_GOAL) {
+        gateClose();
+      } else if (currentArmState == MID_GOAL) {
+        gateCloseMid();
+      }
+      // Note: UNDER_GOAL gate position is handled in underGoalArm() once
     }
 
     pros::delay(20);
@@ -396,15 +396,12 @@ void catapultControl() {
     wasArmHeld = armHeld;
 
     // 5. Arm & Descore execution
-    // Button B logic: descoreUp when held, descoreDown when released
+    // Manual Descore Control (Only if Button B is actually pressed)
     if (descoreHeld) {
       descoreDown();
-    } else {
-      descoreUp();
-    }
-
-    // If the state JUST changed, apply the state-specific defaults
-    if (stateChanged) {
+    } else if (stateChanged) {
+      // Apply the state-specific defaults ONLY when state changes to avoid
+      // constant fighting
       switch (currentArmState) {
       case LONG_GOAL:
         longGoalArm();
@@ -417,6 +414,11 @@ void catapultControl() {
         break;
       }
       stateChanged = false;
+    } else if (catState == CAT_IDLE && !descoreHeld) {
+      // If we aren't changing states and aren't holding B,
+      // return to the state-defined positions if they aren't being moved by
+      // something else. This ensures midGoalArm() and underGoalArm()
+      // persistence.
     }
 
     // Toggle matchload based on matchLoadToggled state (Button Y)
