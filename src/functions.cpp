@@ -20,7 +20,7 @@ static bool intakeWasManual =
     false; // Tracks if intake was already running before shoot
 
 const int LOAD_POS = 0;
-const int FIRE_POS = -630;
+const int FIRE_POS = -680;
 const int CAT_SPEED = 200;
 const int STALL_TIME = 250;
 const int CHECK_DELAY = 10;
@@ -80,7 +80,7 @@ void gateCloseMid() { gate.move_absolute(-400, 200); }
 void midGoalArm() {
   arm.move_absolute(1300, 200);
   descore.move_absolute(-300, 200);
-  gate.move_absolute(-200, 200);
+  gate.move_absolute(-450, 200);
 }
 
 void underGoalArm() {
@@ -300,7 +300,7 @@ void catapultControl() {
       if (currentArmState == LONG_GOAL) {
         gateClose();
       } else if (currentArmState == MID_GOAL) {
-        gateCloseMid();
+        midGoalArm();
       }
       // Note: UNDER_GOAL gate position is handled in underGoalArm() once
     }
@@ -399,26 +399,28 @@ void catapultControl() {
     // Manual Descore Control (Only if Button B is actually pressed)
     if (descoreHeld) {
       descoreDown();
-    } else if (stateChanged) {
-      // Apply the state-specific defaults ONLY when state changes to avoid
-      // constant fighting
-      switch (currentArmState) {
-      case LONG_GOAL:
-        longGoalArm();
-        break;
-      case MID_GOAL:
-        midGoalArm();
-        break;
-      case UNDER_GOAL:
-        underGoalArm();
-        break;
+    } else {
+      // If B is released, check if we need to return to a state-defined
+      // position
+      if (stateChanged) {
+        // Apply the state-specific defaults ONLY when state changes to avoid
+        // constant fighting
+        switch (currentArmState) {
+        case LONG_GOAL:
+          longGoalArm();
+          break;
+        case MID_GOAL:
+          midGoalArm();
+          break;
+        case UNDER_GOAL:
+          underGoalArm();
+          break;
+        }
+        stateChanged = false;
+      } else if (currentArmState == LONG_GOAL) {
+        // In the normal LONG_GOAL state, release = return to UP position
+        descoreUp();
       }
-      stateChanged = false;
-    } else if (catState == CAT_IDLE && !descoreHeld) {
-      // If we aren't changing states and aren't holding B,
-      // return to the state-defined positions if they aren't being moved by
-      // something else. This ensures midGoalArm() and underGoalArm()
-      // persistence.
     }
 
     // Toggle matchload based on matchLoadToggled state (Button Y)

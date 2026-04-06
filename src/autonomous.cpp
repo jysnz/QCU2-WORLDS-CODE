@@ -193,7 +193,7 @@ void skills() {
 
   // chassis.moveToPoint(0, 14, 3000, {.forwards = false, .maxSpeed = 70}); // Go to middle goal
   // chassis.waitUntilDone();
-  // matchloadDown();
+  // matchloadUp();
 
   // chassis.moveToPoint(-10, 30, 3000, {.maxSpeed = 40});
   // chassis.waitUntilDone();
