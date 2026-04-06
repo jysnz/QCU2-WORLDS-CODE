@@ -2,6 +2,7 @@
 
 // ─── Catapult
 // ─────────────────────────────────────────────────────────────────
+#include <sys/_intsup.h>
 void catapultTask(void *param);
 void startCatapultShoot();
 void catapultShootForAuto(double speed);
@@ -20,6 +21,7 @@ void descoreDown();
 void descoreDownMiddle();
 void matchloadUp();
 void matchloadDown();
+void longGoalArm();
 void midGoalArm();
 void underGoalArm();
 void intakeBlock();
@@ -27,6 +29,7 @@ void outtakeBlock(double speed = 600);
 void intakeStop();
 void reset();
 void leverReset();
+void gateCloseMid();
 
 // ─── Drive ───────────────────────────────────────────────────────────────────
 void drive_for_inches(double maxSpeed, double inches);

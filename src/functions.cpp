@@ -59,9 +59,7 @@ void drivetrainLock() {
   right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 }
 
-void delay(int delay){
-  pros::delay(delay);
-}
+void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(-120, 200); }
 
@@ -77,9 +75,12 @@ void matchloadUp() { matchloader.move_absolute(-500, 200); }
 
 void matchloadDown() { matchloader.move_absolute(0, 200); }
 
+void gateCloseMid() { gate.move_absolute(-400, 200); }
+
 void midGoalArm() {
   arm.move_absolute(1300, 200);
   descore.move_absolute(-300, 200);
+  gate.move_absolute(-200, 200);
 }
 
 void underGoalArm() {
@@ -208,6 +209,7 @@ void startCatapultShoot() {
     return;
 
   int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
+  int dynamicGatePos = (currentArmState == MID_GOAL) ? -80 : -120;
 
   // Update state: Is the intake currently being used by the driver?
   intakeWasManual =
@@ -219,7 +221,7 @@ void startCatapultShoot() {
   intake.move_velocity(-600);
 
   // Command gate to open to -120 when firing begins
-  gateOpen();
+  gate.move_absolute(dynamicGatePos, 200);
 
   catAttempts = 0;
   stalledTime = 0;
@@ -292,9 +294,13 @@ void catapultControl() {
     // ONLY reset the gate to -220 if the catapult is not currently shooting.
     // This allows the gate.move_absolute(-100) in startCatapultShoot to
     // persist.
-    if (catState == CAT_IDLE && currentArmState == LONG_GOAL &&
+    if (catState == CAT_IDLE &&
+        (currentArmState == LONG_GOAL) &&
         !pros::competition::is_autonomous()) {
       gateClose();
+    } else if (currentArmState == MID_GOAL && catState == CAT_IDLE &&
+               !pros::competition::is_autonomous()) {
+      gateCloseMid();
     }
 
     pros::delay(20);
@@ -358,7 +364,7 @@ void catapultControl() {
     }
 
     // IMMEDIATE TRANSITION TO UNDER_GOAL IF HELD
-    if (armHeld && (pros::millis() - pressStartTime > 500) &&
+    if (armHeld && (pros::millis() - pressStartTime > 200) &&
         currentArmState != UNDER_GOAL) {
       currentArmState = UNDER_GOAL;
       stateChanged = true;
