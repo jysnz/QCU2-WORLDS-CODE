@@ -195,12 +195,6 @@ void skills() {
   chassis.waitUntilDone();
   matchloadDown();
 
-  startCatapultShoot(); // Shoot 2
-  reset();
-
-  pros::delay(500); 
-  intakeBlock();
-
   chassis.moveToPoint(-10, 30, 3000, {.maxSpeed = 40});
   chassis.waitUntilDone();
 
