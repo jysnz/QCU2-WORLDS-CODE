@@ -150,10 +150,24 @@ void path() {
 }
 
 void parkingtest() {
-  chassis.moveToPose(-14, -30, 0, 1500, {.forwards = false, .lead = 0.3});
-  chassis.moveToPoint(-14, -85, 3000, {.forwards = false});
+    chassis.setPose(0, 0, 90);
 
-  chassis.moveToPose(0, 120, 0, 1500, {.forwards = false, .lead = 0.8});
+    // go around obstacle to prevent hitting it
+    chassis.moveToPose(
+        48,
+        -24,
+        90,
+        2000,
+        {.minSpeed=72, .earlyExitRange=8}
+        // a minSpeed of 72 means that the chassis will slow down as
+        // it approaches the target point, but it won't come to a full stop
+
+        // an earlyExitRange of 8 means the movement will exit 8" away from
+        // the target point
+    );
+
+    // go to target position
+    chassis.moveToPose(64, 3, 0, 2000);
 }
 
 void curve() {
@@ -185,41 +199,36 @@ void skills() {
   // reset();
 
   // chassis.moveToPoint(0, -25, 3000,
-  //                     {.forwards = false, .maxSpeed = 70}); // Go back to
-  //                     shoot
+  //                     {.forwards = false, .maxSpeed = 70}); 
   // chassis.waitUntilDone();
 
   // startCatapultShoot(); // Shoot 1
-  // reset();
+  reset();
 
-  // pros::delay(300);
-  // intakeBlock();
+  pros::delay(300);
+  intakeBlock();
 
-  // midGoalArm();
+  midGoalArm();
 
-  // chassis.moveToPoint(0, 37, 3000, {.maxSpeed = 40}); // Go to intake
-  // chassis.waitUntilDone();
-  // drivetrainLock();
+  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
+  chassis.waitUntilDone();
+  drivetrainLock();
 
-  // reset();
+  reset();
 
-  // chassis.moveToPoint(0, -8, 3000, {.forwards = false, .maxSpeed = 100});
-  // chassis.waitUntilDone();
-  // matchloadUp();
-
-  // chassis.turnToHeading(-140, 500);
-  // chassis.waitUntilDone();
-
-  // reset();
-
-  // Drive 24 inches at 0 degrees, speed 80, with 1.0 correction strength
-  // 1. Move forward 24 inches while curving to face 45 degrees
+  chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
   matchloadUp();
-  curve_imu(3.0, 45.0, 80, 1.0, 30);
 
-  // // 2. Drive straight for another 12 inches at that 45-degree angle
-  // curve_imu(12.0, 0, 80, 1.0, 20);
+  chassis.turnToHeading(-140, 500);
+  chassis.waitUntilDone();
 
+  matchloadUp();
+  reset();
+  
+  chassis.moveToPose(10, 28, 0, 2000, {.lead = 0.5, .minSpeed = 50});
+  chassis.waitUntilDone();
+  chassis.turnToHeading(4, 1000);
 
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
