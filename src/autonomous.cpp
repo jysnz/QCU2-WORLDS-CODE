@@ -219,6 +219,7 @@ void skills() {
   chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
   matchloadUp();
+  intakeStop();
 
   chassis.turnToHeading(-140, 500);
   chassis.waitUntilDone();
@@ -226,9 +227,13 @@ void skills() {
   matchloadUp();
   // reset();
   
-  chassis.moveToPose(-17, -28, -140, 2000, {.lead = 0.4, .minSpeed = 50});
+  chassis.turnToPoint(-20, -25, 500);
+  chassis.moveToPoint(-20, -25, 2000);
   chassis.waitUntilDone();
-  chassis.turnToHeading(-170, 1000);
+  chassis.turnToHeading(-190, 1000);
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(5, -120, 2000, {.minSpeed = 100});
 
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
