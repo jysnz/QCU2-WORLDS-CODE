@@ -226,7 +226,7 @@ void skills() {
   matchloadUp();
   // reset();
   
-  chassis.moveToPose(-20, -28, -140, 2000, {.lead = 0.6, .minSpeed = 50});
+  chassis.moveToPose(-17, -28, -140, 2000, {.lead = 0.4, .minSpeed = 50});
   chassis.waitUntilDone();
   chassis.turnToHeading(-170, 1000);
 
