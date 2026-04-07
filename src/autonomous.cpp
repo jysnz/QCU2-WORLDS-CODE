@@ -191,24 +191,23 @@ void curve() {
 // chassis.turnToHeading(90, 1000);
 
 void skills() {
-  // chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
-  // chassis.waitUntilDone();
+  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.waitUntilDone();
 
-  // chassis.turnToHeading(90, 1000); // Turn to matchload
-  // chassis.waitUntilDone();
-  // reset();
+  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.waitUntilDone();
+  reset();
 
-  // chassis.moveToPoint(0, -25, 3000,
-  //                     {.forwards = false, .maxSpeed = 70}); 
-  // chassis.waitUntilDone();
+  chassis.moveToPoint(0, -25, 3000,
+                      {.forwards = false, .maxSpeed = 70}); 
+  chassis.waitUntilDone();
 
-  // startCatapultShoot(); // Shoot 1
+  startCatapultShoot(); // Shoot 1
   reset();
 
   pros::delay(300);
+  gateClose();
   intakeBlock();
-
-  midGoalArm();
 
   chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
   chassis.waitUntilDone();
@@ -221,19 +220,33 @@ void skills() {
   matchloadUp();
   intakeStop();
 
-  chassis.turnToHeading(-140, 500);
-  chassis.waitUntilDone();
-
   matchloadUp();
-  // reset();
-  
-  chassis.turnToPoint(-20, -25, 500);
-  chassis.moveToPoint(-20, -25, 2000);
-  chassis.waitUntilDone();
-  chassis.turnToHeading(-190, 1000);
+  chassis.turnToHeading(-145, 1000);
   chassis.waitUntilDone();
 
-  chassis.moveToPoint(5, -120, 2000, {.minSpeed = 100});
+  reset();
+
+  chassis.moveToPoint(-13, 100, 3500, {.maxSpeed = 100});
+  chassis.waitUntilDone();
+
+  reset();
+
+  chassis.moveToPoint(0, -17s, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
+
+  chassis.turnToHeading(-90, 1000);
+  chassis.waitUntilDone();
+
+  reset();
+
+  chassis.moveToPoint(0, -25, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
+  startCatapultShoot();
+    
+  // chassis.waitUntilDone();
+  // chassis.moveToPoint(-5, 75, 3000, {.maxSpeed = 100});
+
+  // chassis.moveToPoint(-10, 85, 2000, {.maxSpeed = 100});
 
   // chassis.moveToPoint(0, 70, 3000); //Go forward to 2nd matchload
   // chassis.waitUntilDone();
