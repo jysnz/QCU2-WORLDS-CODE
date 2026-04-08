@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────
 #include <sys/_intsup.h>
 void catapultTask(void *param);
-void startCatapultShoot();
+void startCatapultShoot(bool smoothShoot = false, bool autoClose = true);
 void catapultShootForAuto(double speed);
 
 // ─── Intake
