@@ -193,7 +193,7 @@ void catapultTask(void *) {
 
       // Implement smooth deceleration if enabled
       if (smoothShootEnabled) {
-        double distanceToTarget = std::abs(pos - dynamicFirePos);
+        double distanceToTarget = std::abs(pos - dynamicFirePos + 10);
         int speed = CAT_SPEED;
 
         // Decelerate over the last 500 degrees for very smooth approach
@@ -359,7 +359,8 @@ void catapultControl() {
     if (catState == CAT_IDLE && !pros::competition::is_autonomous()) {
       if (currentArmState == LONG_GOAL) {
         gateClose();
-      } else if (currentArmState == MID_GOAL) {
+      } 
+      else if (currentArmState == MID_GOAL) {
         midGoalArm();
       }
       // Note: UNDER_GOAL gate position is handled in underGoalArm() once
