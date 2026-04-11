@@ -1,7 +1,7 @@
 {
   "py/object": "pros.conductor.project.Project",
   "py/state": {
-    "project_name": "QCU2Cata",
+    "project_name": "right_blue",
     "target": "v5",
     "templates": {
       "LemLib": {

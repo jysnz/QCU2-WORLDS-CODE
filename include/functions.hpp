@@ -32,6 +32,7 @@ void intakeStop();
 void reset();
 void leverReset();
 void gateCloseMid();
+void gateReset();
 
 // ─── Drive ───────────────────────────────────────────────────────────────────
 void drive_for_inches(double maxSpeed, double inches);

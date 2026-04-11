@@ -52,6 +52,8 @@ void initialize() {
   pros::Task intake_control(intakeTask, nullptr, "Intake Task");
   // pros::Task persistence_save(persistenceTask, nullptr, "Persistence Task");
 
+  // descore.move_absolute(100, 200);
+
   catapult_arm.tare_position();
   matchloader.tare_position();
   descore.tare_position();

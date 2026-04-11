@@ -50,7 +50,7 @@ void twoVtwo_left() {
   matchloadUp();
   midGoalArm();
 
-  chassis.moveToPoint(-1, -54, 3000,
+  chassis.moveToPoint(-1, -53, 3000,
                       {
                           .forwards = false,
                           .maxSpeed = 100,
@@ -63,19 +63,22 @@ void twoVtwo_left() {
   chassis.moveToPoint(-1, -20.5, 3000, {.maxSpeed = 40}); // Go back to shoot
   chassis.waitUntilDone();
 
-  reset();
+  // reset();
 
-  chassis.turnToHeading(-45, 1000);
-  chassis.waitUntilDone();
-  reset();
+  // chassis.turnToHeading(-45, 1000);
+  // chassis.waitUntilDone();
+  // reset();
   longGoalArm();
 
-  descoreDown();
-  chassis.moveToPoint(
-      0, -14, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
-  chassis.waitUntilDone();
+  // descoreDown();
+  // chassis.moveToPoint(
+  //     0, -14, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
+  // chassis.waitUntilDone();
+
+  gateReset();
+  // descoreUp();
 }
-void twoVtwo_right() {
+void twoVtwo_right_red() {
   gateClose();
   chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
@@ -96,6 +99,14 @@ void twoVtwo_right() {
 
   startCatapultShoot(); // Shoot 1
   startCatapultShoot(); // Shoot 1
+  reset();
+
+  chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
+
   reset();
 
   intakeBlock();
@@ -133,17 +144,97 @@ void twoVtwo_right() {
                       {.forwards = false, .maxSpeed = 70}); // Go back to shoot
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(48, 1000);
+  // chassis.turnToHeading(48, 1000);
+  // chassis.waitUntilDone();
+  // reset();
+  // matchloadUp();
+
+  // // descoreDown();
+  // chassis.moveToPoint(0, 12, 3000, {.minSpeed = 127}); // Go forward descore
+  // chassis.waitUntilDone();
+  intakeStop();
+  // // descoreUp();
+  
+  gateReset();
+}
+
+void twoVtwo_right_blue() {
+  gateClose();
+  chassis.moveToPoint(0, 38.5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.waitUntilDone();
+
+  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.waitUntilDone();
+  intakeBlock();
+  reset();
+  gateClose();
+
+  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.waitUntilDone();
+  pros::delay(300);
+
+  chassis.moveToPoint(0, -25, 3000,
+                      {.forwards = false, .maxSpeed = 40}); // Go back to shoot
+  chassis.waitUntilDone();
+
+  startCatapultShoot(); // Shoot 1
+  startCatapultShoot(); // Shoot 1
+
+  reset();
+  chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
+
+  reset();
+
+  intakeBlock();
+
+  chassis.moveToPoint(0, 32, 3000,
+                      {.maxSpeed = 40}); // Forward to intake enemyballs
+  chassis.waitUntilDone();
+  pros::delay(350);
+
+  startCatapultShoot();
+
+  gateClose();
+
+  pros::delay(3000);
+  reset();
+
+  chassis.moveToPoint(0, -12, 3000, {.forwards = false, .maxSpeed = 40});
+
+  chassis.turnToHeading(133, 1000);
   chassis.waitUntilDone();
   reset();
+
   matchloadUp();
 
-  descoreDown();
-  chassis.moveToPoint(0, 12, 3000, {.minSpeed = 127}); // Go forward descore
+  chassis.moveToPoint(-1, 40.5, 3000, {.maxSpeed = 100}); // Go to middle goal
   chassis.waitUntilDone();
+
+  outtakeBlock(100); // Outtake to descore
+  pros::delay(1200);
+
+  chassis.moveToPoint(-1, 48, 3000, {.maxSpeed = 100}); // Go forward descore
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(-1, 15, 3000,
+                      {.forwards = false, .maxSpeed = 70}); // Go back to shoot
+  chassis.waitUntilDone();
+
+  // chassis.turnToHeading(48, 1000);
+  // chassis.waitUntilDone();
+  reset();
+
+  // descoreDown();
+  // chassis.moveToPoint(0, 12, 3000, {.minSpeed = 127}); // Go forward descore
+  // chassis.waitUntilDone();
   intakeStop();
-
-
+  
+  gateReset();
+  // descoreUp();
 }
 
 void skills() {
@@ -345,4 +436,4 @@ void skills() {
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { twoVtwo_left(); }
+void runAutonomous() { twoVtwo_right_blue(); }

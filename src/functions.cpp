@@ -152,6 +152,8 @@ void matchloadDown() { matchloader.move_absolute(0, 200); }
 
 void gateCloseMid() { gate.move_absolute(-400, 200); }
 
+void gateReset() { gate.move_absolute(0, 200); }
+
 void midGoalArm() {
   arm.move_absolute(1300, 200);
   descore.move_absolute(-300, 200);
@@ -491,7 +493,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot(true);
+      startCatapultShoot();
     }
 
     // Logic to detect Tap vs. Hold
