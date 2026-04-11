@@ -3,9 +3,6 @@
 #include "lemlib/chassis/chassis.hpp"
 #include "motors.hpp"
 
-// ─── Test routine
-// ─────────────────────────────────────────────────────────────
-
 void twoVtwo_left() {
   gateClose();
   chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
@@ -141,192 +138,134 @@ void twoVtwo_right() {
   chassis.waitUntilDone();
 }
 
-void path() {
-  chassis.moveToPoint(0, 5, 3000);
-  chassis.waitUntilDone();
-
-  chassis.turnToHeading(90, 1000);
-  chassis.waitUntilDone();
-}
-
-void parkingtest() {
-    chassis.setPose(0, 0, 90);
-
-    // go around obstacle to prevent hitting it
-    chassis.moveToPose(
-        48,
-        -24,
-        90,
-        2000,
-        {.minSpeed=72, .earlyExitRange=8}
-        // a minSpeed of 72 means that the chassis will slow down as
-        // it approaches the target point, but it won't come to a full stop
-
-        // an earlyExitRange of 8 means the movement will exit 8" away from
-        // the target point
-    );
-
-    // go to target position
-    chassis.moveToPose(64, 3, 0, 2000);
-}
-
-void curve() {
-  chassis.setPose(0, 0, 90);
-
-  // go around obstacle to prevent hitting it
-  chassis.moveToPose(
-      48, -24, 90, 2000, {.minSpeed = 72, .earlyExitRange = 8}
-      // a minSpeed of 72 means that the chassis will slow down as
-      // it approaches the target point, but it won't come to a full stop
-
-      // an earlyExitRange of 8 means the movement will exit 8" away from
-      // the target point
-  );
-
-  // go to target position
-  chassis.moveToPose(64, 3, 0, 2000);
-}
-
-// chassis.moveToPoint(0, 10, 3000);
-// chassis.turnToHeading(90, 1000);
-
 void skills() {
-  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
-  chassis.waitUntilDone();
+  // chassis.moveToPoint(0, 30, 3000, {.maxSpeed = 100}); // Go to matchload
+  // chassis.waitUntilDone();
 
-  chassis.turnToHeading(90, 1000); // Turn to matchload
-  chassis.waitUntilDone();
-  reset();
+  // chassis.turnToHeading(90, 1000); // Turn to matchload
+  // chassis.waitUntilDone();
+  // reset();
+  // intakeBlock();
 
-  chassis.moveToPoint(0, -25, 3000,
-                      {.forwards = false, .maxSpeed = 70}); 
-  chassis.waitUntilDone();
+  // gateClose();
+  // chassis.moveToPoint(0, 14, 3000, {.maxSpeed = 40}); // Go to intake
+  // chassis.waitUntilDone();
+  // drivetrainLock();
 
-  startCatapultShoot(); // Shoot 1
+  // reset();
 
-  reset();
+  // chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
+  // matchloadUp();
+
+  // chassis.turnToHeading(-145, 1000);
+  // chassis.waitUntilDone();
+
+  // reset();
+
+  // chassis.moveToPoint(-13, 100, 3500, {.maxSpeed = 100});
+  // chassis.waitUntilDone();
   
-  chassis.moveToPoint(0, 5, 3000); // Go to matchload
-  chassis.waitUntilDone();
+  // reset();
 
-  chassis.moveToPoint(0, -5, 3000, {.forwards = false});
-  chassis.waitUntilDone();
+  // chassis.moveToPoint(0, -15, 3000, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
 
-  reset();
-  gateClose();
+  // chassis.turnToHeading(-90, 1000);
+  // chassis.waitUntilDone();
+
+  // reset();
+
+  // chassis.moveToPoint(0, -20, 1500, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
+
+  // matchloadDown();
+
+  // reset();
+  // chassis.moveToPoint(0, 7, 3000, {.maxSpeed = 100}); // Go to matchload
+  // chassis.waitUntilDone();
+
+  // chassis.moveToPoint(0, -7, 3000, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot();
+  // startCatapultShoot();
+
+  // reset();
+
+  // gateClose();
+
+  // chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
+  // chassis.waitUntilDone();
+  // drivetrainLock();
+
+  // chassis.moveToPoint(0, 0, 3000, {.forwards = false, .maxSpeed = 40});
+  // chassis.waitUntilDone();
+
+  // reset();
+  // chassis.moveToPoint(0, 7, 3000, {.maxSpeed = 100}); // Go to matchload
+  // chassis.waitUntilDone();
+
+  // chassis.moveToPoint(0, -7, 3000, {.forwards = false, .maxSpeed = 100});
+  // chassis.waitUntilDone();
+
+  // startCatapultShoot();
+  // startCatapultShoot();
+
+  // reset();
+  // intakeStop();
+
+  matchloadUp(); // extra 2 points
+
   intakeBlock();
 
-  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
-  chassis.waitUntilDone();
-  drivetrainLock();
-
-  reset();
-
-  chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
-  chassis.waitUntilDone();
-  matchloadUp();
-  intakeStop();
-
-  matchloadUp();
-  chassis.turnToHeading(-145, 1000);
-  chassis.waitUntilDone();
-
-  reset();
-
-  chassis.moveToPoint(-13, 100, 3500, {.maxSpeed = 100});
-  chassis.waitUntilDone();
-
-  reset();
-
-  chassis.moveToPoint(0, -15, 3000, {.forwards = false, .maxSpeed = 100});
-  chassis.waitUntilDone();
-
-  chassis.turnToHeading(-90, 1000);
-  chassis.waitUntilDone();
-
-  reset();
-
-  chassis.moveToPoint(0, -25, 1500, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(17, 17, 1000, {.maxSpeed = 100});
   chassis.waitUntilDone();
   
-  startCatapultShoot();
-  startCatapultShoot();
-
   reset();
-  chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
-  chassis.waitUntilDone();
 
   chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
+  chassis.moveToPoint(0, 2, 3000, {.maxSpeed = 100});
+  chassis.waitUntilDone();
 
+  reset();
+
+  chassis.moveToPoint(22, -16, 1000, {.forwards = false, .maxSpeed = 100});
+  chassis.waitUntilDone();
+
+  startCatapultShoot();
+  startCatapultShoot();
+
+  reset();
   matchloadDown();
 
-  reset();
-
-  pros::delay(300);
-  gateClose();
-  intakeBlock();
-
-  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
-  chassis.waitUntilDone();
-  drivetrainLock();
-
-  chassis.moveToPoint(0, 0, 3000, {.forwards = false, .maxSpeed = 40});
-  chassis.waitUntilDone();
-
-  startCatapultShoot();
-  startCatapultShoot();
-
-  reset();
-  chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
-  chassis.waitUntilDone();
-
-  chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(-14, 9, 1000, {.maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
 
-  chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 100});
+  chassis.moveToPoint(0, 81.5, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(-90, 1000);
-  chassis.waitUntilDone();
-  
   reset();
-
-  chassis.moveToPoint(0, 92.5, 3500, {.maxSpeed = 80});
-  chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000);
   chassis.waitUntilDone();
-
   reset();
-
-  chassis.moveToPoint(0, -13, 3000, {.forwards = false, .maxSpeed = 100});
-  chassis.waitUntilDone();
-
-  startCatapultShoot();
-
-  //2nd part
-  intakeBlock();
-  reset();
+  
   gateClose();
+  intakeBlock();
 
-  chassis.moveToPoint(0, 38, 3500, {.maxSpeed = 40}); // Go to intake
+  chassis.moveToPoint(0, 24, 3000, {.maxSpeed = 40});// Go to intake
   chassis.waitUntilDone();
   drivetrainLock();
-  pros::delay(500);
 
-  reset();
-
-  chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 80});
   chassis.waitUntilDone();
-  matchloadUp();
-  intakeStop();
 
-  matchloadUp();
-  chassis.turnToHeading(-145, 1000);
-  chassis.waitUntilDone();
+  chassis.turnToHeading(145, 1000);
+  chassis.waitUntilDone();  
 
   reset();
 
@@ -345,8 +284,6 @@ void skills() {
 
   chassis.moveToPoint(0, -27, 1500, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
-  startCatapultShoot();
-  startCatapultShoot();
 
   reset();
   chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
@@ -357,28 +294,30 @@ void skills() {
 
   matchloadDown();
 
+  startCatapultShoot();
+  startCatapultShoot();
+
   reset();
 
   pros::delay(300);
-  gateClose();
   intakeBlock();
-
+  gateClose();
   chassis.moveToPoint(0, 40, 3000, {.maxSpeed = 40}); // Go to intake
   chassis.waitUntilDone();
   drivetrainLock();
 
-  chassis.moveToPoint(0, -2, 3000, {.forwards = false, .maxSpeed = 70});
+  chassis.moveToPoint(0, -2, 3000, {.forwards = false, .maxSpeed = 80});
   chassis.waitUntilDone();
-
-  startCatapultShoot();
-  startCatapultShoot();
 
   reset();
-  chassis.moveToPoint(0, 5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 7, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(0, -7, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
+
+  startCatapultShoot();
+  startCatapultShoot();
 
   matchloadUp();
 
@@ -392,7 +331,6 @@ void skills() {
 
   chassis.moveToPoint(-58, 32, 3000, {.minSpeed = 127});
   chassis.waitUntilDone();
-
 
 }
 
