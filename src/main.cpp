@@ -47,9 +47,9 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller,
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-  restoreMotorPositions(); // Re-apply last known positions before homing
+  // restoreMotorPositions(); // Re-apply last known positions before homing
   pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
-  pros::Task persistence_save(persistenceTask, nullptr, "Persistence Task");
+  // pros::Task persistence_save(persistenceTask, nullptr, "Persistence Task");
 
   catapult_arm.tare_position();
   matchloader.tare_position();

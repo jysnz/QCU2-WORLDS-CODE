@@ -76,7 +76,7 @@ void twoVtwo_left() {
 }
 void twoVtwo_right() {
   gateClose();
-  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000); // Turn to matchload
@@ -111,7 +111,7 @@ void twoVtwo_right() {
   pros::delay(3000);
   reset();
 
-  chassis.moveToPoint(0, -13, 3000, {.forwards = false, .maxSpeed = 40});
+  chassis.moveToPoint(0, -11, 3000, {.forwards = false, .maxSpeed = 40});
 
   chassis.turnToHeading(133, 1000);
   chassis.waitUntilDone();
@@ -119,23 +119,30 @@ void twoVtwo_right() {
 
   matchloadUp();
 
-  chassis.moveToPoint(0, 40, 3000, {.maxSpeed = 40}); // Go to middle goal
+  chassis.moveToPoint(-1, 40.5, 3000, {.maxSpeed = 100}); // Go to middle goal
   chassis.waitUntilDone();
 
   outtakeBlock(100); // Outtake to descore
   pros::delay(1200);
 
-  chassis.moveToPoint(0, 14, 3000,
-                      {.forwards = false, .maxSpeed = 40}); // Go back to shoot
+  chassis.moveToPoint(-1, 48, 3000, {.maxSpeed = 100}); // Go forward descore
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(52, 1000);
+  chassis.moveToPoint(-1, 17, 3000,
+                      {.forwards = false, .maxSpeed = 70}); // Go back to shoot
+  chassis.waitUntilDone();
+
+  chassis.turnToHeading(48, 1000);
   chassis.waitUntilDone();
   reset();
+  matchloadUp();
 
   descoreDown();
-  chassis.moveToPoint(0, 15, 3000, {.minSpeed = 127}); // Go forward descore
+  chassis.moveToPoint(0, 12, 3000, {.minSpeed = 127}); // Go forward descore
   chassis.waitUntilDone();
+  intakeStop();
+
+
 }
 
 void skills() {
@@ -337,4 +344,4 @@ void skills() {
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { skills(); }
+void runAutonomous() { twoVtwo_right(); }
