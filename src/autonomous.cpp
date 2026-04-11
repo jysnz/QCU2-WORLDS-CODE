@@ -14,7 +14,7 @@ void twoVtwo_left() {
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 11.5, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   pros::delay(300);
 

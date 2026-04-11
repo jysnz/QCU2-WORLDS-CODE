@@ -56,33 +56,34 @@ double inchesToDegrees(double inches) {
 }
 
 void matchloadHoming() {
-    matchloader.move_voltage(5000); 
-    pros::delay(150); 
+  matchloader.move_voltage(5000);
+  pros::delay(150);
 
-    int timeout = 0;
-    while (std::abs(matchloader.get_actual_velocity()) > 2) {
-        pros::delay(20);
-        timeout += 20;
-        if (timeout > 2000) break; 
-    }
+  int timeout = 0;
+  while (std::abs(matchloader.get_actual_velocity()) > 2) {
+    pros::delay(20);
+    timeout += 20;
+    if (timeout > 2000)
+      break;
+  }
 
-    // 1. We hit the bottom. Now stop the "pushing" voltage.
-    matchloader.move_voltage(0);
-    pros::delay(100);
+  // 1. We hit the bottom. Now stop the "pushing" voltage.
+  matchloader.move_voltage(0);
+  pros::delay(100);
 
-    // 2. Move it UP slightly. 
-    // Since we haven't tared yet, this uses the OLD 0 (from when the brain turned on).
-    // It's safer to use move_relative or just a small voltage burst.
-    matchloader.move_relative(-40, 100); 
+  // 2. Move it UP slightly.
+  // Since we haven't tared yet, this uses the OLD 0 (from when the brain turned
+  // on). It's safer to use move_relative or just a small voltage burst.
+  matchloader.move_relative(-40, 100);
 
-    // 3. CRITICAL: Wait for the movement to finish!
-    // If you don't wait, it will tare while the arm is still at the bottom.
-    pros::delay(500); 
+  // 3. CRITICAL: Wait for the movement to finish!
+  // If you don't wait, it will tare while the arm is still at the bottom.
+  pros::delay(500);
 
-    // 4. NOW set the new zero.
-    matchloader.tare_position();
-    
-    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  // 4. NOW set the new zero.
+  matchloader.tare_position();
+
+  matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
 }
 
 void drivetrainLock() {
@@ -223,7 +224,9 @@ void catapultTask(void *) {
 
       // Implement smooth deceleration if enabled
       if (smoothShootEnabled) {
-        double distanceToTarget = std::abs(currentArmState == MID_GOAL ? pos - dynamicFirePos + 200: pos - dynamicFirePos);
+        double distanceToTarget =
+            std::abs(currentArmState == MID_GOAL ? pos - dynamicFirePos + 200
+                                                 : pos - dynamicFirePos);
         int speed = CAT_SPEED;
         // Decelerate over the last 500 degrees for very smooth approach
         if (distanceToTarget < 700) {
@@ -326,6 +329,43 @@ void startCatapultShoot(bool smoothShoot) {
   }
 }
 
+// ─── Intake Task (Position-Based Control) ───────────────────────────────────
+void intakeTask(void *) {
+  static bool wasOutOfPosition = false; // Track previous position state
+
+  while (true) {
+    double catPos = catapult_arm.get_position();
+    double returnThreshold = 15.0; // Position tolerance for "returned to home"
+
+    // Check if catapult_arm is NOT at starting position (LOAD_POS)
+    bool isOutOfPosition = std::abs(catPos - LOAD_POS) > returnThreshold;
+
+    if (isOutOfPosition) {
+      // Catapult arm is away from starting position: RUN OUTTAKE
+      // Only outtake if catapult is actively firing (not already handled by
+      // catapultTask)
+      if (catState == CAT_FIRING || catState == CAT_RELOADING) {
+        // Let catapultTask handle the intake during firing
+      } else {
+        // If manually triggered outtake is needed, uncomment below:
+        // outtakeBlock(600);
+      }
+      wasOutOfPosition = true;
+    } else {
+      // Catapult arm has RETURNED to starting position: RUN INTAKE
+      if (wasOutOfPosition) {
+        // Just returned to home: start intake
+        if (catState == CAT_IDLE) {
+          intakeBlock(); // Run intake (velocity -600)
+          wasOutOfPosition = false;
+        }
+      }
+    }
+
+    pros::delay(20); // Check position every 20ms
+  }
+}
+
 // ─── Persistence ─────────────────────────────────────────────────────────────
 void restoreMotorPositions() {
   FILE *usd_file_read = fopen("/usd/motor_pos.bin", "rb");
@@ -389,8 +429,7 @@ void catapultControl() {
     if (catState == CAT_IDLE && !pros::competition::is_autonomous()) {
       if (currentArmState == LONG_GOAL) {
         gateClose();
-      } 
-      else if (currentArmState == MID_GOAL) {
+      } else if (currentArmState == MID_GOAL) {
         midGoalArm();
       }
       // Note: UNDER_GOAL gate position is handled in underGoalArm() once
