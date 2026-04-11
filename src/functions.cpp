@@ -55,6 +55,36 @@ double inchesToDegrees(double inches) {
   return (inches / wheelCircumference) * 360.0;
 }
 
+void matchloadHoming() {
+    matchloader.move_voltage(5000); 
+    pros::delay(150); 
+
+    int timeout = 0;
+    while (std::abs(matchloader.get_actual_velocity()) > 2) {
+        pros::delay(20);
+        timeout += 20;
+        if (timeout > 2000) break; 
+    }
+
+    // 1. We hit the bottom. Now stop the "pushing" voltage.
+    matchloader.move_voltage(0);
+    pros::delay(100);
+
+    // 2. Move it UP slightly. 
+    // Since we haven't tared yet, this uses the OLD 0 (from when the brain turned on).
+    // It's safer to use move_relative or just a small voltage burst.
+    matchloader.move_relative(-40, 100); 
+
+    // 3. CRITICAL: Wait for the movement to finish!
+    // If you don't wait, it will tare while the arm is still at the bottom.
+    pros::delay(500); 
+
+    // 4. NOW set the new zero.
+    matchloader.tare_position();
+    
+    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+}
+
 void drivetrainLock() {
   left_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -330,6 +360,7 @@ void persistenceTask(void *) {
 
 // ─── Operator control ────────────────────────────────────────────────────────
 void catapultControl() {
+  matchloadHoming();
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
