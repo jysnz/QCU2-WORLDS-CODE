@@ -58,7 +58,7 @@ void twoVtwo_left() {
   chassis.waitUntilDone();
 
   startCatapultShoot(true);
-  startCatapultShoot(true);
+  startCatapultShoot();
 
   chassis.moveToPoint(-1, -20.5, 3000, {.maxSpeed = 40}); // Go back to shoot
   chassis.waitUntilDone();
@@ -72,7 +72,7 @@ void twoVtwo_left() {
 
   descoreDown();
   chassis.moveToPoint(
-      0, -12, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
+      0, -14, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
   chassis.waitUntilDone();
 }
 void twoVtwo_right() {
