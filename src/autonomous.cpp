@@ -50,16 +50,17 @@ void twoVtwo_left() {
   matchloadUp();
   midGoalArm();
 
-  chassis.moveToPoint(-3, -54, 3000,
+  chassis.moveToPoint(-1, -54, 3000,
                       {
                           .forwards = false,
-                          .maxSpeed = 70,
+                          .maxSpeed = 100,
                       }); // Go to middle goal
   chassis.waitUntilDone();
 
-  startCatapultShoot();
+  startCatapultShoot(true);
+  startCatapultShoot(true);
 
-  chassis.moveToPoint(0, -22, 3000, {.maxSpeed = 40}); // Go back to shoot
+  chassis.moveToPoint(-1, -20.5, 3000, {.maxSpeed = 40}); // Go back to shoot
   chassis.waitUntilDone();
 
   reset();
@@ -71,7 +72,7 @@ void twoVtwo_left() {
 
   descoreDown();
   chassis.moveToPoint(
-      0, -15, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
+      0, -12, 3000, {.forwards = false, .minSpeed = 127}); // Go forward descore
   chassis.waitUntilDone();
 }
 void twoVtwo_right() {
@@ -344,4 +345,4 @@ void skills() {
 // ─── Main autonomous entry point
 // ────────────────────────────────────────────── Select which routine runs
 // here.
-void runAutonomous() { twoVtwo_right(); }
+void runAutonomous() { twoVtwo_left(); }
