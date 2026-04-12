@@ -33,6 +33,7 @@ void reset();
 void leverReset();
 void gateCloseMid();
 void gateReset();
+void matchloadHoming();
 
 // ─── Drive ───────────────────────────────────────────────────────────────────
 void drive_for_inches(double maxSpeed, double inches);
