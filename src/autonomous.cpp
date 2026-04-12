@@ -3,6 +3,8 @@
 #include "lemlib/chassis/chassis.hpp"
 #include "motors.hpp"
 
+extern int currentAutonIndex;
+
 void twoVtwo_left() {
   gateClose();
   chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
@@ -433,7 +435,27 @@ void skills() {
 
 }
 
-// ─── Main autonomous entry point
-// ────────────────────────────────────────────── Select which routine runs
-// here.
-void runAutonomous() { twoVtwo_right_blue(); }
+
+void runAutonomous() {
+    // Start background homing immediately
+    matchloadHoming();
+
+    switch (currentAutonIndex) {
+        case 0: // 2v2 Left
+            twoVtwo_left();
+            break;
+        case 1: // 2v2 Right Red
+            twoVtwo_right_red();
+            break;
+        case 2: // 2v2 Right Blue
+            twoVtwo_right_blue();
+            break;
+        case 3: // Skills
+            skills();
+            break;
+        case 4: // Do nothing
+        default:
+            break;
+    }
+}
+
