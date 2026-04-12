@@ -44,6 +44,8 @@ const int INTAKE_REVERSE_DURATION =
 static int catReloadTime = 0;         // Time spent in reload state
 static bool catShouldOuttake = false; // Flag to trigger outtake after reload
 
+bool isMatchloadHoming = false;
+
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
 float ticksToInches(float ticks) {
@@ -55,35 +57,37 @@ double inchesToDegrees(double inches) {
   return (inches / wheelCircumference) * 360.0;
 }
 
-void matchloadHoming() {
-  matchloader.move_voltage(5000);
-  pros::delay(150);
+void matchloadHomingTask(void* param) {
+    isMatchloadHoming = true; // Block other functions from using the motor
+    
+    matchloader.move_voltage(5000);
+    pros::delay(150);
 
-  int timeout = 0;
-  while (std::abs(matchloader.get_actual_velocity()) > 2) {
-    pros::delay(20);
-    timeout += 20;
-    if (timeout > 2000)
-      break;
-  }
+    int timeout = 0;
+    while (std::abs(matchloader.get_actual_velocity()) > 2) {
+        pros::delay(20);
+        timeout += 20;
+        if (timeout > 2000) break;
+    }
 
-  // 1. We hit the bottom. Now stop the "pushing" voltage.
-  matchloader.move_voltage(0);
-  pros::delay(100);
+    matchloader.move_voltage(0);
+    pros::delay(100);
 
-  // 2. Move it UP slightly.
-  // Since we haven't tared yet, this uses the OLD 0 (from when the brain turned
-  // on). It's safer to use move_relative or just a small voltage burst.
-  matchloader.move_relative(-40, 100);
+    // Move up slightly
+    matchloader.move_relative(-40, 100);
 
-  // 3. CRITICAL: Wait for the movement to finish!
-  // If you don't wait, it will tare while the arm is still at the bottom.
-  pros::delay(500);
+    // Wait for movement to finish
+    pros::delay(500);
 
-  // 4. NOW set the new zero.
-  matchloader.tare_position();
+    matchloader.tare_position();
+    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
 
-  matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+    isMatchloadHoming = false; // Release the lock
+}
+
+// 2. The wrapper function to start the task
+void startMatchloadHoming() {
+    pros::Task homing_task(matchloadHomingTask);
 }
 
 void drivetrainLock() {
@@ -146,9 +150,15 @@ void descoreDown() { descore.move_absolute(-210, 200); }
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
-void matchloadUp() { matchloader.move_absolute(-450, 200); }
+void matchloadUp() { 
+  if (isMatchloadHoming) return;
+  matchloader.move_absolute(-450, 200); 
+}
 
-void matchloadDown() { matchloader.move_absolute(0, 200); }
+void matchloadDown() { 
+  if (isMatchloadHoming) return;
+  matchloader.move_absolute(0, 200); 
+}
 
 void gateCloseMid() { gate.move_absolute(-400, 200); }
 
