@@ -85,9 +85,14 @@ void matchloadHomingTask(void* param) {
     isMatchloadHoming = false; // Release the lock
 }
 
-// 2. The wrapper function to start the task
+// Wrapper for the Task
 void startMatchloadHoming() {
     pros::Task homing_task(matchloadHomingTask);
+}
+
+// Legacy function name for compatibility (calls the task)
+void matchloadHoming() {
+    startMatchloadHoming();
 }
 
 void drivetrainLock() {
