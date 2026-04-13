@@ -23,6 +23,7 @@ static bool smoothShootEnabled = false; // Enable smooth deceleration on shoot
 const int LOAD_POS = 0;
 const int FIRE_POS = -680;
 const int CAT_SPEED = 200;
+const int CAT_LOW_SPEED = 150;
 const int STALL_TIME = 250;
 const int CHECK_DELAY = 10;
 const int MAX_ATTEMPTS = 10;
@@ -45,6 +46,7 @@ static int catReloadTime = 0;         // Time spent in reload state
 static bool catShouldOuttake = false; // Flag to trigger outtake after reload
 
 bool isMatchloadHoming = false;
+bool isDescoreHoming = false;
 
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
@@ -55,6 +57,29 @@ float ticksToInches(float ticks) {
 double inchesToDegrees(double inches) {
   double wheelCircumference = PI * wheelDiameter;
   return (inches / wheelCircumference) * 360.0;
+}
+
+// ─── Descore Homing Task ─────────────────────────────────────────────────────
+void descoreHomingTask(void* param) {
+    isDescoreHoming = true;
+    
+    // Step 1: Move positively by 40
+    descore.move_absolute(180, 100);
+    pros::delay(500); // Wait for movement to finish
+    
+    // Step 3: Tare and finish
+    descore.tare_position();
+    descore.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    
+    isDescoreHoming = false;
+}
+
+void startDescoreHoming() {
+    pros::Task homing_task(descoreHomingTask);
+}
+
+void descoreHoming() {
+    startDescoreHoming();
 }
 
 void matchloadHomingTask(void* param) {
@@ -147,11 +172,17 @@ void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(-120, 200); }
 
-void gateClose() { gate.move_absolute(-500, 200); }
+void gateClose() { gate.move_absolute(-450, 200); }
 
-void descoreUp() { descore.move_absolute(0, 200); }
+void descoreUp() { 
+  if (isDescoreHoming) return;
+  descore.move_absolute(0, 200); 
+}
 
-void descoreDown() { descore.move_absolute(-210, 200); }
+void descoreDown() { 
+  if (isDescoreHoming) return;
+  descore.move_absolute(-210, 200); 
+}
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
@@ -312,7 +343,7 @@ void catapultTask(void *) {
   }
 }
 
-void startCatapultShoot(bool smoothShoot) {
+void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   if (catState != CAT_IDLE)
     return;
 
@@ -336,7 +367,7 @@ void startCatapultShoot(bool smoothShoot) {
   shotSuccess = false;
   smoothShootEnabled = smoothShoot;
   catState = CAT_FIRING;
-  catapult_arm.move_absolute(dynamicFirePos, CAT_SPEED);
+  catapult_arm.move_absolute(dynamicFirePos, lowSpeed ? CAT_LOW_SPEED :  CAT_SPEED);
 
   // For Autonomous: wait until the arm is back at home before returning control
   // Only if this is being called from a blocking context (like Autonomous)
@@ -416,6 +447,7 @@ void persistenceTask(void *) {
 
 // ─── Operator control ────────────────────────────────────────────────────────
 void catapultControl() {
+  descoreHoming();
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
@@ -467,7 +499,9 @@ void catapultControl() {
         matchloadHoming();
         hasMatchloadHomed = true;
       }
-      matchLoadToggled = !matchLoadToggled;
+      else {
+        matchLoadToggled = !matchLoadToggled;
+      }
     }
     wasMatchLoadTapped = matchLoadTapped;
 

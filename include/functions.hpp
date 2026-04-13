@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────
 #include <sys/_intsup.h>
 void catapultTask(void *param);
-void startCatapultShoot(bool smoothShoot = false);
+void startCatapultShoot(bool smoothShoot = false, bool lowSpeed = false);
 void catapultShootForAuto(double speed);
 
 // ─── Intake
@@ -34,6 +34,7 @@ void leverReset();
 void gateCloseMid();
 void gateReset();
 void matchloadHoming();
+void descoreHoming();
 
 // ─── Drive ───────────────────────────────────────────────────────────────────
 void drive_for_inches(double maxSpeed, double inches);
