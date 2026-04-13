@@ -37,10 +37,9 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 
 // ─── UI & Auton Selector State ───
 enum UITab { TAB_TEMPS, TAB_AUTON };
-UITab currentTab = TAB_AUTON;
+UITab currentTab = TAB_TEMPS;
 
 int currentAutonIndex = 0;
-int scrollOffset = 0; 
 const std::vector<std::string> autonNames = {
     "2v2 Left",
     "2v2 Right Red",
@@ -79,7 +78,7 @@ void initialize() {
     matchloader.tare_position();
     descore.tare_position();
 
-    // REMOVED: pros::lcd::initialize() to prevent screen glitching conflicts
+    // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
     chassis.calibrate();
 
     matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -104,25 +103,25 @@ void initialize() {
             static bool wasTouched = false;
             if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
                 // 1. Header Tab Switch
-                if (status.y < 45) {
+                if (status.y < 50) {
                     if (status.x < 240) currentTab = TAB_TEMPS;
                     else currentTab = TAB_AUTON;
                 }
                 
-                // 2. Scroll Buttons (Far Right Column)
+                // 2. Scroll Buttons (Far Right Column: 430 to 480)
                 if (status.x > 430) {
                     if (status.y > 60 && status.y < 130) { // UP Arrow
-                        if (currentTab == TAB_AUTON) autonScroll += 40;
-                        else tempsScroll += 40;
+                        if (currentTab == TAB_AUTON) autonScroll += 55;
+                        else tempsScroll += 65;
                     }
                     else if (status.y > 140 && status.y < 210) { // DOWN Arrow
-                        if (currentTab == TAB_AUTON) autonScroll -= 40;
-                        else tempsScroll -= 40;
+                        if (currentTab == TAB_AUTON) autonScroll -= 55;
+                        else tempsScroll -= 65;
                     }
                 }
 
                 // 3. Selection in Auton Tab
-                if (currentTab == TAB_AUTON && status.x < 420 && status.y > 50) {
+                if (currentTab == TAB_AUTON && status.x < 420 && status.y > 50 && status.y < 215) {
                     for (int i = 0; i < (int)autonNames.size(); i++) {
                         int itemY = 60 + (i * 55) + autonScroll;
                         if (status.y >= itemY && status.y <= itemY + 50) {
@@ -143,72 +142,54 @@ void initialize() {
             if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
             if (tempsScroll > 0) tempsScroll = 0;
-            if (tempsScroll < -120) tempsScroll = -120; // 4 rows of 65px cards
+            if (tempsScroll < -130) tempsScroll = -130; 
 
-            // ── Clear & Grid ──
+            // ── RENDERING ──
+            // Clear only the content area to reduce flicker
             pros::screen::set_pen(BG_DARK);
             pros::screen::fill_rect(0, 0, 480, 240);
             
+            // Subtle Grid
             pros::screen::set_pen(0x121217);
-            for(int i=0; i<480; i+=30) pros::screen::draw_line(i, 0, i, 240);
-            for(int i=0; i<240; i+=30) pros::screen::draw_line(0, i, 480, i);
+            for(int i=0; i<480; i+=40) pros::screen::draw_line(i, 0, i, 240);
+            for(int i=0; i<240; i+=40) pros::screen::draw_line(0, i, 480, i);
 
-            // ── Navigation Tabs ──
-            pros::screen::set_pen(currentTab == TAB_TEMPS ? ACCENT_CYAN : ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(5, 5, 238, 45);
-            pros::screen::set_pen(currentTab == TAB_AUTON ? ACCENT_ORANGE : ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(242, 5, 475, 45);
-            
-            pros::screen::set_pen(0xFFFFFF);
-            pros::screen::print(pros::E_TEXT_SMALL, 60, 18, "SYSTEM_THERMALS");
-            pros::screen::print(pros::E_TEXT_SMALL, 305, 18, "MISSION_CONFIG");
-
-            // ── Scroll Buttons Sidebar ──
-            pros::screen::set_pen(ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(435, 60, 475, 130); // Up Button
-            pros::screen::fill_rect(435, 140, 475, 210); // Down Button
-            pros::screen::set_pen(0xFFFFFF);
-            pros::screen::print(pros::E_TEXT_MEDIUM, 445, 85, "^");
-            pros::screen::print(pros::E_TEXT_MEDIUM, 445, 165, "v");
-
+            // ── Content Area Rendering (With Clipping Check) ──
             if (currentTab == TAB_TEMPS) {
-                // ── Diagnostic Card Layout (Original Request) ──
                 auto drawTechCard = [&](int x, int y, const char *name, double temp) {
-                    if (y + 55 < 50 || y > 215) return;
-                    int w = 205, h = 55;
+                    // Clipping: Only draw if the card is between the header (50) and footer (215)
+                    if (y + 55 < 55 || y > 215) return;
+
+                    int w = 200, h = 55;
                     uint32_t col = (temp < 45) ? ACCENT_CYAN : (temp < 55 ? ACCENT_ORANGE : ACCENT_RED);
+
                     pros::screen::set_pen(CARD_BG);
                     pros::screen::fill_rect(x, y, x + w, y + h);
                     pros::screen::set_pen(col);
                     pros::screen::fill_rect(x, y, x + 4, y + h);
+
                     pros::screen::set_pen(0xAAAAAA);
                     pros::screen::print(pros::E_TEXT_SMALL, x + 12, y + 8, name);
                     pros::screen::set_pen(col);
                     pros::screen::print(pros::E_TEXT_MEDIUM, x + 12, y + 24, "%.1f C", temp);
-                    
-                    // Small progress bar in card
-                    pros::screen::set_pen(0x33333F);
-                    pros::screen::draw_rect(x + 105, y + 32, x + w - 10, y + 42);
-                    int fill = (int)((std::min(temp, 70.0) / 70.0) * (w - 115));
-                    pros::screen::set_pen(col);
-                    pros::screen::fill_rect(x + 106, y + 33, x + 106 + fill, y + 41);
                 };
 
                 int yBase = 60 + tempsScroll;
                 drawTechCard(15, yBase, "[ DRIVE_L ]", left_motor_group.get_temperature());
-                drawTechCard(225, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
+                drawTechCard(220, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
                 drawTechCard(15, yBase + 65, "[ INTAKE ]", intake.get_temperature());
-                drawTechCard(225, yBase + 65, "[ CATAPULT ]", catapult_arm.get_temperature());
+                drawTechCard(220, yBase + 65, "[ CATAPULT ]", catapult_arm.get_temperature());
                 drawTechCard(15, yBase + 130, "[ MATCHLOAD ]", matchloader.get_temperature());
-                drawTechCard(225, yBase + 130, "[ DESCORE ]", descore.get_temperature());
+                drawTechCard(220, yBase + 130, "[ DESCORE ]", descore.get_temperature());
                 drawTechCard(15, yBase + 195, "[ ARM ]", arm.get_temperature());
-                drawTechCard(225, yBase + 195, "[ GATE ]", gate.get_temperature());
+                drawTechCard(220, yBase + 195, "[ GATE ]", gate.get_temperature());
             } else {
-                // ── Refined Auton Selection List ──
                 for (int i = 0; i < (int)autonNames.size(); i++) {
                     int itemY = 60 + (i * 55) + autonScroll;
-                    if (itemY + 50 < 50 || itemY > 215) continue;
                     
+                    // Clipping Check
+                    if (itemY + 50 < 55 || itemY > 215) continue;
+
                     bool isSelected = (i == currentAutonIndex);
                     pros::screen::set_pen(isSelected ? 0x1c2838 : CARD_BG);
                     pros::screen::fill_rect(20, itemY, 420, itemY + 50);
@@ -226,6 +207,26 @@ void initialize() {
                 }
             }
 
+            // ── Static Overlays (Drawn last to prevent overlap) ──
+            
+            // Header Tabs
+            pros::screen::set_pen(currentTab == TAB_TEMPS ? ACCENT_CYAN : ACCENT_DARK_GRAY);
+            pros::screen::fill_rect(5, 5, 238, 50);
+            pros::screen::set_pen(currentTab == TAB_AUTON ? ACCENT_ORANGE : ACCENT_DARK_GRAY);
+            pros::screen::fill_rect(242, 5, 475, 50);
+            
+            pros::screen::set_pen(0xFFFFFF);
+            pros::screen::print(pros::E_TEXT_SMALL, 60, 20, "SYSTEM_THERMALS");
+            pros::screen::print(pros::E_TEXT_SMALL, 305, 20, "MISSION_CONFIG");
+
+            // Scroll Buttons Sidebar
+            pros::screen::set_pen(ACCENT_DARK_GRAY);
+            pros::screen::fill_rect(435, 60, 475, 130); // Up Button
+            pros::screen::fill_rect(435, 140, 475, 210); // Down Button
+            pros::screen::set_pen(0xFFFFFF);
+            pros::screen::print(pros::E_TEXT_MEDIUM, 448, 85, "^");
+            pros::screen::print(pros::E_TEXT_MEDIUM, 448, 165, "v");
+
             // Footer Diagnostics
             pros::screen::set_pen(0x18181F);
             pros::screen::fill_rect(0, 215, 480, 240);
@@ -233,7 +234,7 @@ void initialize() {
             pros::screen::print(pros::E_TEXT_SMALL, 15, 222, "OS_READY // IMU: %.1f // BAT: %.0f%% // %s", 
                                 imu.get_heading(), pros::battery::get_capacity(), autonNames[currentAutonIndex].c_str());
 
-            pros::delay(30);
+            pros::delay(35); // Slowed down slightly for smoother rendering
         }
     });
 }

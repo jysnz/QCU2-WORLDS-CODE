@@ -416,7 +416,6 @@ void persistenceTask(void *) {
 
 // ─── Operator control ────────────────────────────────────────────────────────
 void catapultControl() {
-  matchloadHoming();
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
@@ -439,6 +438,7 @@ void catapultControl() {
 
   static bool matchLoadToggled = false;
   static bool wasMatchLoadTapped = false;
+  static bool hasMatchloadHomed = false; // Flag to track if first homing has occurred
 
   while (true) {
     // 1. Gate Logic Base
@@ -462,6 +462,11 @@ void catapultControl() {
 
     // Toggle logic for Matchload (Button Y)
     if (matchLoadTapped && !wasMatchLoadTapped) {
+      // Trigger homing sequence only on the very first tap of the button
+      if (!hasMatchloadHomed) {
+        matchloadHoming();
+        hasMatchloadHomed = true;
+      }
       matchLoadToggled = !matchLoadToggled;
     }
     wasMatchLoadTapped = matchLoadTapped;
