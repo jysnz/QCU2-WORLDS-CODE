@@ -45,7 +45,7 @@ const std::vector<std::string> autonNames = {
     "2v2 Right Red",
     "2v2 Right Blue",
     "Skills Challenge",
-    "Do Nothing"
+    "SkillsV1"
 };
 
 void saveAutonSelection() {
