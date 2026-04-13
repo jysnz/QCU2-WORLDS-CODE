@@ -437,9 +437,6 @@ void skills() {
 
 
 void runAutonomous() {
-    // Start background homing immediately
-    matchloadHoming();
-
     switch (currentAutonIndex) {
         case 0: // 2v2 Left
             twoVtwo_left();
