@@ -16,9 +16,9 @@ void twoVtwo_left() {
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 11, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 11.5, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
-  pros::delay(180);
+  // pros::delay(180);
 
   chassis.moveToPoint(0, -25, 3000,
                       {.forwards = false, .maxSpeed = 40}); // Go back to shoot
@@ -41,8 +41,9 @@ void twoVtwo_left() {
   chassis.moveToPoint(0, 32, 3000,
                       {.maxSpeed = 40}); // Forward to intake enemyballs
   chassis.waitUntilDone();
-  pros::delay(180);
+  pros::delay(500);
 
+  startCatapultShoot();
   startCatapultShoot();
 
   gateClose();
@@ -67,8 +68,8 @@ void twoVtwo_left() {
                       }); // Go to middle goal
   chassis.waitUntilDone();
 
-  startCatapultShoot(true);
-  startCatapultShoot();
+  startCatapultShoot(false, true);
+  startCatapultShoot(false, true);
 
   chassis.moveToPoint(-1, -20.5, 3000, {.maxSpeed = 40}); // Go back to shoot
   chassis.waitUntilDone();
@@ -88,27 +89,26 @@ void twoVtwo_left() {
   gateReset();
 }
 void twoVtwo_right_red() {
-  // gateClose();
-  // chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
-  // chassis.waitUntilDone();
+  gateClose();
+  chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.waitUntilDone();
 
-  // chassis.turnToHeading(90, 1000); // Turn to matchload
-  // chassis.waitUntilDone();
-  // intakeBlock();
-  // reset();
-  // gateClose();
+  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.waitUntilDone();
+  intakeBlock();
+  reset();
+  gateClose();
 
-  // chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
-  // chassis.waitUntilDone();
-  // pros::delay(230);
+  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.waitUntilDone();
 
-  // chassis.moveToPoint(0, -25, 3000,
-  //                     {.forwards = false, .maxSpeed = 40}); // Go back to shoot
-  // chassis.waitUntilDone();
+  chassis.moveToPoint(0, -25, 3000,
+                      {.forwards = false, .maxSpeed = 40}); // Go back to shoot
+  chassis.waitUntilDone();
 
-  // startCatapultShoot(); // Shoot 1
-  // startCatapultShoot(); // Shoot 1
-  // reset();
+  startCatapultShoot(); // Shoot 1
+  startCatapultShoot(); // Shoot 1
+  reset();
 
   chassis.moveToPoint(0, 10, 3000); 
   chassis.waitUntilDone();
@@ -123,7 +123,7 @@ void twoVtwo_right_red() {
   chassis.moveToPoint(0, 32, 3000,
                       {.maxSpeed = 40}); // Forward to intake enemyballs
   chassis.waitUntilDone();
-  pros::delay(350);
+  pros::delay(500);
 
   startCatapultShoot();
 
@@ -140,13 +140,13 @@ void twoVtwo_right_red() {
 
   matchloadUp();
 
-  chassis.moveToPoint(-1, 40.5, 3000, {.maxSpeed = 100}); // Go to middle goal
+  chassis.moveToPoint(-1, 35, 3000, {.maxSpeed = 100}); // Go to middle goal
   chassis.waitUntilDone();
 
   outtakeBlock(100); // Outtake to descore
   pros::delay(2000);
 
-  chassis.moveToPoint(-1, 48, 3000, {.maxSpeed = 40}); // Go forward descore
+  chassis.moveToPoint(-1, 43, 3000, {.maxSpeed = 40}); // Go forward descore
   chassis.waitUntilDone();
 
   chassis.moveToPoint(-1, 16, 3000,
