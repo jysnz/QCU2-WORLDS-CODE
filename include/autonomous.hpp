@@ -7,3 +7,4 @@ void parkingtest();
 void runAutonomous();
 void skills();
 void skillsV1();
+void SoloAWP_Red_Right();
