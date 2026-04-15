@@ -277,7 +277,7 @@ void catapultTask(void *) {
                                                  : pos - dynamicFirePos);
         int speed = CAT_SPEED;
         // Decelerate over the last 500 degrees for very smooth approach
-        if (distanceToTarget < 700) {
+        if (distanceToTarget < 500) {
           // Ramp down from CAT_SPEED to 40 as we approach (ensures motor
           // reaches target)
           speed = std::max(40, (int)(CAT_SPEED * (distanceToTarget / 500.0)));
@@ -547,7 +547,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot(true, true);
+      startCatapultShoot();
     }
 
     // Logic to detect Tap vs. Hold
