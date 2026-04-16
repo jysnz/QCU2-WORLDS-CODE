@@ -227,7 +227,11 @@ void twoVtwo_right_blue() {
   outtakeBlock(100); // Outtake to descore
   pros::delay(1200);
 
-  chassis.moveToPoint(-1, 48, 3000, {.maxSpeed = 100}); // Go forward descore
+  chassis.moveToPoint(-1, 42, 3000, {.maxSpeed = 100}); // Go forward descore
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(-1, 38, 3000, {.forwards = false, .maxSpeed = 100}); 
+  chassis.moveToPoint(-1, 42, 3000, {.maxSpeed = 100}); // Go forward descore
   chassis.waitUntilDone();
 
   chassis.moveToPoint(-1, 15, 3000,

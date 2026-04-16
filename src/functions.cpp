@@ -172,7 +172,7 @@ void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(-150, 200); }
 
-void gateClose() { gate.move_absolute(-450, 200); }
+void gateClose() { gate.move_absolute(-550, 200); }
 
 void descoreUp() { 
   if (isDescoreHoming) return;
