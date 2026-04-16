@@ -21,7 +21,7 @@ static bool intakeWasManual =
 static bool smoothShootEnabled = false; // Enable smooth deceleration on shoot
 
 const int LOAD_POS = 0;
-const int FIRE_POS = -680;
+const int FIRE_POS = -700;
 const int CAT_SPEED = 200;
 const int CAT_LOW_SPEED = 80;
 const int STALL_TIME = 250;
