@@ -170,7 +170,7 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
 
 void delay(int delay) { pros::delay(delay); }
 
-void gateOpen() { gate.move_absolute(-120, 200); }
+void gateOpen() { gate.move_absolute(-150, 200); }
 
 void gateClose() { gate.move_absolute(-450, 200); }
 
@@ -344,11 +344,12 @@ void catapultTask(void *) {
 }
 
 void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
+  gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD); // Ensure gate doesn't resist movement
   if (catState != CAT_IDLE)
     return;
 
   int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
-  int dynamicGatePos = (currentArmState == MID_GOAL) ? -80 : 0;
+  int dynamicGatePos = (currentArmState == MID_GOAL) ? -40 : 30;
 
   // Update state: Is the intake currently being used by the driver?
   intakeWasManual =
@@ -360,7 +361,7 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   intake.move_velocity(-600);
 
   // Command gate to open to -120 when firing begins
-  gate.move_absolute(dynamicGatePos, 200);
+  gate.move_absolute(-200, 200);
 
   catAttempts = 0;
   stalledTime = 0;

@@ -88,6 +88,7 @@ void twoVtwo_left() {
 
   gateReset();
 }
+
 void twoVtwo_right_red() {
   gateClose();
   chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
@@ -101,6 +102,7 @@ void twoVtwo_right_red() {
 
   chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
+  pros::delay(230);
 
   chassis.moveToPoint(0, -25, 3000,
                       {.forwards = false, .maxSpeed = 40}); // Go back to shoot
@@ -123,7 +125,7 @@ void twoVtwo_right_red() {
   chassis.moveToPoint(0, 32, 3000,
                       {.maxSpeed = 40}); // Forward to intake enemyballs
   chassis.waitUntilDone();
-  pros::delay(500);
+  pros::delay(350);
 
   startCatapultShoot();
 
@@ -140,13 +142,13 @@ void twoVtwo_right_red() {
 
   matchloadUp();
 
-  chassis.moveToPoint(-1, 35, 3000, {.maxSpeed = 100}); // Go to middle goal
+  chassis.moveToPoint(-1, 40.5, 3000, {.maxSpeed = 100}); // Go to middle goal
   chassis.waitUntilDone();
 
   outtakeBlock(100); // Outtake to descore
-  pros::delay(2000);
+  pros::delay(1200);
 
-  chassis.moveToPoint(-1, 43, 3000, {.maxSpeed = 40}); // Go forward descore
+  chassis.moveToPoint(-1, 48, 3000, {.maxSpeed = 100}); // Go forward descore
   chassis.waitUntilDone();
 
   chassis.moveToPoint(-1, 16, 3000,
@@ -180,7 +182,6 @@ void twoVtwo_right_blue() {
 
   chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
-  pros::delay(300);
 
   chassis.moveToPoint(0, -25, 3000,
                       {.forwards = false, .maxSpeed = 40}); // Go back to shoot
@@ -242,8 +243,7 @@ void twoVtwo_right_blue() {
   chassis.waitUntilDone();
   intakeStop();
   
-  gateReset();
-  
+  gateReset(); 
 }
 
 void skills() {
@@ -471,7 +471,7 @@ void skills() {
 }
 
 void skillsV1() {
-  chassis.moveToPoint(0, 30, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 30.5, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000); // Turn to matchload
@@ -488,13 +488,14 @@ void skillsV1() {
   chassis.moveToPoint(0, 10, 1000, {.maxSpeed = 100}); // Go to intake
   chassis.waitUntilDone();
 
+  gateClose();
+
   chassis.moveToPoint(0, -5, 1000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
 
   pros::delay(300);
-  gateClose();
   intakeBlock();
 
   chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 40}); // Go to intake
@@ -773,7 +774,6 @@ void SoloAWP_Red_Right() {
 
   // gateReset();
 }
-
 
 void runAutonomous() {
     switch (currentAutonIndex) {
