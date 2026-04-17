@@ -273,7 +273,7 @@ void catapultTask(void *) {
       // Implement smooth deceleration if enabled
       if (smoothShootEnabled) {
         double distanceToTarget =
-            std::abs(currentArmState == MID_GOAL ? pos - dynamicFirePos + 220
+            std::abs(currentArmState == MID_GOAL ? pos - dynamicFirePos + 380
                                                  : pos - dynamicFirePos);
         int speed = CAT_SPEED;
         // Decelerate over the last 500 degrees for very smooth approach
@@ -548,7 +548,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot();
+      startCatapultShoot(true, true);
     }
 
     // Logic to detect Tap vs. Hold

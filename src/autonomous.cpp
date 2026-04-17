@@ -475,6 +475,7 @@ void skills() {
 }
 
 void skillsV1() {
+  reset();
   chassis.moveToPoint(0, 30, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
@@ -485,8 +486,8 @@ void skillsV1() {
   intakeBlock();
   gateClose();
 
-  chassis.moveToPoint(0, 14, 3000, {.maxSpeed = 40});
-  pros::delay(600);
+  chassis.moveToPoint(0, 12.5, 3000, {.maxSpeed = 50});
+  pros::delay(300);
   
   reset();
 
@@ -514,7 +515,7 @@ void skillsV1() {
 
   reset();
 
-  chassis.moveToPoint(0, -25, 1500, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(0, -27, 1500, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
   startCatapultShoot(true, true);
   pros::delay(250);
@@ -535,18 +536,20 @@ void skillsV1() {
 
   reset();
 
-  chassis.moveToPoint(0, 39, 3000, {.maxSpeed = 40}); // Go to intake
+  chassis.moveToPoint(0, 40, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   drivetrainLock();
   pros::delay(300);
   intakeStop();
 
-  chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(0, -3, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
 
   startCatapultShoot(true, true);
   pros::delay(250);
   startCatapultShoot(true, true);
+  pros::delay(250);
+  startCatapultShoot();
 
   reset();
   chassis.moveToPoint(0, 7, 2000, {.minSpeed = 100}); // Go to matchload
@@ -554,15 +557,16 @@ void skillsV1() {
 
   gateClose();
 
-  chassis.moveToPoint(0, -7, 2000, {.forwards = false, .minSpeed = 80});
+  chassis.moveToPoint(0, -10, 2000, {.forwards = false, .minSpeed = 80});
   chassis.waitUntilDone();
+  pros::delay(500);
 
   reset();
 
   chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 80});
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(-90, 1000);
+  chassis.turnToHeading(-87, 1000);
   chassis.waitUntilDone();
   
   reset();
@@ -577,7 +581,7 @@ void skillsV1() {
   intakeBlock();
   reset();
 
-  chassis.moveToPoint(0, 19, 3000, {.maxSpeed = 40}); // Go to intake
+  chassis.moveToPoint(0, 25, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   drivetrainLock();
   pros::delay(300);
@@ -633,9 +637,10 @@ void skillsV1() {
   pros::delay(300);
   intakeBlock();
 
-  chassis.moveToPoint(0, 40, 3000, {.maxSpeed = 40}); // Go to intake
+  chassis.moveToPoint(0, 40, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   drivetrainLock();
+  pros::delay(300);
   intakeStop();
 
   chassis.moveToPoint(0, -3, 3000, {.forwards = false, .maxSpeed = 100});
