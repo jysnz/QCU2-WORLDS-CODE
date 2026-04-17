@@ -566,12 +566,12 @@ void skillsV1() {
   chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 80});
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(-87, 1000);
+  chassis.turnToHeading(-90, 1000);
   chassis.waitUntilDone();
   
   reset();
 
-  chassis.moveToPoint(0, 92.5, 3500, {.maxSpeed = 80});
+  chassis.moveToPoint(0, 91.5, 3500, {.maxSpeed = 80});
   chassis.waitUntilDone();
 
   chassis.turnToHeading(90, 1000);

@@ -21,7 +21,7 @@ static bool intakeWasManual =
 static bool smoothShootEnabled = false; // Enable smooth deceleration on shoot
 
 const int LOAD_POS = 0;
-const int FIRE_POS = -700;
+const int FIRE_POS = -800;
 const int CAT_SPEED = 200;
 const int CAT_LOW_SPEED = 80;
 const int STALL_TIME = 250;
@@ -272,18 +272,16 @@ void catapultTask(void *) {
 
       // Implement smooth deceleration if enabled
       if (smoothShootEnabled) {
-        double distanceToTarget =
-            std::abs(currentArmState == MID_GOAL ? pos - dynamicFirePos + 380
-                                                 : pos - dynamicFirePos);
-        int speed = CAT_SPEED;
-        // Decelerate over the last 500 degrees for very smooth approach
-        if (distanceToTarget < 500) {
-          // Ramp down from CAT_SPEED to 40 as we approach (ensures motor
-          // reaches target)
-          speed = std::max(40, (int)(CAT_SPEED * (distanceToTarget / 500.0)));
-        }
+        double error = std::abs(dynamicFirePos - pos);
 
-        catapult_arm.move_absolute(dynamicFirePos, speed);
+        int voltage = 12000; // full power
+
+        if (error < 400) voltage = 9000;
+        if (error < 250) voltage = 7000;
+        if (error < 150) voltage = 5000;
+        if (error < 80)  voltage = 3500;
+
+        catapult_arm.move_voltage(-voltage);
       }
 
       if (vel < 5)
@@ -468,6 +466,7 @@ void catapultControl() {
   static double lastDiscorePos = 0.0;
   static ArmState lastKnownState = LONG_GOAL;
   static bool stateChanged = true; // Force first execution
+  static bool lastCatBtn = false;
 
   static bool matchLoadToggled = false;
   static bool wasMatchLoadTapped = false;
