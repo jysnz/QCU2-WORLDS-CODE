@@ -517,6 +517,7 @@ void skillsV1() {
 
   chassis.moveToPoint(0, -27, 1500, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
+  matchloadDown();
   startCatapultShoot(true, true);
   pros::delay(250);
   startCatapultShoot(true, true);
@@ -531,8 +532,6 @@ void skillsV1() {
 
   chassis.moveToPoint(0, -7, 2000, {.forwards = false, .minSpeed = 80});
   chassis.waitUntilDone();
-
-  matchloadDown();
 
   reset();
 
@@ -615,6 +614,7 @@ void skillsV1() {
 
   chassis.moveToPoint(0, -27, 1500, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
+  matchloadDown();
   startCatapultShoot(true, true);
   pros::delay(250);
   startCatapultShoot(true, true);
@@ -629,8 +629,6 @@ void skillsV1() {
   chassis.waitUntilDone();
 
   intakeBlock();
-
-  matchloadDown();
 
   reset();
 
