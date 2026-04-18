@@ -47,6 +47,7 @@ static bool catShouldOuttake = false; // Flag to trigger outtake after reload
 
 bool isMatchloadHoming = false;
 bool isDescoreHoming = false;
+bool isLeverResetting = false;
 
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
@@ -60,65 +61,58 @@ double inchesToDegrees(double inches) {
 }
 
 // ─── Descore Homing Task ─────────────────────────────────────────────────────
-void descoreHomingTask(void* param) {
-    isDescoreHoming = true;
-    
-    // Step 1: Move positively by 40
-    descore.move_absolute(180, 100);
-    pros::delay(500); // Wait for movement to finish
-    
-    // Step 3: Tare and finish
-    descore.tare_position();
-    descore.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    
-    isDescoreHoming = false;
+void descoreHomingTask(void *param) {
+  isDescoreHoming = true;
+
+  // Step 1: Move positively by 40
+  descore.move_absolute(180, 100);
+  pros::delay(500); // Wait for movement to finish
+
+  // Step 3: Tare and finish
+  descore.tare_position();
+  descore.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
+  isDescoreHoming = false;
 }
 
-void startDescoreHoming() {
-    pros::Task homing_task(descoreHomingTask);
-}
+void startDescoreHoming() { pros::Task homing_task(descoreHomingTask); }
 
-void descoreHoming() {
-    startDescoreHoming();
-}
+void descoreHoming() { startDescoreHoming(); }
 
-void matchloadHomingTask(void* param) {
-    isMatchloadHoming = true; // Block other functions from using the motor
-    
-    matchloader.move_voltage(5000);
-    pros::delay(150);
+void matchloadHomingTask(void *param) {
+  isMatchloadHoming = true; // Block other functions from using the motor
 
-    int timeout = 0;
-    while (std::abs(matchloader.get_actual_velocity()) > 2) {
-        pros::delay(20);
-        timeout += 20;
-        if (timeout > 2000) break;
-    }
+  matchloader.move_voltage(5000);
+  pros::delay(150);
 
-    matchloader.move_voltage(0);
-    pros::delay(100);
+  int timeout = 0;
+  while (std::abs(matchloader.get_actual_velocity()) > 2) {
+    pros::delay(20);
+    timeout += 20;
+    if (timeout > 2000)
+      break;
+  }
 
-    // Move up slightly
-    matchloader.move_relative(-40, 100);
+  matchloader.move_voltage(0);
+  pros::delay(100);
 
-    // Wait for movement to finish
-    pros::delay(500);
+  // Move up slightly
+  matchloader.move_relative(-40, 100);
 
-    matchloader.tare_position();
-    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  // Wait for movement to finish
+  pros::delay(500);
 
-    isMatchloadHoming = false; // Release the lock
+  matchloader.tare_position();
+  matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+
+  isMatchloadHoming = false; // Release the lock
 }
 
 // Wrapper for the Task
-void startMatchloadHoming() {
-    pros::Task homing_task(matchloadHomingTask);
-}
+void startMatchloadHoming() { pros::Task homing_task(matchloadHomingTask); }
 
 // Legacy function name for compatibility (calls the task)
-void matchloadHoming() {
-    startMatchloadHoming();
-}
+void matchloadHoming() { startMatchloadHoming(); }
 
 void drivetrainLock() {
   left_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -174,26 +168,30 @@ void gateOpen() { gate.move_absolute(-150, 200); }
 
 void gateClose() { gate.move_absolute(-550, 200); }
 
-void descoreUp() { 
-  if (isDescoreHoming) return;
-  descore.move_absolute(0, 200); 
+void descoreUp() {
+  if (isDescoreHoming)
+    return;
+  descore.move_absolute(0, 200);
 }
 
-void descoreDown() { 
-  if (isDescoreHoming) return;
-  descore.move_absolute(-210, 200); 
+void descoreDown() {
+  if (isDescoreHoming)
+    return;
+  descore.move_absolute(-210, 200);
 }
 
 void descoreDownMiddle() { descore.move_absolute(300, 200); }
 
-void matchloadUp() { 
-  if (isMatchloadHoming) return;
-  matchloader.move_absolute(-450, 200); 
+void matchloadUp() {
+  if (isMatchloadHoming)
+    return;
+  matchloader.move_absolute(-450, 200);
 }
 
-void matchloadDown() { 
-  if (isMatchloadHoming) return;
-  matchloader.move_absolute(0, 200); 
+void matchloadDown() {
+  if (isMatchloadHoming)
+    return;
+  matchloader.move_absolute(0, 200);
 }
 
 void gateCloseMid() { gate.move_absolute(-400, 200); }
@@ -226,13 +224,25 @@ void intakeStop() { intake.move_velocity(0); }
 void reset() { chassis.setPose(0, 0, 0); }
 
 void leverReset() {
-  catapult_arm.move_velocity(-50);
-  int lv = catapult_arm.get_actual_velocity();
+  isLeverResetting = true; // Block other functions from using the motor
 
-  if (lv <= 3) {
-    catapult_arm.move_velocity(0);
-    catapult_arm.tare_position();
+  catapult_arm.move_voltage(5000); // Spin negatively at high voltage
+  pros::delay(150);
+
+  int timeout = 0;
+  while (std::abs(catapult_arm.get_actual_velocity()) > 2) {
+    pros::delay(20);
+    timeout += 20;
+    if (timeout > 2000)
+      break; // Safety timeout
   }
+
+  catapult_arm.move_voltage(0);
+  pros::delay(100);
+
+  catapult_arm.tare_position();
+
+  isLeverResetting = false; // Release the lock
 }
 
 // --- ARM STATE TRACKING ---
@@ -242,6 +252,12 @@ static ArmState currentArmState = LONG_GOAL; // Default position
 // ─── Catapult task (Updated with Dynamic Intake Logic) ───────────────────────
 void catapultTask(void *) {
   while (true) {
+    // Skip processing if lever is being reset
+    if (isLeverResetting) {
+      pros::delay(CHECK_DELAY);
+      continue;
+    }
+
     double pos = catapult_arm.get_position();
     double vel = std::abs(catapult_arm.get_actual_velocity());
 
@@ -277,10 +293,14 @@ void catapultTask(void *) {
 
         int voltage = 12000; // full power
 
-        if (error < 400) voltage = 9000;
-        if (error < 250) voltage = 7000;
-        if (error < 150) voltage = 5000;
-        if (error < 80)  voltage = 3500;
+        if (error < 400)
+          voltage = 9000;
+        if (error < 250)
+          voltage = 7000;
+        if (error < 150)
+          voltage = 5000;
+        if (error < 80)
+          voltage = 3500;
 
         catapult_arm.move_voltage(-voltage);
       }
@@ -343,7 +363,8 @@ void catapultTask(void *) {
 }
 
 void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
-  gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD); // Ensure gate doesn't resist movement
+  gate.set_brake_mode(
+      pros::E_MOTOR_BRAKE_HOLD); // Ensure gate doesn't resist movement
   if (catState != CAT_IDLE)
     return;
 
@@ -367,7 +388,8 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   shotSuccess = false;
   smoothShootEnabled = smoothShoot;
   catState = CAT_FIRING;
-  catapult_arm.move_absolute(dynamicFirePos, lowSpeed ? CAT_LOW_SPEED :  CAT_SPEED);
+  catapult_arm.move_absolute(dynamicFirePos,
+                             lowSpeed ? CAT_LOW_SPEED : CAT_SPEED);
 
   // For Autonomous: wait until the arm is back at home before returning control
   // Only if this is being called from a blocking context (like Autonomous)
@@ -414,40 +436,10 @@ void intakeTask(void *) {
   }
 }
 
-// ─── Persistence ─────────────────────────────────────────────────────────────
-void restoreMotorPositions() {
-  FILE *usd_file_read = fopen("/usd/motor_pos.bin", "rb");
-  if (usd_file_read) {
-    double positions[5];
-    fread(positions, sizeof(double), 5, usd_file_read);
-    fclose(usd_file_read);
-
-    catapult_arm.move_absolute(positions[0], 100);
-    matchloader.move_absolute(positions[1], 100);
-    descore.move_absolute(positions[2], 100);
-    arm.move_absolute(positions[3], 100);
-    gate.move_absolute(positions[4], 100);
-  }
-}
-
-void persistenceTask(void *) {
-  while (true) {
-    FILE *usd_file_write = fopen("/usd/motor_pos.bin", "wb");
-    if (usd_file_write) {
-      double positions[5] = {catapult_arm.get_position(),
-                             matchloader.get_position(), descore.get_position(),
-                             arm.get_position(), gate.get_position()};
-      fwrite(positions, sizeof(double), 5, usd_file_write);
-      fflush(usd_file_write);
-      fclose(usd_file_write);
-    }
-    pros::delay(2000); // Save every 2 seconds to preserve SD health
-  }
-}
-
 // ─── Operator control ────────────────────────────────────────────────────────
 void catapultControl() {
   descoreHoming();
+  leverReset();
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
@@ -471,7 +463,8 @@ void catapultControl() {
 
   static bool matchLoadToggled = false;
   static bool wasMatchLoadTapped = false;
-  static bool hasMatchloadHomed = false; // Flag to track if first homing has occurred
+  static bool hasMatchloadHomed =
+      false; // Flag to track if first homing has occurred
 
   while (true) {
     // 1. Gate Logic Base
@@ -499,8 +492,7 @@ void catapultControl() {
       if (!hasMatchloadHomed) {
         matchloadHoming();
         hasMatchloadHomed = true;
-      }
-      else {
+      } else {
         matchLoadToggled = !matchLoadToggled;
       }
     }

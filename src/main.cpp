@@ -41,7 +41,8 @@ UITab currentTab = TAB_TEMPS;
 
 int currentAutonIndex = 0;
 const std::vector<std::string> autonNames = {
-    "2v2 Left",
+    "2v2 Left Red",
+    "2v2 Left Blue",
     "2v2 Right Red",
     "2v2 Right Blue",
     "Skills Challenge",
