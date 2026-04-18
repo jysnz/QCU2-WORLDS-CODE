@@ -287,7 +287,7 @@ void catapultTask(void *) {
         break;
       }
 
-      // Implement smooth deceleration if enabled
+      // Apply voltage to drive to firing position
       if (smoothShootEnabled) {
         double error = std::abs(dynamicFirePos - pos);
 
@@ -303,18 +303,24 @@ void catapultTask(void *) {
           voltage = 3500;
 
         catapult_arm.move_voltage(-voltage);
+      } else {
+        // Apply constant high voltage to drive through ball resistance
+        catapult_arm.move_voltage(-12000);
       }
 
-      if (remaining > 80 && vel < 5)
+      // Stall detection: only trigger if we're not moving AND far from target
+      // Increased threshold to 150ms for more reliability with ball
+      if (remaining > 100 && vel < 3)
         stalledTime += CHECK_DELAY;
       else
         stalledTime = 0;
 
-      if (stalledTime >= STALL_TIME) {
+      // Increased stall time to 500ms to allow more motor effort
+      if (stalledTime >= 500) {
         catState = CAT_RELOADING;
         catapult_arm.move_absolute(LOAD_POS, CAT_SPEED);
 
-        // Stall case: Ensure intake stays negative to clear jam
+        // Stall case: reverse intake to clear jam
         intake.move_velocity(600);
 
         catReloadTime = 0;
@@ -375,12 +381,12 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   intakeWasManual =
       (std::abs(intake.get_actual_velocity()) > INTAKE_STALL_THRESHOLD);
 
-  // Start with intake positive to gather the ball
+  // Start with intake negative to gather the ball
   // If catapult_arm stalls (blocked by a ball), catapultTask will switch to
-  // negative
+  // positive (outtake) to clear jam
   intake.move_velocity(-600);
 
-  // Command gate to open to -120 when firing begins
+  // Command gate to open when firing begins
   gate.move_absolute(-200, 200);
 
   catAttempts = 0;
@@ -388,8 +394,7 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   shotSuccess = false;
   smoothShootEnabled = smoothShoot;
   catState = CAT_FIRING;
-  catapult_arm.move_absolute(dynamicFirePos,
-                             lowSpeed ? CAT_LOW_SPEED : CAT_SPEED);
+  // Don't use move_absolute - let voltage control in catapultTask handle it
 
   // For Autonomous: wait until the arm is back at home before returning control
   // Only if this is being called from a blocking context (like Autonomous)
@@ -540,7 +545,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot(true, true);
+      startCatapultShoot();
     }
 
     // Logic to detect Tap vs. Hold
