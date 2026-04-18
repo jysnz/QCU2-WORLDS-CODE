@@ -246,6 +246,7 @@ void catapultTask(void *) {
     double vel = std::abs(catapult_arm.get_actual_velocity());
 
     int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
+    double remaining = std::abs(dynamicFirePos - pos);
 
     switch (catState) {
     case CAT_IDLE:
@@ -284,7 +285,7 @@ void catapultTask(void *) {
         catapult_arm.move_voltage(-voltage);
       }
 
-      if (vel < 5)
+      if (remaining > 80 && vel < 5)
         stalledTime += CHECK_DELAY;
       else
         stalledTime = 0;
