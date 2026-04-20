@@ -164,7 +164,9 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
 
 void delay(int delay) { pros::delay(delay); }
 
-void gateOpen() { gate.move_absolute(-150, 200); }
+void gateOpen() { gate.move_absolute(-200, 200); }
+
+void gateMidOpen() { gate.move_absolute(-70, 200); }  
 
 void gateClose() { gate.move_absolute(-550, 200); }
 
@@ -388,6 +390,12 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
 
   // Command gate to open when firing begins
   gate.move_absolute(-200, 200);
+  if(currentArmState == MID_GOAL) {
+    gateMidOpen();
+  } else {
+    gateOpen();
+
+  }
 
   catAttempts = 0;
   stalledTime = 0;
