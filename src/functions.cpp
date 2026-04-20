@@ -19,6 +19,8 @@ static int stalledTime = 0;
 static bool intakeWasManual =
     false; // Tracks if intake was already running before shoot
 static bool smoothShootEnabled = false; // Enable smooth deceleration on shoot
+static uint32_t lastMidGoalFireTime =
+    0; // Timestamp of last fire in mid goal state
 
 const int LOAD_POS = 0;
 const int FIRE_POS = -800;
@@ -27,6 +29,7 @@ const int CAT_LOW_SPEED = 80;
 const int STALL_TIME = 250;
 const int CHECK_DELAY = 10;
 const int MAX_ATTEMPTS = 10;
+const int MID_GOAL_FIRE_DELAY = 500; // ms delay after firing in mid goal state
 
 // ─── Intake stall detection state
 // ─────────────────────────────────────────────
@@ -166,7 +169,7 @@ void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(-200, 200); }
 
-void gateMidOpen() { gate.move_absolute(-70, 200); }  
+void gateMidOpen() { gate.move_absolute(0, 200); }
 
 void gateClose() { gate.move_absolute(-550, 200); }
 
@@ -376,6 +379,15 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   if (catState != CAT_IDLE)
     return;
 
+  // Check 500ms cooldown delay if in mid goal state (asynchronous)
+  if (currentArmState == MID_GOAL) {
+    uint32_t currentTime = pros::millis();
+    uint32_t timeSinceLastFire = currentTime - lastMidGoalFireTime;
+    if (timeSinceLastFire < MID_GOAL_FIRE_DELAY) {
+      return; // Still in cooldown, ignore fire request
+    }
+  }
+
   int dynamicFirePos = (currentArmState == MID_GOAL) ? -700 : FIRE_POS;
   int dynamicGatePos = (currentArmState == MID_GOAL) ? -40 : 30;
 
@@ -390,11 +402,10 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
 
   // Command gate to open when firing begins
   gate.move_absolute(-200, 200);
-  if(currentArmState == MID_GOAL) {
+  if (currentArmState == MID_GOAL) {
     gateMidOpen();
-  } else {
+            } else {
     gateOpen();
-
   }
 
   catAttempts = 0;
@@ -402,6 +413,11 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   shotSuccess = false;
   smoothShootEnabled = smoothShoot;
   catState = CAT_FIRING;
+
+  // Record fire time for mid goal cooldown
+  if (currentArmState == MID_GOAL) {
+    lastMidGoalFireTime = pros::millis();
+  }
   // Don't use move_absolute - let voltage control in catapultTask handle it
 
   // For Autonomous: wait until the arm is back at home before returning control
@@ -553,7 +569,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot();
+      startCatapultShoot(true, true);
     }
 
     // Logic to detect Tap vs. Hold
