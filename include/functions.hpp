@@ -34,6 +34,7 @@ void leverReset();
 void gateCloseMid();
 void gateReset();
 void matchloadHoming();
+void armGateHoming();
 void descoreHoming();
 
 // ─── Drive ───────────────────────────────────────────────────────────────────

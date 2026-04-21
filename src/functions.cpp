@@ -51,6 +51,7 @@ static bool catShouldOuttake = false; // Flag to trigger outtake after reload
 bool isMatchloadHoming = false;
 bool isDescoreHoming = false;
 bool isLeverResetting = false;
+bool isArmGateHoming = false;
 
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
@@ -117,6 +118,93 @@ void startMatchloadHoming() { pros::Task homing_task(matchloadHomingTask); }
 // Legacy function name for compatibility (calls the task)
 void matchloadHoming() { startMatchloadHoming(); }
 
+// ─── Arm and Gate Homing Task ────────────────────────────────────────────────
+void armGateHomingTask(void *param) {
+  isArmGateHoming = true;
+
+  // ─── Step 1: Move arm positively until it stalls ───
+  // Make gate free from any brake (coast)
+  gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  gate.move_voltage(0);
+
+  arm.move_voltage(8000);
+
+  // Give the motor slightly more time to overcome initial inertia
+  pros::delay(250);
+
+  int timeout = 0;
+  int stallTime = 0;
+
+  while (timeout < 3000) {
+    // Check if the motor is currently stuck
+    if (std::abs(arm.get_actual_velocity()) <= 5) {
+      stallTime += 20; // Add to our stall timer
+    } else {
+      stallTime = 0; // Reset if the motor is moving fine
+    }
+
+    // It must read low velocity continuously for 200ms to be considered a true
+    // stall
+    if (stallTime >= 200) {
+      break;
+    }
+
+    pros::delay(20);
+    timeout += 20;
+  }
+
+  arm.move_voltage(0);
+  arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  pros::delay(100);
+
+  // ─── Step 2: Move gate positively until it stalls ───
+  // Restore brake mode for homing the gate
+  gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  gate.move_voltage(8000);
+  pros::delay(250);
+
+  timeout = 0;
+  stallTime = 0; // Reset stall timer for the gate
+
+  while (timeout < 3000) {
+    if (std::abs(gate.get_actual_velocity()) <= 5) {
+      stallTime += 20;
+    } else {
+      stallTime = 0;
+    }
+
+    if (stallTime >= 200) {
+      break;
+    }
+
+    pros::delay(20);
+    timeout += 20;
+  }
+
+  gate.move_voltage(0);
+  gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  pros::delay(100);
+
+  // // ─── Step 3: Move arm to angle 900 ───
+  // // Restore hold mode to move precisely
+  // arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  // arm.move_absolute(900, 200);
+  // pros::delay(1200);
+
+  // ─── Step 4: Tare both motors ───
+  arm.tare_position();
+  gate.tare_position();
+
+  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  // gateClose();
+
+  isArmGateHoming = false;
+}
+
+void startArmGateHoming() { pros::Task homing_task(armGateHomingTask); }
+
+void armGateHoming() { startArmGateHoming(); }
+
 void drivetrainLock() {
   left_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   right_motor_group.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
@@ -165,7 +253,7 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
   right_motor_group.move(0);
 }
 
-void descoreManual(){
+void descoreManual() {
   descore.move_absolute(200, 200);
   descore.tare_position();
 }
@@ -409,7 +497,7 @@ void startCatapultShoot(bool smoothShoot, bool lowSpeed) {
   gate.move_absolute(-200, 200);
   if (currentArmState == MID_GOAL) {
     gateMidOpen();
-            } else {
+  } else {
     gateOpen();
   }
 
@@ -499,11 +587,13 @@ void catapultControl() {
   static bool wasMatchLoadTapped = false;
   static bool hasMatchloadHomed =
       false; // Flag to track if first homing has occurred
+  static bool wasAButtonTapped = false;
 
   while (true) {
     // 1. Gate Logic Base
     // Only apply if we haven't just changed states or if we are idle
-    if (catState == CAT_IDLE && !pros::competition::is_autonomous()) {
+    if (catState == CAT_IDLE && !pros::competition::is_autonomous() &&
+        !isArmGateHoming) {
       if (currentArmState == LONG_GOAL) {
         gateClose();
       } else if (currentArmState == MID_GOAL) {
@@ -519,7 +609,9 @@ void catapultControl() {
     bool catapultBtn = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool descoreHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     bool matchLoadTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
-    bool descoreManualTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+    bool descoreManualTapped =
+        controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+    bool aButtonPressed = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
 
     // Toggle logic for Matchload (Button Y)
     if (matchLoadTapped && !wasMatchLoadTapped) {
@@ -532,6 +624,12 @@ void catapultControl() {
       }
     }
     wasMatchLoadTapped = matchLoadTapped;
+
+    // Arm and Gate Homing (Button A)
+    if (aButtonPressed && !wasAButtonTapped && !isArmGateHoming) {
+      armGateHoming();
+    }
+    wasAButtonTapped = aButtonPressed;
 
     // Arm logic state tracking
     bool armHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
@@ -637,7 +735,7 @@ void catapultControl() {
       }
     }
 
-    if(descoreManualTapped){
+    if (descoreManualTapped) {
       descoreManual();
     }
 
