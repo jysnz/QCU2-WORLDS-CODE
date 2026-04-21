@@ -569,7 +569,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot(true, true);
+      startCatapultShoot(true, false);
     }
 
     // Logic to detect Tap vs. Hold
