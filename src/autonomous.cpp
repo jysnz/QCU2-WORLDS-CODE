@@ -175,10 +175,10 @@ void twoVtwo_left_blue() {
 
 void twoVtwo_right_red() {
   gateClose();
-  chassis.moveToPoint(0, 36.5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, -48, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.turnToHeading(-90, 1000); // Turn to matchload
   chassis.waitUntilDone();
   intakeBlock();
   reset();
@@ -255,10 +255,10 @@ void twoVtwo_right_red() {
 
 void twoVtwo_right_blue() {
   gateClose();
-  chassis.moveToPoint(0, 38.5, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, -48, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(90, 1000); // Turn to matchload
+  chassis.turnToHeading(-90, 1000); // Turn to matchload
   chassis.waitUntilDone();
   intakeBlock();
   reset();

@@ -165,6 +165,11 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
   right_motor_group.move(0);
 }
 
+void descoreManual(){
+  descore.move_absolute(200, 200);
+  descore.tare_position();
+}
+
 void delay(int delay) { pros::delay(delay); }
 
 void gateOpen() { gate.move_absolute(0, 200); }
@@ -514,6 +519,7 @@ void catapultControl() {
     bool catapultBtn = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool descoreHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     bool matchLoadTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+    bool descoreManualTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
 
     // Toggle logic for Matchload (Button Y)
     if (matchLoadTapped && !wasMatchLoadTapped) {
@@ -629,6 +635,10 @@ void catapultControl() {
         // In the normal LONG_GOAL state, release = return to UP position
         descoreUp();
       }
+    }
+
+    if(descoreManualTapped){
+      descoreManual();
     }
 
     // Toggle matchload based on matchLoadToggled state (Button Y)
