@@ -167,7 +167,7 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
 
 void delay(int delay) { pros::delay(delay); }
 
-void gateOpen() { gate.move_absolute(-200, 200); }
+void gateOpen() { gate.move_absolute(0,200); }
 
 void gateMidOpen() { gate.move_absolute(0, 200); }
 
