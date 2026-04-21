@@ -167,7 +167,7 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
 
 void delay(int delay) { pros::delay(delay); }
 
-void gateOpen() { gate.move_absolute(-200, 200); }
+void gateOpen() { gate.move_absolute(0, 200); }
 
 void gateMidOpen() { gate.move_absolute(0, 200); }
 
@@ -569,7 +569,7 @@ void catapultControl() {
     right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
 
     if (catapultBtn) {
-      startCatapultShoot(true, true);
+      startCatapultShoot();
     }
 
     // Logic to detect Tap vs. Hold

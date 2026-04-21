@@ -13,7 +13,7 @@
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
 pros::MotorGroup left_motor_group({-11, -12, -13, -14}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({1, 2, 3, 4}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({1, 2, 10, 4}, pros::MotorGears::green);
 pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
