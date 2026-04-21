@@ -72,15 +72,10 @@ void selectAutonFromController() {
   bool selecting = true;
   bool lastUpPressed = false;
   bool lastDownPressed = false;
-  int autonScroll = 0;
-
-  const int BG_DARK = 0x0A0A0F;
-  const int CARD_BG = 0x161B22;
-  const int ACCENT_CYAN = 0x00F0FF;
-  const int ACCENT_ORANGE = 0xFF8C00;
-  const int ACCENT_DARK_GRAY = 0x22222B;
+  bool needsUpdate = true; // Prevents spamming the controller screen
 
   controller.clear();
+  pros::delay(50); // Give the controller time to clear
 
   while (selecting) {
     bool upPressed = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
@@ -90,10 +85,11 @@ void selectAutonFromController() {
     // Controller Navigation
     if (upPressed && !lastUpPressed) {
       currentAutonIndex = (currentAutonIndex + 1) % autonNames.size();
+      needsUpdate = true;
     }
     if (downPressed && !lastDownPressed) {
-      currentAutonIndex =
-          (currentAutonIndex - 1 + autonNames.size()) % autonNames.size();
+      currentAutonIndex = (currentAutonIndex - 1 + autonNames.size()) % autonNames.size();
+      needsUpdate = true;
     }
 
     lastUpPressed = upPressed;
@@ -105,119 +101,49 @@ void selectAutonFromController() {
       selecting = false;
     }
 
-    // Brain Screen Display with Touch Input
-    pros::screen_touch_status_s_t status = pros::screen::touch_status();
-    static bool wasTouched = false;
+    // Controller Display (Updates only when index changes)
+    if (needsUpdate) {
+      std::string autonDisplay = autonNames[currentAutonIndex];
+      
+      // Truncate if too long
+      if (autonDisplay.length() > 18) {
+        autonDisplay = autonDisplay.substr(0, 15) + "...";
+      }
+      
+      // Pad with spaces to overwrite previous text without needing controller.clear()
+      while(autonDisplay.length() < 19) {
+        autonDisplay += " ";
+      }
 
-    if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
-      // Scroll UP
-      if (status.x > 430 && status.y > 60 && status.y < 130) {
-        autonScroll += 55;
-      }
-      // Scroll DOWN
-      else if (status.x > 430 && status.y > 140 && status.y < 210) {
-        autonScroll -= 55;
-      }
-      // Select Auton by Touch
-      else if (status.x < 420 && status.y > 50 && status.y < 215) {
-        for (int i = 0; i < (int)autonNames.size(); i++) {
-          int itemY = 60 + (i * 55) + autonScroll;
-          if (status.y >= itemY && status.y <= itemY + 50) {
-            currentAutonIndex = i;
-            saveAutonSelection();
-            selecting = false;
-            break;
-          }
-        }
-      }
-      wasTouched = true;
-    } else if (status.touch_status == pros::E_TOUCH_RELEASED) {
-      wasTouched = false;
+      controller.print(0, 0, "SELECT AUTON       ");
+      pros::delay(50); // Required delay between controller commands
+      
+      controller.print(1, 0, "%s", autonDisplay.c_str());
+      pros::delay(50);
+      
+      controller.print(2, 0, "A = Confirm        ");
+      
+      needsUpdate = false;
     }
 
-    // Clamp Scrolling
-    if (autonScroll > 0)
-      autonScroll = 0;
-    int maxAutonScroll = -((int)autonNames.size() * 55 - 140);
-    if (autonScroll < maxAutonScroll && maxAutonScroll < 0)
-      autonScroll = maxAutonScroll;
-
-    // ── Render Brain Screen ──
-    pros::screen::set_pen(BG_DARK);
-    pros::screen::fill_rect(0, 0, 480, 240);
-
-    // Subtle Grid
-    pros::screen::set_pen(0x121217);
-    for (int i = 0; i < 480; i += 40)
-      pros::screen::draw_line(i, 0, i, 240);
-    for (int i = 0; i < 240; i += 40)
-      pros::screen::draw_line(0, i, 480, i);
-
-    // Auton List with Selection
-    for (int i = 0; i < (int)autonNames.size(); i++) {
-      int itemY = 60 + (i * 55) + autonScroll;
-
-      if (itemY + 50 < 55 || itemY > 215)
-        continue;
-
-      bool isSelected = (i == currentAutonIndex);
-      pros::screen::set_pen(isSelected ? 0x1c2838 : CARD_BG);
-      pros::screen::fill_rect(20, itemY, 420, itemY + 50);
-
-      pros::screen::set_pen(isSelected ? ACCENT_ORANGE : 0x2d2d38);
-      pros::screen::draw_rect(20, itemY, 420, itemY + 50);
-
-      if (isSelected) {
-        pros::screen::set_pen(ACCENT_ORANGE);
-        pros::screen::fill_rect(20, itemY, 26, itemY + 50);
-      }
-
-      pros::screen::set_pen(isSelected ? 0xFFFFFF : 0x777777);
-      pros::screen::print(pros::E_TEXT_MEDIUM, 45, itemY + 15,
-                          isSelected ? "> %s <" : "  %s",
-                          autonNames[i].c_str());
-    }
-
-    // Header
-    pros::screen::set_pen(ACCENT_ORANGE);
-    pros::screen::fill_rect(5, 5, 475, 50);
-    pros::screen::set_pen(0xFFFFFF);
-    pros::screen::print(pros::E_TEXT_SMALL, 150, 20, "SELECT AUTON");
-
-    // Scroll Buttons
-    pros::screen::set_pen(ACCENT_DARK_GRAY);
-    pros::screen::fill_rect(435, 60, 475, 130);
-    pros::screen::fill_rect(435, 140, 475, 210);
-    pros::screen::set_pen(0xFFFFFF);
-    pros::screen::print(pros::E_TEXT_MEDIUM, 448, 85, "^");
-    pros::screen::print(pros::E_TEXT_MEDIUM, 448, 165, "v");
-
-    // Footer
-    pros::screen::set_pen(0x18181F);
-    pros::screen::fill_rect(0, 215, 480, 240);
-    pros::screen::set_pen(ACCENT_CYAN);
-    pros::screen::print(pros::E_TEXT_SMALL, 15, 222,
-                        "Brain or Controller: D-Pad + A | Touch to Select");
-
-    // Controller Display
-    controller.print(0, 0, "SELECT AUTON   ");
-    controller.print(1, 0, "%s            ",
-                     autonNames[currentAutonIndex].c_str());
-    controller.print(2, 0, "A = OK        ");
-
-    pros::delay(50);
+    pros::delay(50); // Standard loop delay
   }
 
+  // ── Success Feedback ──
   controller.clear();
-  controller.print(0, 0, "Saved!");
-
-  pros::screen::set_pen(BG_DARK);
-  pros::screen::fill_rect(0, 0, 480, 240);
-  pros::screen::set_pen(ACCENT_ORANGE);
-  pros::screen::print(pros::E_TEXT_MEDIUM, 150, 100, "AUTON SAVED");
-  pros::screen::print(pros::E_TEXT_MEDIUM, 100, 150, "%s",
-                      autonNames[currentAutonIndex].c_str());
+  pros::delay(50);
+  
+  controller.print(0, 0, "Saved!             ");
+  pros::delay(50);
+  
+  std::string savedDisplay = autonNames[currentAutonIndex];
+  if (savedDisplay.length() > 18) {
+    savedDisplay = savedDisplay.substr(0, 15) + "...";
+  }
+  controller.print(1, 0, "%s", savedDisplay.c_str());
+  
   pros::delay(1000);
+  controller.clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
