@@ -118,85 +118,72 @@ void startMatchloadHoming() { pros::Task homing_task(matchloadHomingTask); }
 // Legacy function name for compatibility (calls the task)
 void matchloadHoming() { startMatchloadHoming(); }
 
-// ─── Arm and Gate Homing Task ────────────────────────────────────────────────
 void armGateHomingTask(void *param) {
   isArmGateHoming = true;
 
-  // ─── Step 1: Move arm positively until it stalls ───
-  // Make gate free from any brake (coast)
+  // ─── STEP 1: ARM HOMING FIRST ─────────────────────────────
   gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
   gate.move_voltage(0);
 
+  arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
   arm.move_voltage(8000);
-
-  // Give the motor slightly more time to overcome initial inertia
-  pros::delay(250);
+  pros::delay(150);
 
   int timeout = 0;
-  int stallTime = 0;
-
-  while (timeout < 3000) {
-    // Check if the motor is currently stuck
-    if (std::abs(arm.get_actual_velocity()) <= 5) {
-      stallTime += 20; // Add to our stall timer
-    } else {
-      stallTime = 0; // Reset if the motor is moving fine
-    }
-
-    // It must read low velocity continuously for 200ms to be considered a true
-    // stall
-    if (stallTime >= 200) {
+  while (true) {
+    if (std::abs(arm.get_actual_velocity()) <= 2)
       break;
-    }
 
     pros::delay(20);
     timeout += 20;
+
+    if (timeout > 2000)
+      break;
   }
 
+  // Stop arm and LOCK current position
   arm.move_voltage(0);
-  arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
-  pros::delay(100);
+  double armLockPos = arm.get_position();
+  arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  arm.move_absolute(armLockPos, 100);
 
-  // ─── Step 2: Move gate positively until it stalls ───
-  // Restore brake mode for homing the gate
+  pros::delay(200);
+
+
+
+  // ─── STEP 2: GATE HOMING AFTER ARM FINISHES ──────────────
   gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-  gate.move_voltage(8000);
-  pros::delay(250);
+  gate.move_voltage(-8000);
 
   timeout = 0;
-  stallTime = 0; // Reset stall timer for the gate
+  pros::delay(150);
 
-  while (timeout < 3000) {
-    if (std::abs(gate.get_actual_velocity()) <= 5) {
-      stallTime += 20;
-    } else {
-      stallTime = 0;
-    }
-
-    if (stallTime >= 200) {
+  while (true) {
+    if (std::abs(gate.get_actual_velocity()) <= 8)
       break;
-    }
 
     pros::delay(20);
     timeout += 20;
+
+    if (timeout > 2000)
+      break;
   }
 
+  // Stop gate and LOCK current position
   gate.move_voltage(0);
-  gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
-  pros::delay(100);
+  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
-  // // ─── Step 3: Move arm to angle 900 ───
-  // // Restore hold mode to move precisely
-  // arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-  // arm.move_absolute(900, 200);
-  // pros::delay(1200);
+  pros::delay(200);
 
-  // ─── Step 4: Tare both motors ───
+
+
+  // ─── STEP 3: RESET POSITIONS ──────────────────────────────
   arm.tare_position();
   gate.tare_position();
 
-  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-  // gateClose();
+  // // Keep both motors HOLDING at zeroed home position
+  // arm.move_absolute(0, 100);
+  // gate.move_absolute(0, 100);
 
   isArmGateHoming = false;
 }
