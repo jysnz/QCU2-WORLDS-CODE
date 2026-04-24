@@ -180,6 +180,8 @@ void armGateHomingTask(void *param) {
   arm.move_relative(2200, 200);
   arm.tare_position();
 
+  gateClose();
+
   isArmGateHoming = false;
 }
 
