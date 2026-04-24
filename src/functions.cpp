@@ -177,10 +177,10 @@ void armGateHomingTask(void *param) {
   gate.tare_position();
 
   // Move arm to the resting position
-  arm.move_relative(2900, 200);
+  arm.move_relative(2480, 200);
   pros::delay(1000);
-  arm.move_relative(-200, 200);
-  pros::delay(500);
+  // arm.move_relative(-200, 200);
+  // pros::delay(500);
   arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   pros::delay(200);
   // arm.move_relative(-200, 200);
