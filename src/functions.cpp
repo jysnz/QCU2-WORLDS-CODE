@@ -143,15 +143,14 @@ void armGateHomingTask(void *param) {
 
   // Stop arm and LOCK current position
   arm.move_voltage(0);
-  double armLockPos = arm.get_position();
+  // double armLockPos = arm.get_position();
   arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-  arm.move_absolute(armLockPos, 100);
+  // arm.move_absolute(armLockPos, 100);
 
   pros::delay(200);
 
-
-
-  // ─── STEP 2: GATE HOMING AFTER ARM FINISHES ──────────────
+  // ─── STEP 2: GATE HOMING ──────────────────────────────────
+  // The gate homing is now the primary objective.
   gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   gate.move_voltage(-8000);
 
@@ -171,19 +170,12 @@ void armGateHomingTask(void *param) {
 
   // Stop gate and LOCK current position
   gate.move_voltage(0);
-  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
   pros::delay(200);
-
-
 
   // ─── STEP 3: RESET POSITIONS ──────────────────────────────
   arm.tare_position();
   gate.tare_position();
-
-  // // Keep both motors HOLDING at zeroed home position
-  // arm.move_absolute(0, 100);
-  // gate.move_absolute(0, 100);
 
   isArmGateHoming = false;
 }
@@ -238,11 +230,6 @@ void curve_imu(double distance, double targetHeading, double maxSpeed,
 
   left_motor_group.move(0);
   right_motor_group.move(0);
-}
-
-void descoreManual() {
-  descore.move_absolute(200, 200);
-  descore.tare_position();
 }
 
 void delay(int delay) { pros::delay(delay); }
@@ -581,10 +568,12 @@ void catapultControl() {
     // Only apply if we haven't just changed states or if we are idle
     if (catState == CAT_IDLE && !pros::competition::is_autonomous() &&
         !isArmGateHoming) {
-      if (currentArmState == LONG_GOAL) {
-        gateClose();
-      } else if (currentArmState == MID_GOAL) {
-        midGoalArm();
+      if (stateChanged) {
+        if (currentArmState == LONG_GOAL) {
+          gateClose();
+        } else if (currentArmState == MID_GOAL) {
+          midGoalArm();
+        }
       }
       // Note: UNDER_GOAL gate position is handled in underGoalArm() once
     }
@@ -720,10 +709,6 @@ void catapultControl() {
         // In the normal LONG_GOAL state, release = return to UP position
         descoreUp();
       }
-    }
-
-    if (descoreManualTapped) {
-      descoreManual();
     }
 
     // Toggle matchload based on matchLoadToggled state (Button Y)
