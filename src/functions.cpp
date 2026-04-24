@@ -567,13 +567,14 @@ void catapultControl() {
   static bool hasMatchloadHomed =
       false; // Flag to track if first homing has occurred
   static bool wasAButtonTapped = false;
+  static CatapultState lastCatState = CAT_IDLE;
 
   while (true) {
     // 1. Gate Logic Base
     // Only apply if we haven't just changed states or if we are idle
     if (catState == CAT_IDLE && !pros::competition::is_autonomous() &&
         !isArmGateHoming) {
-      if (stateChanged) {
+      if (stateChanged || lastCatState != CAT_IDLE) {
         if (currentArmState == LONG_GOAL) {
           gateClose();
         } else if (currentArmState == MID_GOAL) {
@@ -582,6 +583,7 @@ void catapultControl() {
       }
       // Note: UNDER_GOAL gate position is handled in underGoalArm() once
     }
+    lastCatState = catState;
 
     pros::delay(20);
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
