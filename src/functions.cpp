@@ -126,7 +126,7 @@ void armGateHomingTask(void *param) {
   gate.move_voltage(0);
 
   arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
-  arm.move_voltage(8000);
+  arm.move_voltage(-8000);
   pros::delay(150);
 
   int timeout = 0;
@@ -174,8 +174,11 @@ void armGateHomingTask(void *param) {
   pros::delay(200);
 
   // ─── STEP 3: RESET POSITIONS ──────────────────────────────
-  arm.tare_position();
   gate.tare_position();
+
+  // Move arm to the resting position
+  arm.move_relative(2200, 200);
+  arm.tare_position();
 
   isArmGateHoming = false;
 }
