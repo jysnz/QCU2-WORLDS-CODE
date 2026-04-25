@@ -234,6 +234,8 @@ void armGateHomingTask(void *param) {
   isReset = true;
   currentArmState = LONG_GOAL; // Ensure state is reset to default
 
+  arm.tare_position();
+
   startDescoreHomingReset();
 }
 
@@ -331,17 +333,20 @@ void midGoalArm() {
   arm.move_absolute(1300, 200);
   descore.move_absolute(-300, 200);
   gate.move_absolute(-450, 200);
+  currentArmState = MID_GOAL;
 }
 
 void underGoalArm() {
   arm.move_absolute(2000, 200);
   gate.move_absolute(0, 200); // Ensure gate is closed in under goal position
   descore.move_absolute(-320, 200);
+  currentArmState = UNDER_GOAL;
 }
 
 void longGoalArm() {
   arm.move_absolute(0, 200);
   descoreUp();
+  currentArmState = LONG_GOAL;
 }
 
 void intakeBlock() { intake.move_velocity(-600); }
