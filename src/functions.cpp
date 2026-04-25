@@ -190,10 +190,12 @@ void armGateHomingTask(void *param) {
 
   gate.tare_position();
 
-  gate.move_absolute(-200, 200);
+  gate.move_absolute(-320, 200);
   gate.tare_position();
 
   pros::delay(500);
+
+  gateClose();
 
   isArmGateHoming = false;
   isReset = true;
