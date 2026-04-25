@@ -7,7 +7,7 @@ extern int currentAutonIndex;
 
 void twoVtwo_left_red() {
   gateClose();
-  chassis.moveToPoint(0, 46, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
   chassis.turnToHeading(-90, 1000); // Turn to matchload
@@ -16,7 +16,7 @@ void twoVtwo_left_red() {
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 12, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   // pros::delay(180);
 
@@ -91,7 +91,7 @@ void twoVtwo_left_red() {
 
 void twoVtwo_left_blue() {
   gateClose();
-  chassis.moveToPoint(0, 46, 3000, {.maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 38, 3000, {.maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
   chassis.turnToHeading(-90, 1000); // Turn to matchload
@@ -100,7 +100,7 @@ void twoVtwo_left_blue() {
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 11.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 12, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   // pros::delay(180);
 
@@ -175,16 +175,16 @@ void twoVtwo_left_blue() {
 
 void twoVtwo_right_red() {
   gateClose();
-  chassis.moveToPoint(0, -48, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 38, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(-90, 1000); // Turn to matchload
+  chassis.turnToHeading(90, 1000); // Turn to matchload
   chassis.waitUntilDone();
   intakeBlock();
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 10.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 12, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
   pros::delay(230);
 
@@ -255,16 +255,16 @@ void twoVtwo_right_red() {
 
 void twoVtwo_right_blue() {
   gateClose();
-  chassis.moveToPoint(0, -48, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
+  chassis.moveToPoint(0, 38, 3000, {.forwards = false, .maxSpeed = 100}); // Go to matchload
   chassis.waitUntilDone();
 
-  chassis.turnToHeading(-90, 1000); // Turn to matchload
+  chassis.turnToHeading(90, 1000); // Turn to matchload
   chassis.waitUntilDone();
   intakeBlock();
   reset();
   gateClose();
 
-  chassis.moveToPoint(0, 11.5, 3000, {.maxSpeed = 50}); // Go to intake
+  chassis.moveToPoint(0, 12, 3000, {.maxSpeed = 50}); // Go to intake
   chassis.waitUntilDone();
 
   chassis.moveToPoint(0, -25, 3000,
