@@ -52,6 +52,11 @@ bool isMatchloadHoming = false;
 bool isDescoreHoming = false;
 bool isLeverResetting = false;
 bool isArmGateHoming = false;
+bool isReset = false;
+
+// --- ARM STATE TRACKING ---
+enum ArmState { LONG_GOAL, MID_GOAL, UNDER_GOAL };
+static ArmState currentArmState = LONG_GOAL; // Default position
 
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
@@ -122,7 +127,7 @@ void armGateHomingTask(void *param) {
   isArmGateHoming = true;
 
   // ─── STEP 1: ARM HOMING FIRST ─────────────────────────────
-  gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
   gate.move_voltage(0);
 
   arm.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
@@ -151,14 +156,14 @@ void armGateHomingTask(void *param) {
 
   // ─── STEP 2: GATE HOMING ──────────────────────────────────
   // The gate homing is now the primary objective.
-  gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+  // gate.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   gate.move_voltage(-8000);
 
   timeout = 0;
   pros::delay(150);
 
   while (true) {
-    if (std::abs(gate.get_actual_velocity()) <= 8)
+    if (std::abs(gate.get_actual_velocity()) <= 20)
       break;
 
     pros::delay(20);
@@ -174,22 +179,25 @@ void armGateHomingTask(void *param) {
   pros::delay(200);
 
   // ─── STEP 3: RESET POSITIONS ──────────────────────────────
-  gate.tare_position();
 
   // Move arm to the resting position
-  arm.move_relative(2480, 200);
+  arm.move_relative(2450, 200);
   pros::delay(1000);
-  // arm.move_relative(-200, 200);
-  // pros::delay(500);
+  arm.move_relative(-20, 200);
+  pros::delay(500);
   arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
   pros::delay(200);
-  // arm.move_relative(-200, 200);
-  // pros::delay(300);
-  arm.tare_position();
 
-  gateClose();
+  gate.tare_position();
+
+  gate.move_absolute(-200, 200);
+  gate.tare_position();
+
+  pros::delay(500);
 
   isArmGateHoming = false;
+  isReset = true;
+  currentArmState = LONG_GOAL; // Ensure state is reset to default
 }
 
 void startArmGateHoming() { pros::Task homing_task(armGateHomingTask); }
@@ -328,10 +336,6 @@ void leverReset() {
 
   isLeverResetting = false; // Release the lock
 }
-
-// --- ARM STATE TRACKING ---
-enum ArmState { LONG_GOAL, MID_GOAL, UNDER_GOAL };
-static ArmState currentArmState = LONG_GOAL; // Default position
 
 // ─── Catapult task (Updated with Dynamic Intake Logic) ───────────────────────
 void catapultTask(void *) {
