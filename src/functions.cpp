@@ -69,6 +69,39 @@ double inchesToDegrees(double inches) {
   return (inches / wheelCircumference) * 360.0;
 }
 
+void descoreHomingTaskReset(void *param) {
+  isDescoreHoming = true; // Block other functions from using the motor
+
+  descore.move_voltage(5000);
+  pros::delay(150);
+
+  int timeout = 0;
+  while (std::abs(descore.get_actual_velocity()) > 2) {
+    pros::delay(20);
+    timeout += 20;
+    if (timeout > 2000)
+      break;
+  }
+
+  descore.move_voltage(0);
+  pros::delay(100);
+
+  // Move up slightly
+  descore.move_absolute(-210, 200);
+
+  // Wait for movement to finish
+  pros::delay(500);
+
+  descore.tare_position();
+  descore.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+
+  isDescoreHoming = false; // Release the lock
+}
+
+void startDescoreHomingReset() { pros::Task homing_task(descoreHomingTaskReset); }
+
+void descoreHomingReset() { startDescoreHomingReset(); }
+
 // ─── Descore Homing Task ─────────────────────────────────────────────────────
 void descoreHomingTask(void *param) {
   isDescoreHoming = true;
@@ -200,6 +233,8 @@ void armGateHomingTask(void *param) {
   isArmGateHoming = false;
   isReset = true;
   currentArmState = LONG_GOAL; // Ensure state is reset to default
+
+  startDescoreHomingReset();
 }
 
 void startArmGateHoming() { pros::Task homing_task(armGateHomingTask); }
