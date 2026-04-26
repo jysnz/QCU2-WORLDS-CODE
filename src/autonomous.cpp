@@ -248,8 +248,7 @@ void twoVtwo_right_red() {
   chassis.moveToPoint(0, 14, 3000, {.minSpeed = 127}); // Go forward descore
   chassis.waitUntilDone();
   intakeStop();
-  
-  
+
   gateReset();
 }
 
@@ -586,18 +585,26 @@ void skillsV1() {
 
   reset();
 
-  chassis.moveToPoint(0, 90, 3500, {.maxSpeed = 100});
-  chassis.waitUntilDone();
-
-  chassis.moveToPoint(-40, 20, 3000);
-  chassis.waitUntilDone();
-
-  chassis.turnToHeading(50, 1000);
+  chassis.moveToPoint(0, 15, 3000, {.maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
 
-  chassis.moveToPoint(0, -15, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(-9.5, 10, 3000, {.maxSpeed = 100});
+  chassis.waitUntilDone();
+  reset();
+  chassis.moveToPoint(0, 65, 3000, {.maxSpeed = 100});
+  chassis.waitUntilDone();
+
+  reset();
+
+  chassis.moveToPoint(-18.5, 20, 3000);
+  chassis.waitUntilDone();
+
+  chassis.turnToHeading(20, 1000);
+  chassis.waitUntilDone();
+
+  chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
@@ -675,29 +682,37 @@ void skillsV1() {
 
   chassis.moveToPoint(0, -10, 3000, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
+  matchloadUp();
+  intakeStop();
 
   matchloadUp();
   chassis.turnToHeading(-140, 1000);
   chassis.waitUntilDone();
 
-  intakeStop();
-
   reset();
 
-  chassis.moveToPoint(-13, 115, 3500, {.maxSpeed = 100});
+  chassis.moveToPoint(0, 15, 3000, {.maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
 
-  chassis.moveToPoint(0, -15, 3000, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(-9.5, 10, 3000, {.maxSpeed = 100});
   chassis.waitUntilDone();
-
-  chassis.turnToHeading(-90, 1000);
+  reset();
+  chassis.moveToPoint(0, 65, 3000, {.maxSpeed = 100});
   chassis.waitUntilDone();
 
   reset();
 
-  chassis.moveToPoint(0, -27, 1500, {.forwards = false, .maxSpeed = 100});
+  chassis.moveToPoint(-18.5, 20, 3000);
+  chassis.waitUntilDone();
+
+  chassis.turnToHeading(20, 1000);
+  chassis.waitUntilDone();
+
+  reset();
+
+  chassis.moveToPoint(0, -12, 1500, {.forwards = false, .maxSpeed = 100});
   chassis.waitUntilDone();
   matchloadDown();
   startCatapultShoot(true, true);
@@ -732,13 +747,6 @@ void skillsV1() {
   startCatapultShoot(true, true);
   pros::delay(250);
   startCatapultShoot(true, true);
-
-  // reset();
-  // chassis.moveToPoint(0, 10, 3000, {.maxSpeed = 100}); // Go to matchload
-  // chassis.waitUntilDone();
-
-  // chassis.moveToPoint(0, -5, 3000, {.forwards = false, .maxSpeed = 100});
-  // chassis.waitUntilDone();
 
   matchloadUp();
 
