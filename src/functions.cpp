@@ -87,13 +87,13 @@ void descoreHomingTaskReset(void *param) {
   pros::delay(100);
 
   // Move up slightly
-  descore.move_absolute(-210, 200);
+  descore.move_absolute(-80, 200);
 
   // Wait for movement to finish
   pros::delay(500);
 
   descore.tare_position();
-  descore.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
+  // descore.set_brake_mode(pros::E_MOTOR_BRAKE_COAST);
 
   isDescoreHoming = false; // Release the lock
 }
@@ -592,7 +592,6 @@ void intakeTask(void *) {
 
 // ─── Operator control ────────────────────────────────────────────────────────
 void catapultControl() {
-  descoreHoming();
   leverReset();
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
@@ -619,6 +618,10 @@ void catapultControl() {
   static bool wasMatchLoadTapped = false;
   static bool hasMatchloadHomed =
       false; // Flag to track if first homing has occurred
+
+  static bool wasDescoreTapped = false;
+  static bool hasDescoreHomed = false;
+  static bool descoreToggled = false;
   static bool wasAButtonTapped = false;
   static CatapultState lastCatState = CAT_IDLE;
 
@@ -645,7 +648,7 @@ void catapultControl() {
     bool catapultBtn = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool descoreHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     bool matchLoadTapped = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
-    bool descoreManualTapped =
+    bool descoreReset =
         controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool aButtonPressed = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
 
@@ -660,6 +663,18 @@ void catapultControl() {
       }
     }
     wasMatchLoadTapped = matchLoadTapped;
+
+    // Toggle logic for Matchload (Button Y)
+    if (descoreHeld && !wasDescoreTapped) {
+      // Trigger homing sequence only on the very first tap of the button
+      if (!hasDescoreHomed) {
+        descoreHomingReset();
+        hasDescoreHomed = true;
+      } else {
+        descoreToggled = !descoreHeld;
+      }
+    }
+    wasDescoreTapped = descoreHeld;
 
     // Arm and Gate Homing (Button A)
     if (aButtonPressed && !wasAButtonTapped && !isArmGateHoming) {
