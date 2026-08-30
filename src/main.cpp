@@ -3,6 +3,7 @@
 #include "functions.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
+#include "pros/abstract_motor.hpp"
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
@@ -12,9 +13,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({-11, -12, -13, -14}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({1, 2, 10, 4}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-6, 7, -8, 9, 10}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({1, 2, -3, -4, 5}, pros::MotorGears::green);
 pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
+
+pros::MotorGroup multiple_motor({5,6}, pros::MotorGears::green);
 
 pros::Motor catapult_arm(7, pros::MotorGears::red);
 pros::Motor matchloader(5, pros::MotorGears::green);

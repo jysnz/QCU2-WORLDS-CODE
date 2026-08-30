@@ -797,6 +797,33 @@ void SoloAWP_Red_Right() {
 
 }
 
+void moveForward(speed){
+    right_motor_group.move_velocity(speed);
+    left_motor_group.move_velocity(speed);
+}
+
+void moveBackward(speed){
+    right_motor_group.move_velocity(-speed);
+    left_motor_group.move_velocity(-speed);
+}
+
+void turnRight(speed){
+    right_motor_group.move_velocity(0);
+    left_motor_group.move_velocity(speed);
+}
+
+void turnLeft(){
+    right_motor_group.move_velocity(speed);
+    left_motor_group.move_velocity(0);
+}
+
+void trainee_autonomous(){
+    moveForward(100);
+    pros::delay(1000);
+    moveBackward(100);
+    pros::delay(1000);
+}
+
 void runAutonomous() {
     switch (currentAutonIndex) {
         case 0: // 2v2 Left
