@@ -1,6 +1,7 @@
 #include "main.h"
 #include "autonomous.hpp"
 #include "functions.hpp"
+#include "pid_tuner.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
@@ -13,8 +14,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({-6, 7, -8, 9, 10}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({1, 2, -3, -4, 5}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({6, -7, 8, -9, -10}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-1, -2, 3, 4, -5}, pros::MotorGears::green);
 pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
 
 pros::MotorGroup multiple_motor({5,6}, pros::MotorGears::green);
@@ -102,6 +103,12 @@ void initialize() {
         int autonScroll = 0;
 
         while (true) {
+            // The PID tuner owns the brain screen while active
+            if (pidTunerActive) {
+                pros::delay(100);
+                continue;
+            }
+
             pros::screen_touch_status_s_t status = pros::screen::touch_status();
             
             // ── Input Detection ──
@@ -244,5 +251,12 @@ void initialize() {
     });
 }
 
-void opcontrol() { catapultControl(); }
+void opcontrol() {
+    // Hold DPAD-LEFT when driver control starts to enter the PID tuner
+    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
+        pidTunerControl();
+    } else {
+        catapultControl();
+    }
+}
 void autonomous() { runAutonomous(); }
