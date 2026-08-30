@@ -600,6 +600,10 @@ void catapultControl() {
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
 
+  // When true, the IMU corrects drivetrain drift during driver control.
+  // When false, the drivetrain runs as a pure (uncorrected) drivetrain.
+  static bool imu_status = true;
+
   static bool controlsReversed = false;
   static bool wasDownHeld = false;
   static bool armRaised = false; // "Resting" state of the arm (0 or 2000)
@@ -697,7 +701,7 @@ void catapultControl() {
     if (controlsReversed)
       move = -move;
 
-    if (std::abs(move) > INU_CORRECTION_MIN_MOVE &&
+    if (imu_status && std::abs(move) > INU_CORRECTION_MIN_MOVE &&
         std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
       if (!headingLocked) {
         targetHeading = imu.get_heading();
