@@ -16,15 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 pros::MotorGroup left_motor_group({6, -7, 8, -9, -10}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-1, -2, 3, 4, -5}, pros::MotorGears::green);
-pros::MotorGroup intake({16, -18}, pros::MotorGears::green);
-
-pros::MotorGroup multiple_motor({5,6}, pros::MotorGears::green);
-
-pros::Motor catapult_arm(7, pros::MotorGears::red);
-pros::Motor matchloader(5, pros::MotorGears::green);
-pros::Motor descore(15, pros::MotorGears::green);
-pros::Motor arm(6, pros::MotorGears::red);
-pros::Motor gate(17, pros::MotorGears::green);
+pros::MotorGroup avc({12, 13}, pros::MotorGears::green);
 
 pros::Imu imu(9);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -77,18 +69,8 @@ void loadAutonSelection() {
 void initialize() {
     loadAutonSelection();
     
-    pros::Task catapult_control(catapultTask, nullptr, "Catapult Task");
-    pros::Task intake_control(intakeTask, nullptr, "Intake Task");
-
-    catapult_arm.tare_position();
-    matchloader.tare_position();
-    descore.tare_position();
-
     // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
     chassis.calibrate();
-
-    matchloader.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    catapult_arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
     // ── Cyber-HUD On-screen UI ──
     static pros::Task screen_task([]() {
@@ -189,12 +171,7 @@ void initialize() {
                 int yBase = 60 + tempsScroll;
                 drawTechCard(15, yBase, "[ DRIVE_L ]", left_motor_group.get_temperature());
                 drawTechCard(220, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
-                drawTechCard(15, yBase + 65, "[ INTAKE ]", intake.get_temperature());
-                drawTechCard(220, yBase + 65, "[ CATAPULT ]", catapult_arm.get_temperature());
-                drawTechCard(15, yBase + 130, "[ MATCHLOAD ]", matchloader.get_temperature());
-                drawTechCard(220, yBase + 130, "[ DESCORE ]", descore.get_temperature());
-                drawTechCard(15, yBase + 195, "[ ARM ]", arm.get_temperature());
-                drawTechCard(220, yBase + 195, "[ GATE ]", gate.get_temperature());
+
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
                     int itemY = 60 + (i * 55) + autonScroll;

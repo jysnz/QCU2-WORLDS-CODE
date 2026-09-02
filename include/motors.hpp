@@ -9,13 +9,7 @@
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
-extern pros::MotorGroup intake;
-
-extern pros::Motor catapult_arm;
-extern pros::Motor matchloader;
-extern pros::Motor descore;
-extern pros::Motor arm;
-extern pros::Motor gate;
+extern pros::MotorGroup avc;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;
