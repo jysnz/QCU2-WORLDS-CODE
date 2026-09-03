@@ -9,7 +9,10 @@
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
-extern pros::MotorGroup avc;
+extern pros::MotorGroup arm;
+
+// ─── Pneumatics ──────────────────────────────────────────────────────────────
+extern pros::adi::Pneumatics clamp;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;

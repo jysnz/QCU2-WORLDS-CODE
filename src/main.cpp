@@ -14,9 +14,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({6, -7, 8, -9, -10}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-1, -2, 3, 4, -5}, pros::MotorGears::green);
-pros::MotorGroup avc({12, 13}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-16, 17, -18, 19, -20}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({11, -2, 13, -14, 15}, pros::MotorGears::green);
+pros::MotorGroup arm({1, 10}, pros::MotorGears::green);
+
+pros::adi::Pneumatics clamp('A', false);
 
 pros::Imu imu(9);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -171,6 +173,7 @@ void initialize() {
                 int yBase = 60 + tempsScroll;
                 drawTechCard(15, yBase, "[ DRIVE_L ]", left_motor_group.get_temperature());
                 drawTechCard(220, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
+                drawTechCard(15, yBase + 65, "[ ARM ]", arm.get_temperature());
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
