@@ -5,6 +5,10 @@
 
 extern int currentAutonIndex;
 
+void thirty_sec(){
+    chassis.move
+}
+
 void runAutonomous() {
     // switch (currentAutonIndex) {
     //     case 0: // 2v2 Left

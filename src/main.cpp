@@ -8,6 +8,8 @@
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
+#include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -82,19 +84,47 @@ void initialize() {
         const int ACCENT_ORANGE = 0xFF8C00;
         const int ACCENT_RED = 0xFF3131;
         const int ACCENT_DARK_GRAY = 0x22222B;
+        const int ACCENT_GREEN = 0x2ECC71;
+        const int TEXT_DIM = 0x6E7681;
+
+        // Fakes a rounded rectangle (a cross of two rects + 4 corner circles) so cards,
+        // tabs and buttons don't look like flat blocky slabs.
+        auto fillRoundedRect = [](int x0, int y0, int x1, int y1, int r, uint32_t color) {
+            pros::screen::set_pen(color);
+            pros::screen::fill_rect(x0 + r, y0, x1 - r, y1);
+            pros::screen::fill_rect(x0, y0 + r, x1, y1 - r);
+            pros::screen::fill_circle(x0 + r, y0 + r, r);
+            pros::screen::fill_circle(x1 - r, y0 + r, r);
+            pros::screen::fill_circle(x0 + r, y1 - r, r);
+            pros::screen::fill_circle(x1 - r, y1 - r, r);
+        };
 
         int tempsScroll = 0;
         int autonScroll = 0;
+
+        // ── Dirty-state tracking to eliminate unnecessary full-screen redraws (flicker fix) ──
+        // The old loop cleared and redrew the ENTIRE screen every 35ms even when nothing
+        // on screen had actually changed, which is what caused the visible flicker. Now we
+        // only repaint when something the user can see has actually changed.
+        bool forceRedraw = true;
+        UITab lastTab = currentTab;
+        int lastTempsScroll = INT32_MIN;
+        int lastAutonScroll = INT32_MIN;
+        int lastAutonIndex = -1;
+        int lastImu = INT32_MIN;
+        int lastBattery = INT32_MIN;
+        std::vector<int> lastTemps; // rounded to nearest 0.5C so tiny sensor jitter doesn't trigger redraws
 
         while (true) {
             // The PID tuner owns the brain screen while active
             if (pidTunerActive) {
                 pros::delay(100);
+                forceRedraw = true; // repaint fully once we get control back
                 continue;
             }
 
             pros::screen_touch_status_s_t status = pros::screen::touch_status();
-            
+
             // ── Input Detection ──
             static bool wasTouched = false;
             if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
@@ -103,16 +133,16 @@ void initialize() {
                     if (status.x < 240) currentTab = TAB_TEMPS;
                     else currentTab = TAB_AUTON;
                 }
-                
+
                 // 2. Scroll Buttons (Far Right Column: 430 to 480)
                 if (status.x > 430) {
                     if (status.y > 60 && status.y < 130) { // UP Arrow
                         if (currentTab == TAB_AUTON) autonScroll += 55;
-                        else tempsScroll += 65;
+                        else tempsScroll += 60;
                     }
                     else if (status.y > 140 && status.y < 210) { // DOWN Arrow
                         if (currentTab == TAB_AUTON) autonScroll -= 55;
-                        else tempsScroll -= 65;
+                        else tempsScroll -= 60;
                     }
                 }
 
@@ -137,14 +167,50 @@ void initialize() {
             int maxAutonScroll = -((int)autonNames.size() * 55 - 140);
             if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
+            // Each section = a label line + a row of tiles.
+            // Drivetrain sections show 5 tiles/row; the arm section shows 2 tiles/row.
+            const int tempRowHeight = 66;
+            const int numTempRows = 3; // LEFT drivetrain, RIGHT drivetrain, ARM
+            int tempsContentHeight = numTempRows * tempRowHeight;
+            int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
-            if (tempsScroll < -130) tempsScroll = -130; 
+            if (tempsScroll < minTempsScroll) tempsScroll = minTempsScroll;
 
-            // ── RENDERING ──
-            // Clear only the content area to reduce flicker
+            // ── Gather live data once per frame ──
+            std::vector<double> leftTemps = left_motor_group.get_temperature_all();
+            std::vector<double> rightTemps = right_motor_group.get_temperature_all();
+            std::vector<double> armTemps = arm.get_temperature_all();
+            std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
+            std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
+            std::vector<std::int8_t> armPorts = arm.get_port_all();
+
+            int imuNow = (int)(imu.get_heading() * 10);
+            int batteryNow = (int)pros::battery::get_capacity();
+
+            // Build a rounded snapshot of every motor temp for change detection
+            std::vector<int> tempsNow;
+            for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
+            for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
+            for (double t : armTemps) tempsNow.push_back((int)(t * 2));
+
+            bool dataChanged = forceRedraw ||
+                                currentTab != lastTab ||
+                                tempsScroll != lastTempsScroll ||
+                                autonScroll != lastAutonScroll ||
+                                currentAutonIndex != lastAutonIndex ||
+                                imuNow != lastImu ||
+                                batteryNow != lastBattery ||
+                                tempsNow != lastTemps;
+
+            if (!dataChanged) {
+                pros::delay(35);
+                continue;
+            }
+
+            // ── RENDERING (only happens when something actually changed) ──
             pros::screen::set_pen(BG_DARK);
             pros::screen::fill_rect(0, 0, 480, 240);
-            
+
             // Subtle Grid
             pros::screen::set_pen(0x121217);
             for(int i=0; i<480; i+=40) pros::screen::draw_line(i, 0, i, 240);
@@ -152,81 +218,158 @@ void initialize() {
 
             // ── Content Area Rendering (With Clipping Check) ──
             if (currentTab == TAB_TEMPS) {
-                auto drawTechCard = [&](int x, int y, const char *name, double temp) {
-                    // Clipping: Only draw if the card is between the header (50) and footer (215)
-                    if (y + 55 < 55 || y > 215) return;
+                const int rowLeft = 15, rowRight = 428;
+                const int labelH = 14;  // space reserved for the section name above its tiles
+                const int tileH = 46;
 
-                    int w = 200, h = 55;
-                    uint32_t col = (temp < 45) ? ACCENT_CYAN : (temp < 55 ? ACCENT_ORANGE : ACCENT_RED);
+                auto drawMotorTile = [&](int x, int y, int tileW, const char *label, double temp) {
+                    // Clipping: Only draw if the tile is between the header (50) and footer (215)
+                    if (y + tileH < 55 || y > 215) return;
 
-                    pros::screen::set_pen(CARD_BG);
-                    pros::screen::fill_rect(x, y, x + w, y + h);
-                    pros::screen::set_pen(col);
-                    pros::screen::fill_rect(x, y, x + 4, y + h);
+                    uint32_t col_ = (temp < 45) ? ACCENT_CYAN : (temp < 55 ? ACCENT_ORANGE : ACCENT_RED);
 
-                    pros::screen::set_pen(0xAAAAAA);
-                    pros::screen::print(pros::E_TEXT_SMALL, x + 12, y + 8, name);
-                    pros::screen::set_pen(col);
-                    pros::screen::print(pros::E_TEXT_MEDIUM, x + 12, y + 24, "%.1f C", temp);
+                    fillRoundedRect(x, y, x + tileW, y + tileH, 5, CARD_BG);
+
+                    // Status dot instead of a harsh left bar — sits top-right, glanceable at a distance
+                    pros::screen::set_pen(col_);
+                    pros::screen::fill_circle(x + tileW - 9, y + 9, 4);
+
+                    // print() paints an opaque box behind text using the eraser color (black by
+                    // default) — match it to the tile background so text doesn't get a black halo
+                    pros::screen::set_eraser(CARD_BG);
+                    pros::screen::set_pen(TEXT_DIM);
+                    pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 5, label);
+                    pros::screen::set_pen(col_);
+                    pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 20, "%.1fC", temp);
+
+                    // Mini heat gauge along the bottom (0-70C range)
+                    int barX = x + 8, barY = y + tileH - 9, barW = tileW - 16, barH = 4;
+                    double frac = (temp - 20.0) / 50.0;
+                    if (frac < 0) frac = 0;
+                    if (frac > 1) frac = 1;
+                    fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, ACCENT_DARK_GRAY);
+                    int fillW = (int)(barW * frac);
+                    if (fillW >= 4) fillRoundedRect(barX, barY, barX + fillW, barY + barH, 2, col_);
                 };
 
-                int yBase = 60 + tempsScroll;
-                drawTechCard(15, yBase, "[ DRIVE_L ]", left_motor_group.get_temperature());
-                drawTechCard(220, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
-                drawTechCard(15, yBase + 65, "[ ARM ]", arm.get_temperature());
+                // Draws a section label followed by a row of evenly-sized tiles, one per motor.
+                auto drawSection = [&](int sectionY, const char *sectionLabel, uint32_t labelColor,
+                                        std::vector<double> &temps, std::vector<std::int8_t> &ports,
+                                        const char *namePrefix, int tilesPerRow) {
+                    int labelY = sectionY;
+                    int tileY = sectionY + labelH;
+
+                    // Skip the whole section if it's fully outside the visible content area
+                    if (tileY + tileH < 55 || labelY > 215) return;
+
+                    if (labelY >= 50 && labelY + labelH <= 215) {
+                        pros::screen::set_eraser(BG_DARK);
+                        pros::screen::set_pen(labelColor);
+                        pros::screen::print(pros::E_TEXT_SMALL, rowLeft, labelY, sectionLabel);
+                    }
+
+                    int gap = 6;
+                    int tileW = (rowRight - rowLeft - (tilesPerRow - 1) * gap) / tilesPerRow;
+                    for (int i = 0; i < (int)temps.size() && i < tilesPerRow; i++) {
+                        int x = rowLeft + i * (tileW + gap);
+                        char label[20];
+                        snprintf(label, sizeof(label), "%s %d P%d", namePrefix, i + 1, (int)ports[i]);
+                        drawMotorTile(x, tileY, tileW, label, temps[i]);
+                    }
+                };
+
+                int yBase = 55 + tempsScroll;
+
+                // Section 1: LEFT drivetrain motors (5 tiles/row)
+                drawSection(yBase, "LEFT DRIVETRAIN", ACCENT_CYAN, leftTemps, leftPorts, "L", 5);
+
+                // Section 2: RIGHT drivetrain motors (5 tiles/row)
+                drawSection(yBase + tempRowHeight, "RIGHT DRIVETRAIN", ACCENT_ORANGE, rightTemps, rightPorts, "R", 5);
+
+                // Section 3: ARM motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 2, "ARM", 0xFFFFFF, armTemps, armPorts, "Arm Motor", 2);
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
                     int itemY = 60 + (i * 55) + autonScroll;
-                    
+
                     // Clipping Check
                     if (itemY + 50 < 55 || itemY > 215) continue;
 
                     bool isSelected = (i == currentAutonIndex);
-                    pros::screen::set_pen(isSelected ? 0x1c2838 : CARD_BG);
-                    pros::screen::fill_rect(20, itemY, 420, itemY + 50);
-                    
-                    pros::screen::set_pen(isSelected ? ACCENT_ORANGE : 0x2d2d38);
-                    pros::screen::draw_rect(20, itemY, 420, itemY + 50);
-                    
-                    if(isSelected) {
+                    fillRoundedRect(20, itemY, 420, itemY + 50, 6, isSelected ? 0x1c2838 : CARD_BG);
+
+                    if (isSelected) {
                         pros::screen::set_pen(ACCENT_ORANGE);
-                        pros::screen::fill_rect(20, itemY, 26, itemY + 50);
+                        pros::screen::draw_rect(20, itemY, 420, itemY + 50);
                     }
 
-                    pros::screen::set_pen(isSelected ? 0xFFFFFF : 0x777777);
-                    pros::screen::print(pros::E_TEXT_MEDIUM, 45, itemY + 15, isSelected ? "> %s <" : "  %s", autonNames[i].c_str());
+                    // Selection indicator: filled dot when active, hollow ring otherwise
+                    int dotX = 40, dotY = itemY + 25;
+                    if (isSelected) {
+                        pros::screen::set_pen(ACCENT_ORANGE);
+                        pros::screen::fill_circle(dotX, dotY, 6);
+                    } else {
+                        pros::screen::set_pen(0x3a3a45);
+                        pros::screen::draw_circle(dotX, dotY, 6);
+                    }
+
+                    pros::screen::set_eraser(isSelected ? 0x1c2838 : CARD_BG);
+                    pros::screen::set_pen(isSelected ? 0xFFFFFF : 0x8b949e);
+                    pros::screen::print(pros::E_TEXT_MEDIUM, 60, itemY + 15, "%s", autonNames[i].c_str());
                 }
             }
 
             // ── Static Overlays (Drawn last to prevent overlap) ──
-            
-            // Header Tabs
-            pros::screen::set_pen(currentTab == TAB_TEMPS ? ACCENT_CYAN : ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(5, 5, 238, 50);
-            pros::screen::set_pen(currentTab == TAB_AUTON ? ACCENT_ORANGE : ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(242, 5, 475, 50);
-            
-            pros::screen::set_pen(0xFFFFFF);
+
+            // Header Tabs — rounded pills; inactive tabs stay flush with the background instead
+            // of a heavy gray slab, so the active tab reads clearly at a glance
+            fillRoundedRect(5, 5, 238, 50, 8, currentTab == TAB_TEMPS ? ACCENT_CYAN : CARD_BG);
+            fillRoundedRect(242, 5, 475, 50, 8, currentTab == TAB_AUTON ? ACCENT_ORANGE : CARD_BG);
+
+            pros::screen::set_eraser(currentTab == TAB_TEMPS ? ACCENT_CYAN : CARD_BG);
+            pros::screen::set_pen(currentTab == TAB_TEMPS ? 0x001417 : TEXT_DIM);
             pros::screen::print(pros::E_TEXT_SMALL, 60, 20, "SYSTEM_THERMALS");
+            pros::screen::set_eraser(currentTab == TAB_AUTON ? ACCENT_ORANGE : CARD_BG);
+            pros::screen::set_pen(currentTab == TAB_AUTON ? 0x1a0d00 : TEXT_DIM);
             pros::screen::print(pros::E_TEXT_SMALL, 305, 20, "MISSION_CONFIG");
 
             // Scroll Buttons Sidebar
-            pros::screen::set_pen(ACCENT_DARK_GRAY);
-            pros::screen::fill_rect(435, 60, 475, 130); // Up Button
-            pros::screen::fill_rect(435, 140, 475, 210); // Down Button
-            pros::screen::set_pen(0xFFFFFF);
+            fillRoundedRect(435, 60, 475, 130, 8, CARD_BG); // Up Button
+            fillRoundedRect(435, 140, 475, 210, 8, CARD_BG); // Down Button
+            pros::screen::set_eraser(CARD_BG);
+            pros::screen::set_pen(ACCENT_CYAN);
             pros::screen::print(pros::E_TEXT_MEDIUM, 448, 85, "^");
             pros::screen::print(pros::E_TEXT_MEDIUM, 448, 165, "v");
 
-            // Footer Diagnostics
+            // Footer Diagnostics — battery dot color reflects charge level at a glance
             pros::screen::set_pen(0x18181F);
             pros::screen::fill_rect(0, 215, 480, 240);
-            pros::screen::set_pen(ACCENT_CYAN);
-            pros::screen::print(pros::E_TEXT_SMALL, 15, 222, "OS_READY // IMU: %.1f // BAT: %.0f%% // %s", 
-                                imu.get_heading(), pros::battery::get_capacity(), autonNames[currentAutonIndex].c_str());
+            pros::screen::set_eraser(0x18181F);
 
-            pros::delay(35); // Slowed down slightly for smoother rendering
+            double batteryPct = pros::battery::get_capacity();
+            uint32_t battCol = (batteryPct > 60) ? ACCENT_GREEN : (batteryPct > 30 ? ACCENT_ORANGE : ACCENT_RED);
+            pros::screen::set_pen(ACCENT_GREEN);
+            pros::screen::fill_circle(20, 227, 4);
+            pros::screen::set_pen(TEXT_DIM);
+            pros::screen::print(pros::E_TEXT_SMALL, 30, 222, "ONLINE  |  IMU %.1f", imu.get_heading());
+
+            pros::screen::set_pen(battCol);
+            pros::screen::fill_circle(230, 227, 4);
+            pros::screen::set_pen(TEXT_DIM);
+            pros::screen::print(pros::E_TEXT_SMALL, 240, 222, "BAT %.0f%%  |  %s", batteryPct, autonNames[currentAutonIndex].c_str());
+
+            // Update dirty-tracking snapshot
+            lastTab = currentTab;
+            lastTempsScroll = tempsScroll;
+            lastAutonScroll = autonScroll;
+            lastAutonIndex = currentAutonIndex;
+            lastImu = imuNow;
+            lastBattery = batteryNow;
+            lastTemps = tempsNow;
+            forceRedraw = false;
+
+            pros::delay(35);
         }
     });
 }
