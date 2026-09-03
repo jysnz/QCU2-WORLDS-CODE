@@ -13,7 +13,7 @@
 // in the MotorGroup port lists in main.cpp.
 //
 // Run this on its own (e.g. as the selected autonomous routine) - do not run
-// it at the same time as catapultControl(), since both drive the motors.
+// it at the same time as jawheadControl(), since both drive the motors.
 static void testMotorGroupDirections(const char *label,
                                       pros::MotorGroup &group, int &y) {
   pros::screen::set_pen(0xFFFFFF);
@@ -57,8 +57,13 @@ void testDrivetrainMotorDirections() {
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
 }
 
+void drivetrainReset(){
+  left_motor_group.tare_position();
+  right_motor_group.tare_position();
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
-void catapultControl() {
+void jawheadControl() {
   const int MAX_SPEED = 127;
   const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
@@ -78,6 +83,9 @@ void catapultControl() {
     bool l1Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     bool l1Tapped = l1Held && !wasL1Held;
     wasL1Held = l1Held;
+    bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+    bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+
 
     if (l1Tapped) {
       armExtended = !armExtended;
@@ -124,6 +132,17 @@ void catapultControl() {
       arm.move_velocity(-100);
     } else {
       arm.move_velocity(0);
+    }
+
+    if (intakeForward) {
+      intake1.move_velocity(600);
+      intake2.move_velocity(-600);
+    } else if (intakeBackward) {
+      intake1.move_velocity(-600);
+      intake2.move_velocity(600);
+    } else {
+      intake1.move_velocity(0);
+      intake2.move_velocity(0);
     }
   }
 }

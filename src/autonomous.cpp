@@ -6,7 +6,23 @@
 extern int currentAutonIndex;
 
 void thirty_sec(){
-    chassis.move
+    chassis.moveToPoint(0, -10, 3000);
+    chassis.moveToPoint(0, 10, 3000);
+    chassis.moveToPoint(0, -10, 3000);
+    chassis.waitUntilDone();
+
+    chassis.moveToPose(25, 25, 45, 3000);
+    //Shoot the pin and cup
+    drivetrainReset();
+
+    chassis.moveToPoint(0, -10, 3000);
+    chassis.waitUntilDone();
+    chassis.moveToPose(25, 7, 75, 3000);
+    chassis.waitUntilDone();
+    //Get the pin and cup 
+    
+    
+
 }
 
 void runAutonomous() {

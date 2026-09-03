@@ -19,6 +19,8 @@
 pros::MotorGroup left_motor_group({-16, 17, -18, 19, -20}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({11, -2, 13, -14, 15}, pros::MotorGears::green);
 pros::MotorGroup arm({1, 10}, pros::MotorGears::green);
+pros::Motor intake1(8, pros::MotorGears::green);
+pros::Motor intake2(9, pros::MotorGears::green);
 
 pros::adi::Pneumatics clamp('A', false);
 
@@ -168,9 +170,9 @@ void initialize() {
             if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
             // Each section = a label line + a row of tiles.
-            // Drivetrain sections show 5 tiles/row; the arm section shows 2 tiles/row.
+            // Drivetrain sections show 5 tiles/row; the arm and intake sections show 2 tiles/row.
             const int tempRowHeight = 66;
-            const int numTempRows = 3; // LEFT drivetrain, RIGHT drivetrain, ARM
+            const int numTempRows = 4; // LEFT drivetrain, RIGHT drivetrain, ARM, INTAKE
             int tempsContentHeight = numTempRows * tempRowHeight;
             int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
@@ -180,9 +182,11 @@ void initialize() {
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
             std::vector<double> armTemps = arm.get_temperature_all();
+            std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
             std::vector<std::int8_t> armPorts = arm.get_port_all();
+            std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
 
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
@@ -192,20 +196,35 @@ void initialize() {
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
             for (double t : armTemps) tempsNow.push_back((int)(t * 2));
+            for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
 
-            bool dataChanged = forceRedraw ||
-                                currentTab != lastTab ||
-                                tempsScroll != lastTempsScroll ||
-                                autonScroll != lastAutonScroll ||
-                                currentAutonIndex != lastAutonIndex ||
-                                imuNow != lastImu ||
-                                batteryNow != lastBattery ||
-                                tempsNow != lastTemps;
+            // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
+            // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
+            // while a motor is spinning its temperature (and the IMU heading, while driving)
+            // changes almost every loop, which was forcing a full-screen clear+redraw ~28x/sec
+            // and is what caused the visible flicker as soon as a motor was connected and running.
+            bool interactiveChanged = forceRedraw ||
+                                       currentTab != lastTab ||
+                                       tempsScroll != lastTempsScroll ||
+                                       autonScroll != lastAutonScroll ||
+                                       currentAutonIndex != lastAutonIndex;
+            bool telemetryChanged = imuNow != lastImu ||
+                                     batteryNow != lastBattery ||
+                                     tempsNow != lastTemps;
+
+            static uint32_t lastTelemetryRedraw = 0;
+            const uint32_t TELEMETRY_REDRAW_INTERVAL_MS = 300;
+            uint32_t nowMs = pros::millis();
+            bool telemetryDue = telemetryChanged && (nowMs - lastTelemetryRedraw >= TELEMETRY_REDRAW_INTERVAL_MS);
+
+            bool dataChanged = interactiveChanged || telemetryDue;
 
             if (!dataChanged) {
                 pros::delay(35);
                 continue;
             }
+
+            if (telemetryChanged) lastTelemetryRedraw = nowMs;
 
             // ── RENDERING (only happens when something actually changed) ──
             pros::screen::set_pen(BG_DARK);
@@ -288,6 +307,9 @@ void initialize() {
 
                 // Section 3: ARM motors (2 tiles/row, named)
                 drawSection(yBase + tempRowHeight * 2, "ARM", 0xFFFFFF, armTemps, armPorts, "Arm Motor", 2);
+
+                // Section 4: INTAKE motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 3, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
@@ -379,7 +401,7 @@ void opcontrol() {
     if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
         pidTunerControl();
     } else {
-        catapultControl();
+        jawheadControl();
     }
 }
 void autonomous() { runAutonomous(); }

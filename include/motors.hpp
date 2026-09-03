@@ -10,6 +10,8 @@
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
 extern pros::MotorGroup arm;
+extern pros::Motor intake1;
+extern pros::Motor intake2;
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics clamp;
