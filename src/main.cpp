@@ -16,15 +16,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({-16, 17, -18, 19, -20}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({11, -2, 13, -14, 15}, pros::MotorGears::green);
-pros::MotorGroup arm({1, 10}, pros::MotorGears::green);
-pros::Motor intake1(8, pros::MotorGears::green);
-pros::Motor intake2(9, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-3, 4, -5, 6, -7}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({8, -9, 10, -11, 12}, pros::MotorGears::green);
+pros::Motor intake1(16, pros::MotorGears::green);
+pros::Motor intake2(17, pros::MotorGears::green);
 
 pros::adi::Pneumatics clamp('A', false);
 
-pros::Imu imu(9);
+pros::Imu imu(15);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───

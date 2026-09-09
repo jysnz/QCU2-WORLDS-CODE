@@ -72,7 +72,7 @@ void jawheadControl() {
   const double IMU_CORRECTION_THRESHOLD = 1.0;
 
   // When true, the IMU corrects drivetrain drift during driver control.
-  static bool imu_status = false;
+  static bool imu_status = true;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
   static bool wasDownHeld = false;
@@ -85,17 +85,13 @@ void jawheadControl() {
     wasL1Held = l1Held;
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
-
+    bool clampFunc = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
 
     if (l1Tapped) {
       armExtended = !armExtended;
     }
 
-    bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-    bool downTapped = downHeld && !wasDownHeld;
-    wasDownHeld = downHeld;
-
-    if (downTapped) {
+    if (clampFunc) {
       clamp.toggle();
     }
 
