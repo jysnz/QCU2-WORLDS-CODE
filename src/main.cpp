@@ -16,14 +16,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({-3, 4, -5, 6, -7}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({8, -9, 10, -11, 12}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
 pros::Motor intake1(16, pros::MotorGears::green);
 pros::Motor intake2(17, pros::MotorGears::green);
+pros::Motor lift1(18, pros::MotorGears::green);
+pros::Motor lift2(19, pros::MotorGears::green);
+pros::Motor bunchy(14, pros::MotorGears::green);
+pros::Motor bunchArm(13, pros::MotorGears::red);
 
 pros::adi::Pneumatics clamp('A', false);
 
 pros::Imu imu(15);
+pros::Rotation rotation_sensor(-20);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
@@ -73,7 +78,12 @@ void loadAutonSelection() {
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
     loadAutonSelection();
-    
+
+    // Hold brake so the lift resists gravity and stays put when the driver
+    // lets go of the up/down button, instead of coasting back down.
+    lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+
     // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
     chassis.calibrate();
 
@@ -169,9 +179,9 @@ void initialize() {
             if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
             // Each section = a label line + a row of tiles.
-            // Drivetrain sections show 5 tiles/row; the arm and intake sections show 2 tiles/row.
+            // Drivetrain sections show 5 tiles/row; the intake section shows 2 tiles/row.
             const int tempRowHeight = 66;
-            const int numTempRows = 4; // LEFT drivetrain, RIGHT drivetrain, ARM, INTAKE
+            const int numTempRows = 3; // LEFT drivetrain, RIGHT drivetrain, INTAKE
             int tempsContentHeight = numTempRows * tempRowHeight;
             int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
@@ -180,11 +190,9 @@ void initialize() {
             // ── Gather live data once per frame ──
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
-            std::vector<double> armTemps = arm.get_temperature_all();
             std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
-            std::vector<std::int8_t> armPorts = arm.get_port_all();
             std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
 
             int imuNow = (int)(imu.get_heading() * 10);
@@ -194,7 +202,6 @@ void initialize() {
             std::vector<int> tempsNow;
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : armTemps) tempsNow.push_back((int)(t * 2));
             for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
 
             // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
@@ -304,11 +311,8 @@ void initialize() {
                 // Section 2: RIGHT drivetrain motors (5 tiles/row)
                 drawSection(yBase + tempRowHeight, "RIGHT DRIVETRAIN", ACCENT_ORANGE, rightTemps, rightPorts, "R", 5);
 
-                // Section 3: ARM motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 2, "ARM", 0xFFFFFF, armTemps, armPorts, "Arm Motor", 2);
-
-                // Section 4: INTAKE motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 3, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
+                // Section 3: INTAKE motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {

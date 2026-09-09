@@ -4,6 +4,7 @@
 #include "pros/screen.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 // ─── Drivetrain motor direction test ──────────────────────────────────────────
 // Spins each drivetrain motor by itself (using a fresh, unreversed handle on
@@ -62,41 +63,166 @@ void drivetrainReset(){
   right_motor_group.tare_position();
 }
 
+// ─── Lift control ────────────────────────────────────────────────────────────
+// Holding UP drives lift1/lift2 up; holding DOWN drives them down. Letting go
+// of either stops (and holds, via brake mode) the lift wherever it is - there
+// is no target-angle seeking. lift1 and lift2 are mirrored on the lift, so
+// they always spin opposite each other (one forward, one reversed) to move
+// together.
+//
+// rotation_sensor tracks the lift's absolute angle and enforces two hard
+// limits (bottom and peak/top) so the lift stops there even while the button
+// is still held - it does not stop the driver from letting go early anywhere
+// in between.
+//
+// NOTE: LIFT_MIN_ANGLE/LIFT_MAX_ANGLE are placeholders - tune the two limits
+// to the lift's actual bottom and peak positions. The rotation sensor port
+// sign was reversed in main.cpp (rotation_sensor(-20)) because "up" was
+// reading as decreasing angle, which blocked the UP button entirely and made
+// DOWN drive the lift upward.
+void liftControl() {
+  const double LIFT_MIN_ANGLE = 0.0;   // degrees - bottom limit
+  const double LIFT_MAX_ANGLE = 180.0; // degrees - peak/top limit
+  const int LIFT_SPEED = 200; // green gearset max velocity (rpm)
+
+  bool liftUpHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
+  bool liftDownHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+
+  // get_angle() returns PROS_ERR (INT32_MAX) if the sensor read fails (not
+  // plugged in, bad port, etc.) - treat that as "angle unknown" and fall
+  // back to letting the driver move freely rather than silently locking out
+  // one direction forever (a bad read otherwise pins liftAngle far above
+  // LIFT_MAX_ANGLE, which blocks UP but leaves DOWN working, since DOWN's
+  // check is satisfied by any large value).
+  std::int32_t rawAngle = rotation_sensor.get_angle();
+  bool sensorOk = rawAngle != INT32_MAX;
+  double liftAngle = sensorOk ? rawAngle / 100.0 : 0.0;
+
+  if (liftUpHeld && (!sensorOk || liftAngle < LIFT_MAX_ANGLE)) {
+    lift1.move_velocity(LIFT_SPEED);
+    lift2.move_velocity(-LIFT_SPEED);
+  } else if (liftDownHeld && (!sensorOk || liftAngle > LIFT_MIN_ANGLE)) {
+    lift1.move_velocity(-LIFT_SPEED);
+    lift2.move_velocity(LIFT_SPEED);
+  } else {
+    lift1.move_velocity(0);
+    lift2.move_velocity(0);
+  }
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
   const int MAX_SPEED = 127;
-  const int SLOW_SPEED = 50;
   const double IMU_CORRECTION_KP = 0.8;
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
 
   // When true, the IMU corrects drivetrain drift during driver control.
-  static bool imu_status = true;
+  static bool imu_status = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
   static bool wasDownHeld = false;
-  static bool wasL1Held = false;
-  static bool armExtended = false;
+  static bool driveReversed = false;
+  static uint32_t lastReverseToggleMs = 0;
+  static bool wasYHeld = false;
+  static bool clampOn = false;
+  static uint32_t lastClampToggleMs = 0;
+  const uint32_t BUTTON_DEBOUNCE_MS = 300;
 
   while (true) {
+    bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+    bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+    uint32_t nowMs = pros::millis();
+
+    // Tap DOWN to reverse which way the drivetrain drives (flips "forward"
+    // on the joystick to drive the robot backward, and vice versa).
+    // Debounced (like the clamp below) so switch bounce on the physical
+    // button can't register as two rapid taps wthat cancel each other out.
+    bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+    bool downTapped = downHeld && !wasDownHeld;
+    wasDownHeld = downHeld;
+    if (downTapped && (nowMs - lastReverseToggleMs >= BUTTON_DEBOUNCE_MS)) {
+      lastReverseToggleMs = nowMs;
+      driveReversed = !driveReversed;
+    }
+
+    // Tap Y to switch the clamp cleanly on/off (edge-detected so holding Y
+    // doesn't rapid-fire clamp.toggle() every loop and leave it in a
+    // random state).
+    bool yHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+    bool yTapped = yHeld && !wasYHeld;
+    wasYHeld = yHeld;
+    if (yTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
+      lastClampToggleMs = nowMs;
+      clampOn = !clampOn;
+      if (clampOn) {
+        clamp.extend();
+      } else {
+        clamp.retract();
+      }
+    }
+
+    liftControl();
+
+    // Tap L1 to spin bunchArm positive until it stalls, tap L2 for negative -
+    // it keeps spinning on its own (no need to hold the button) until a
+    // "stall" is detected, then stops. Stall here means bunchArm is being
+    // commanded to move but its actual velocity has sat near zero for a bit,
+    // i.e. it's jammed against something/at its limit - not a hard current
+    // threshold, since that varies by gearset.
+    static bool wasL1Held = false;
+    static bool wasL2Held = false;
+    static int bunchArmDir = 0; // 0 = idle, 1 = running +, -1 = running -
+    static uint32_t bunchArmStartMs = 0;
+    static uint32_t bunchArmZeroSinceMs = 0;
+    const int BUNCHARM_SPEED = 100;                   // red gearset max velocity (rpm)
+    const uint32_t BUNCHARM_STARTUP_GRACE_MS = 300;    // ignore the stall check right after starting (still spinning up from rest)
+    const uint32_t BUNCHARM_STALL_TIME_MS = 150;       // velocity must stay ~0 this long to count as stalled
+    const double BUNCHARM_STALL_VELOCITY = 5.0;        // rpm
+
     bool l1Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     bool l1Tapped = l1Held && !wasL1Held;
     wasL1Held = l1Held;
-    bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-    bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
-    bool clampFunc = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+
+    bool l2Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+    bool l2Tapped = l2Held && !wasL2Held;
+    wasL2Held = l2Held;
 
     if (l1Tapped) {
-      armExtended = !armExtended;
+      bunchArmDir = 1;
+      bunchArmStartMs = nowMs;
+      bunchArmZeroSinceMs = 0;
+    } else if (l2Tapped) {
+      bunchArmDir = -1;
+      bunchArmStartMs = nowMs;
+      bunchArmZeroSinceMs = 0;
     }
 
-    if (clampFunc) {
-      clamp.toggle();
+    if (bunchArmDir != 0) {
+      bunchArm.move_velocity(bunchArmDir * BUNCHARM_SPEED);
+
+      if (nowMs - bunchArmStartMs > BUNCHARM_STARTUP_GRACE_MS) {
+        double actualVel = std::abs(bunchArm.get_actual_velocity());
+        if (actualVel < BUNCHARM_STALL_VELOCITY) {
+          if (bunchArmZeroSinceMs == 0) bunchArmZeroSinceMs = nowMs;
+          if (nowMs - bunchArmZeroSinceMs > BUNCHARM_STALL_TIME_MS) {
+            bunchArmDir = 0; // stalled - stop
+            bunchArm.move_velocity(0);
+          }
+        } else {
+          bunchArmZeroSinceMs = 0; // still actually moving, reset the stall timer
+        }
+      }
+    } else {
+      bunchArm.move_velocity(0);
     }
 
-    int move = -controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
-    int turn = -controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+    int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+    int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+    if (driveReversed) {
+      move = -move;
+    }
 
     if (imu_status && std::abs(move) > INU_CORRECTION_MIN_MOVE &&
         std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
@@ -120,25 +246,23 @@ void jawheadControl() {
       headingLocked = false;
     }
 
-    int maxSpeed = downHeld ? SLOW_SPEED : MAX_SPEED;
-    left_motor_group.move(std::clamp(move + turn, -maxSpeed, maxSpeed));
-    right_motor_group.move(std::clamp(move - turn, -maxSpeed, maxSpeed));
-
-    if (armExtended) {
-      arm.move_velocity(-100);
-    } else {
-      arm.move_velocity(0);
-    }
+    left_motor_group.move(std::clamp(move + turn, -MAX_SPEED, MAX_SPEED));
+    right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
 
     if (intakeForward) {
       intake1.move_velocity(600);
       intake2.move_velocity(-600);
+      bunchy.move_velocity(200);
     } else if (intakeBackward) {
       intake1.move_velocity(-600);
       intake2.move_velocity(600);
+      bunchy.move_velocity(-200);
     } else {
       intake1.move_velocity(0);
       intake2.move_velocity(0);
+      bunchy.move_velocity(0);
     }
+
+    pros::delay(10);
   }
 }
