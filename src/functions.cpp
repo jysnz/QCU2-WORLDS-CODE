@@ -70,40 +70,90 @@ void drivetrainReset(){
 // they always spin opposite each other (one forward, one reversed) to move
 // together.
 //
-// rotation_sensor tracks the lift's absolute angle and enforces two hard
-// limits (bottom and peak/top) so the lift stops there even while the button
-// is still held - it does not stop the driver from letting go early anywhere
-// in between.
+// The very first time DOWN is tapped (per power cycle), it doesn't just move
+// the lift - it homes it: the lift drives itself down (no need to keep
+// holding the button) until it stalls against the physical bottom, and that
+// stalled position becomes the lift's zero/starting position (the rotation
+// sensor is tared there). After that one-time homing, DOWN goes back to
+// normal hold-to-lower control.
 //
-// NOTE: LIFT_MIN_ANGLE/LIFT_MAX_ANGLE are placeholders - tune the two limits
-// to the lift's actual bottom and peak positions. The rotation sensor port
-// sign was reversed in main.cpp (rotation_sensor(-20)) because "up" was
-// reading as decreasing angle, which blocked the UP button entirely and made
-// DOWN drive the lift upward.
+// rotation_sensor tracks the lift's position via get_position() - a
+// continuous, tare-able centidegree count (NOT get_angle(), which is a fixed
+// 0-360 wrap that set_position()/reset_position() can't zero) - and enforces
+// a hard top limit so the lift stops there even while UP is still held.
+//
+// NOTE: LIFT_MAX_ANGLE is a placeholder - tune it to the lift's actual peak
+// position (degrees above the homed bottom). Also confirm on the robot that
+// UP actually raises the lift and DOWN/homing lowers it; if they're
+// backwards, swap the two move_velocity() sign pairs below (and in the
+// homing block), and confirm get_position() increases as the lift goes up
+// from the homed bottom - flip the rotation_sensor port sign in main.cpp if
+// it decreases instead, so the LIFT_MAX_ANGLE guard trips at the right end.
 void liftControl() {
-  const double LIFT_MIN_ANGLE = 0.0;   // degrees - bottom limit
-  const double LIFT_MAX_ANGLE = 180.0; // degrees - peak/top limit
-  const int LIFT_SPEED = 200; // green gearset max velocity (rpm)
+  const double LIFT_MAX_ANGLE = 180.0; // degrees above the homed bottom - peak/top limit
+  const int LIFT_SPEED = 200;          // green gearset max velocity (rpm)
+
+  // Homing stall detection: same idea as bunchArm's tap-to-run-until-stall -
+  // "stalled" means the motor is commanded to move but its actual velocity
+  // has sat near zero for a bit, i.e. it's jammed against the bottom.
+  const uint32_t HOMING_STARTUP_GRACE_MS = 300; // ignore the stall check right after starting (still spinning up from rest)
+  const uint32_t HOMING_STALL_TIME_MS = 150;    // velocity must stay ~0 this long to count as stalled
+  const double HOMING_STALL_VELOCITY = 5.0;     // rpm
+
+  static bool liftHomed = false;
+  static bool homingInProgress = false;
+  static bool wasDownHeld = false;
+  static uint32_t homingStartMs = 0;
+  static uint32_t homingZeroSinceMs = 0;
 
   bool liftUpHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
   bool liftDownHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+  uint32_t nowMs = pros::millis();
 
-  // get_angle() returns PROS_ERR (INT32_MAX) if the sensor read fails (not
-  // plugged in, bad port, etc.) - treat that as "angle unknown" and fall
-  // back to letting the driver move freely rather than silently locking out
-  // one direction forever (a bad read otherwise pins liftAngle far above
-  // LIFT_MAX_ANGLE, which blocks UP but leaves DOWN working, since DOWN's
-  // check is satisfied by any large value).
-  std::int32_t rawAngle = rotation_sensor.get_angle();
-  bool sensorOk = rawAngle != INT32_MAX;
-  double liftAngle = sensorOk ? rawAngle / 100.0 : 0.0;
+  bool downTapped = liftDownHeld && !wasDownHeld;
+  wasDownHeld = liftDownHeld;
+  if (!liftHomed && !homingInProgress && downTapped) {
+    homingInProgress = true;
+    homingStartMs = nowMs;
+    homingZeroSinceMs = 0;
+  }
 
-  if (liftUpHeld && (!sensorOk || liftAngle < LIFT_MAX_ANGLE)) {
+  if (homingInProgress) {
     lift1.move_velocity(LIFT_SPEED);
     lift2.move_velocity(-LIFT_SPEED);
-  } else if (liftDownHeld && (!sensorOk || liftAngle > LIFT_MIN_ANGLE)) {
+
+    if (nowMs - homingStartMs > HOMING_STARTUP_GRACE_MS) {
+      double actualVel = std::abs(lift1.get_actual_velocity());
+      if (actualVel < HOMING_STALL_VELOCITY) {
+        if (homingZeroSinceMs == 0) homingZeroSinceMs = nowMs;
+        if (nowMs - homingZeroSinceMs > HOMING_STALL_TIME_MS) {
+          lift1.move_velocity(0);
+          lift2.move_velocity(0);
+          rotation_sensor.reset_position(); // stalled at the bottom - this is now the lift's zero/starting position
+          homingInProgress = false;
+          liftHomed = true;
+        }
+      } else {
+        homingZeroSinceMs = 0; // still actually moving, reset the stall timer
+      }
+    }
+    return; // homing owns the lift motors until it finishes
+  }
+
+  // get_position() returns PROS_ERR (INT32_MAX) if the sensor read fails
+  // (not plugged in, bad port, etc.) - treat that as "position unknown" and
+  // fall back to letting the driver move freely rather than silently locking
+  // out a direction.
+  std::int32_t rawPosition = rotation_sensor.get_position();
+  bool sensorOk = rawPosition != INT32_MAX;
+  double liftAngle = sensorOk ? rawPosition / 100.0 : 0.0;
+
+  if (liftUpHeld && (!sensorOk || liftAngle < LIFT_MAX_ANGLE)) {
     lift1.move_velocity(-LIFT_SPEED);
     lift2.move_velocity(LIFT_SPEED);
+  } else if (liftDownHeld && (!sensorOk || liftAngle > 0.0)) {
+    lift1.move_velocity(LIFT_SPEED);
+    lift2.move_velocity(-LIFT_SPEED);
   } else {
     lift1.move_velocity(0);
     lift2.move_velocity(0);
