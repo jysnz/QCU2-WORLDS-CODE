@@ -119,8 +119,8 @@ void liftControl() {
   }
 
   if (homingInProgress) {
-    lift1.move_velocity(LIFT_SPEED);
-    lift2.move_velocity(-LIFT_SPEED);
+    lift1.move_velocity(-LIFT_SPEED);
+    lift2.move_velocity(LIFT_SPEED);
 
     if (nowMs - homingStartMs > HOMING_STARTUP_GRACE_MS) {
       double actualVel = std::abs(lift1.get_actual_velocity());
@@ -149,11 +149,11 @@ void liftControl() {
   double liftAngle = sensorOk ? rawPosition / 100.0 : 0.0;
 
   if (liftUpHeld && (!sensorOk || liftAngle < LIFT_MAX_ANGLE)) {
-    lift1.move_velocity(-LIFT_SPEED);
-    lift2.move_velocity(LIFT_SPEED);
-  } else if (liftDownHeld && (!sensorOk || liftAngle > 0.0)) {
     lift1.move_velocity(LIFT_SPEED);
     lift2.move_velocity(-LIFT_SPEED);
+  } else if (liftDownHeld && (!sensorOk || liftAngle > 0.0)) {
+    lift1.move_velocity(-LIFT_SPEED);
+    lift2.move_velocity(LIFT_SPEED);
   } else {
     lift1.move_velocity(0);
     lift2.move_velocity(0);
