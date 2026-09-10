@@ -78,15 +78,15 @@ void loadAutonSelection() {
 void initialize() {
     loadAutonSelection();
 
-    // Hold brake so the lift resists gravity and stays put when the driver
-    // lets go of the up/down button, instead of coasting back down.
     lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
-    // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
+    lift1.set_current_limit(2000);
+    lift2.set_current_limit(2000);
+    bunchArm.set_current_limit(1500); 
+
     chassis.calibrate();
 
-    // ── Cyber-HUD On-screen UI ──
     static pros::Task screen_task([]() {
         const int BG_DARK = 0x0A0A0F;
         const int CARD_BG = 0x161B22;
@@ -178,9 +178,9 @@ void initialize() {
             if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
             // Each section = a label line + a row of tiles.
-            // Drivetrain sections show 5 tiles/row; the intake section shows 2 tiles/row.
+            // Drivetrain sections show 5 tiles/row; the rest show 2 tiles/row.
             const int tempRowHeight = 66;
-            const int numTempRows = 3; // LEFT drivetrain, RIGHT drivetrain, INTAKE
+            const int numTempRows = 5; // LEFT drivetrain, RIGHT drivetrain, INTAKE, LIFT, BUNCH
             int tempsContentHeight = numTempRows * tempRowHeight;
             int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
@@ -190,9 +190,13 @@ void initialize() {
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
             std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
+            std::vector<double> liftTemps = {lift1.get_temperature(), lift2.get_temperature()};
+            std::vector<double> bunchTemps = {bunchy.get_temperature(), bunchArm.get_temperature()};
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
             std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
+            std::vector<std::int8_t> liftPorts = {lift1.get_port(), lift2.get_port()};
+            std::vector<std::int8_t> bunchPorts = {bunchy.get_port(), bunchArm.get_port()};
 
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
@@ -202,6 +206,8 @@ void initialize() {
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
             for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
+            for (double t : liftTemps) tempsNow.push_back((int)(t * 2));
+            for (double t : bunchTemps) tempsNow.push_back((int)(t * 2));
 
             // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
             // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
@@ -312,6 +318,12 @@ void initialize() {
 
                 // Section 3: INTAKE motors (2 tiles/row, named)
                 drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
+
+                // Section 4: LIFT motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 2);
+
+                // Section 5: BUNCH motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 4, "BUNCH", ACCENT_ORANGE, bunchTemps, bunchPorts, "Bunch", 2);
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
