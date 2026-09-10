@@ -40,44 +40,10 @@ lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 
 lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttle_curve, &steer_curve);
 
-// ─── UI & Auton Selector State ───
-enum UITab { TAB_TEMPS, TAB_AUTON };
-UITab currentTab = TAB_TEMPS;
-
-int currentAutonIndex = 0;
-const std::vector<std::string> autonNames = {
-    "2v2 Left Red",
-    "2v2 Left Blue",
-    "2v2 Right Red",
-    "2v2 Right Blue",
-    "Skills Challenge",
-    "SkillsV1",
-    "SoloAWP_Red_Right"
-};
-
-void saveAutonSelection() {
-    FILE* usd_file = fopen("/usd/auton_selection.txt", "w");
-    if (usd_file) {
-        fprintf(usd_file, "%d", currentAutonIndex);
-        fclose(usd_file);
-    }
-}
-
-void loadAutonSelection() {
-    FILE* usd_file = fopen("/usd/auton_selection.txt", "r");
-    if (usd_file) {
-        fscanf(usd_file, "%d", &currentAutonIndex);
-        fclose(usd_file);
-        if (currentAutonIndex >= (int)autonNames.size()) currentAutonIndex = 0;
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    loadAutonSelection();
-
     lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
@@ -110,17 +76,13 @@ void initialize() {
         };
 
         int tempsScroll = 0;
-        int autonScroll = 0;
 
         // ── Dirty-state tracking to eliminate unnecessary full-screen redraws (flicker fix) ──
         // The old loop cleared and redrew the ENTIRE screen every 35ms even when nothing
         // on screen had actually changed, which is what caused the visible flicker. Now we
         // only repaint when something the user can see has actually changed.
         bool forceRedraw = true;
-        UITab lastTab = currentTab;
         int lastTempsScroll = INT32_MIN;
-        int lastAutonScroll = INT32_MIN;
-        int lastAutonIndex = -1;
         int lastImu = INT32_MIN;
         int lastBattery = INT32_MIN;
         std::vector<int> lastTemps; // rounded to nearest 0.5C so tiny sensor jitter doesn't trigger redraws
@@ -138,44 +100,19 @@ void initialize() {
             // ── Input Detection ──
             static bool wasTouched = false;
             if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
-                // 1. Header Tab Switch
-                if (status.y < 50) {
-                    if (status.x < 240) currentTab = TAB_TEMPS;
-                    else currentTab = TAB_AUTON;
-                }
-
-                // 2. Scroll Buttons (Far Right Column: 430 to 480)
+                // Scroll Buttons (Far Right Column: 430 to 480)
                 if (status.x > 430) {
                     if (status.y > 60 && status.y < 130) { // UP Arrow
-                        if (currentTab == TAB_AUTON) autonScroll += 55;
-                        else tempsScroll += 60;
+                        tempsScroll += 60;
                     }
                     else if (status.y > 140 && status.y < 210) { // DOWN Arrow
-                        if (currentTab == TAB_AUTON) autonScroll -= 55;
-                        else tempsScroll -= 60;
-                    }
-                }
-
-                // 3. Selection in Auton Tab
-                if (currentTab == TAB_AUTON && status.x < 420 && status.y > 50 && status.y < 215) {
-                    for (int i = 0; i < (int)autonNames.size(); i++) {
-                        int itemY = 60 + (i * 55) + autonScroll;
-                        if (status.y >= itemY && status.y <= itemY + 50) {
-                            currentAutonIndex = i;
-                            saveAutonSelection();
-                            break;
-                        }
+                        tempsScroll -= 60;
                     }
                 }
                 wasTouched = true;
             } else if (status.touch_status == pros::E_TOUCH_RELEASED) {
                 wasTouched = false;
             }
-
-            // Clamp Scrolling
-            if (autonScroll > 0) autonScroll = 0;
-            int maxAutonScroll = -((int)autonNames.size() * 55 - 140);
-            if (autonScroll < maxAutonScroll && maxAutonScroll < 0) autonScroll = maxAutonScroll;
 
             // Each section = a label line + a row of tiles.
             // Drivetrain sections show 5 tiles/row; the rest show 2 tiles/row.
@@ -214,11 +151,7 @@ void initialize() {
             // while a motor is spinning its temperature (and the IMU heading, while driving)
             // changes almost every loop, which was forcing a full-screen clear+redraw ~28x/sec
             // and is what caused the visible flicker as soon as a motor was connected and running.
-            bool interactiveChanged = forceRedraw ||
-                                       currentTab != lastTab ||
-                                       tempsScroll != lastTempsScroll ||
-                                       autonScroll != lastAutonScroll ||
-                                       currentAutonIndex != lastAutonIndex;
+            bool interactiveChanged = forceRedraw || tempsScroll != lastTempsScroll;
             bool telemetryChanged = imuNow != lastImu ||
                                      batteryNow != lastBattery ||
                                      tempsNow != lastTemps;
@@ -247,7 +180,7 @@ void initialize() {
             for(int i=0; i<240; i+=40) pros::screen::draw_line(0, i, 480, i);
 
             // ── Content Area Rendering (With Clipping Check) ──
-            if (currentTab == TAB_TEMPS) {
+            {
                 const int rowLeft = 15, rowRight = 428;
                 const int labelH = 14;  // space reserved for the section name above its tiles
                 const int tileH = 46;
@@ -324,51 +257,16 @@ void initialize() {
 
                 // Section 5: BUNCH motors (2 tiles/row, named)
                 drawSection(yBase + tempRowHeight * 4, "BUNCH", ACCENT_ORANGE, bunchTemps, bunchPorts, "Bunch", 2);
-
-            } else {
-                for (int i = 0; i < (int)autonNames.size(); i++) {
-                    int itemY = 60 + (i * 55) + autonScroll;
-
-                    // Clipping Check
-                    if (itemY + 50 < 55 || itemY > 215) continue;
-
-                    bool isSelected = (i == currentAutonIndex);
-                    fillRoundedRect(20, itemY, 420, itemY + 50, 6, isSelected ? 0x1c2838 : CARD_BG);
-
-                    if (isSelected) {
-                        pros::screen::set_pen(ACCENT_ORANGE);
-                        pros::screen::draw_rect(20, itemY, 420, itemY + 50);
-                    }
-
-                    // Selection indicator: filled dot when active, hollow ring otherwise
-                    int dotX = 40, dotY = itemY + 25;
-                    if (isSelected) {
-                        pros::screen::set_pen(ACCENT_ORANGE);
-                        pros::screen::fill_circle(dotX, dotY, 6);
-                    } else {
-                        pros::screen::set_pen(0x3a3a45);
-                        pros::screen::draw_circle(dotX, dotY, 6);
-                    }
-
-                    pros::screen::set_eraser(isSelected ? 0x1c2838 : CARD_BG);
-                    pros::screen::set_pen(isSelected ? 0xFFFFFF : 0x8b949e);
-                    pros::screen::print(pros::E_TEXT_MEDIUM, 60, itemY + 15, "%s", autonNames[i].c_str());
-                }
             }
 
             // ── Static Overlays (Drawn last to prevent overlap) ──
 
-            // Header Tabs — rounded pills; inactive tabs stay flush with the background instead
-            // of a heavy gray slab, so the active tab reads clearly at a glance
-            fillRoundedRect(5, 5, 238, 50, 8, currentTab == TAB_TEMPS ? ACCENT_CYAN : CARD_BG);
-            fillRoundedRect(242, 5, 475, 50, 8, currentTab == TAB_AUTON ? ACCENT_ORANGE : CARD_BG);
+            // Header — single title bar (auton selector tab removed; only one autonomous routine)
+            fillRoundedRect(5, 5, 475, 50, 8, ACCENT_CYAN);
 
-            pros::screen::set_eraser(currentTab == TAB_TEMPS ? ACCENT_CYAN : CARD_BG);
-            pros::screen::set_pen(currentTab == TAB_TEMPS ? 0x001417 : TEXT_DIM);
+            pros::screen::set_eraser(ACCENT_CYAN);
+            pros::screen::set_pen(0x001417);
             pros::screen::print(pros::E_TEXT_SMALL, 60, 20, "SYSTEM_THERMALS");
-            pros::screen::set_eraser(currentTab == TAB_AUTON ? ACCENT_ORANGE : CARD_BG);
-            pros::screen::set_pen(currentTab == TAB_AUTON ? 0x1a0d00 : TEXT_DIM);
-            pros::screen::print(pros::E_TEXT_SMALL, 305, 20, "MISSION_CONFIG");
 
             // Scroll Buttons Sidebar
             fillRoundedRect(435, 60, 475, 130, 8, CARD_BG); // Up Button
@@ -393,13 +291,10 @@ void initialize() {
             pros::screen::set_pen(battCol);
             pros::screen::fill_circle(230, 227, 4);
             pros::screen::set_pen(TEXT_DIM);
-            pros::screen::print(pros::E_TEXT_SMALL, 240, 222, "BAT %.0f%%  |  %s", batteryPct, autonNames[currentAutonIndex].c_str());
+            pros::screen::print(pros::E_TEXT_SMALL, 240, 222, "BAT %.0f%%", batteryPct);
 
             // Update dirty-tracking snapshot
-            lastTab = currentTab;
             lastTempsScroll = tempsScroll;
-            lastAutonScroll = autonScroll;
-            lastAutonIndex = currentAutonIndex;
             lastImu = imuNow;
             lastBattery = batteryNow;
             lastTemps = tempsNow;
