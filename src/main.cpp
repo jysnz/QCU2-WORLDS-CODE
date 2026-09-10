@@ -28,7 +28,6 @@ pros::Motor bunchArm(13, pros::MotorGears::red);
 pros::adi::Pneumatics clamp('A', false);
 
 pros::Imu imu(15);
-pros::Rotation rotation_sensor(-20);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───

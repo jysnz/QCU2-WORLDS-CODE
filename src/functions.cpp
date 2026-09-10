@@ -6,15 +6,6 @@
 #include <cmath>
 #include <cstdint>
 
-// ─── Drivetrain motor direction test ──────────────────────────────────────────
-// Spins each drivetrain motor by itself (using a fresh, unreversed handle on
-// its port, independent of how left_motor_group/right_motor_group currently
-// have it configured) and reports whether it physically turned "+" or "-" on
-// the brain screen. Use this to figure out which ports need a negative sign
-// in the MotorGroup port lists in main.cpp.
-//
-// Run this on its own (e.g. as the selected autonomous routine) - do not run
-// it at the same time as jawheadControl(), since both drive the motors.
 static void testMotorGroupDirections(const char *label,
                                       pros::MotorGroup &group, int &y) {
   pros::screen::set_pen(0xFFFFFF);
@@ -63,97 +54,20 @@ void drivetrainReset(){
   right_motor_group.tare_position();
 }
 
-// ─── Lift control ────────────────────────────────────────────────────────────
-// Holding UP drives lift1/lift2 up; holding DOWN drives them down. Letting go
-// of either stops (and holds, via brake mode) the lift wherever it is - there
-// is no target-angle seeking. lift1 and lift2 are mirrored on the lift, so
-// they always spin opposite each other (one forward, one reversed) to move
-// together.
-//
-// The very first time DOWN is tapped (per power cycle), it doesn't just move
-// the lift - it homes it: the lift drives itself down (no need to keep
-// holding the button) until it stalls against the physical bottom, and that
-// stalled position becomes the lift's zero/starting position (the rotation
-// sensor is tared there). After that one-time homing, DOWN goes back to
-// normal hold-to-lower control.
-//
-// rotation_sensor tracks the lift's position via get_position() - a
-// continuous, tare-able centidegree count (NOT get_angle(), which is a fixed
-// 0-360 wrap that set_position()/reset_position() can't zero) - and enforces
-// a hard top limit so the lift stops there even while UP is still held.
-//
-// NOTE: LIFT_MAX_ANGLE is a placeholder - tune it to the lift's actual peak
-// position (degrees above the homed bottom). Also confirm on the robot that
-// UP actually raises the lift and DOWN/homing lowers it; if they're
-// backwards, swap the two move_velocity() sign pairs below (and in the
-// homing block), and confirm get_position() increases as the lift goes up
-// from the homed bottom - flip the rotation_sensor port sign in main.cpp if
-// it decreases instead, so the LIFT_MAX_ANGLE guard trips at the right end.
 void liftControl() {
-  const double LIFT_MAX_ANGLE = 180.0; // degrees above the homed bottom - peak/top limit
-  const int LIFT_SPEED = 200;          // green gearset max velocity (rpm)
-
-  // Homing stall detection: same idea as bunchArm's tap-to-run-until-stall -
-  // "stalled" means the motor is commanded to move but its actual velocity
-  // has sat near zero for a bit, i.e. it's jammed against the bottom.
-  const uint32_t HOMING_STARTUP_GRACE_MS = 300; // ignore the stall check right after starting (still spinning up from rest)
-  const uint32_t HOMING_STALL_TIME_MS = 150;    // velocity must stay ~0 this long to count as stalled
-  const double HOMING_STALL_VELOCITY = 5.0;     // rpm
-
-  static bool liftHomed = false;
-  static bool homingInProgress = false;
-  static bool wasDownHeld = false;
-  static uint32_t homingStartMs = 0;
-  static uint32_t homingZeroSinceMs = 0;
+  const double LIFT_TOP_TARGET = 1500.0;    // lift1 motor degrees - top hardstop target
+  const double LIFT_BOTTOM_TARGET = 0.0;   // lift1 motor degrees - bottom hardstop target
+  const int LIFT_SPEED = 200;              // green gearset max velocity (rpm)
 
   bool liftUpHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
   bool liftDownHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-  uint32_t nowMs = pros::millis();
 
-  bool downTapped = liftDownHeld && !wasDownHeld;
-  wasDownHeld = liftDownHeld;
-  if (!liftHomed && !homingInProgress && downTapped) {
-    homingInProgress = true;
-    homingStartMs = nowMs;
-    homingZeroSinceMs = 0;
-  }
-
-  if (homingInProgress) {
-    lift1.move_velocity(-LIFT_SPEED);
-    lift2.move_velocity(LIFT_SPEED);
-
-    if (nowMs - homingStartMs > HOMING_STARTUP_GRACE_MS) {
-      double actualVel = std::abs(lift1.get_actual_velocity());
-      if (actualVel < HOMING_STALL_VELOCITY) {
-        if (homingZeroSinceMs == 0) homingZeroSinceMs = nowMs;
-        if (nowMs - homingZeroSinceMs > HOMING_STALL_TIME_MS) {
-          lift1.move_velocity(0);
-          lift2.move_velocity(0);
-          rotation_sensor.reset_position(); // stalled at the bottom - this is now the lift's zero/starting position
-          homingInProgress = false;
-          liftHomed = true;
-        }
-      } else {
-        homingZeroSinceMs = 0; // still actually moving, reset the stall timer
-      }
-    }
-    return; // homing owns the lift motors until it finishes
-  }
-
-  // get_position() returns PROS_ERR (INT32_MAX) if the sensor read fails
-  // (not plugged in, bad port, etc.) - treat that as "position unknown" and
-  // fall back to letting the driver move freely rather than silently locking
-  // out a direction.
-  std::int32_t rawPosition = rotation_sensor.get_position();
-  bool sensorOk = rawPosition != INT32_MAX;
-  double liftAngle = sensorOk ? rawPosition / 100.0 : 0.0;
-
-  if (liftUpHeld && (!sensorOk || liftAngle < LIFT_MAX_ANGLE)) {
-    lift1.move_velocity(LIFT_SPEED);
-    lift2.move_velocity(-LIFT_SPEED);
-  } else if (liftDownHeld && (!sensorOk || liftAngle > 0.0)) {
-    lift1.move_velocity(-LIFT_SPEED);
-    lift2.move_velocity(LIFT_SPEED);
+  if (liftUpHeld) {
+    lift1.move_absolute(LIFT_TOP_TARGET, LIFT_SPEED);
+    lift2.move_absolute(-LIFT_TOP_TARGET, LIFT_SPEED);
+  } else if (liftDownHeld) {
+    lift1.move_absolute(LIFT_BOTTOM_TARGET, LIFT_SPEED);
+    lift2.move_absolute(-LIFT_BOTTOM_TARGET, LIFT_SPEED);
   } else {
     lift1.move_velocity(0);
     lift2.move_velocity(0);
@@ -215,21 +129,11 @@ void jawheadControl() {
 
     liftControl();
 
-    // Tap L1 to spin bunchArm positive until it stalls, tap L2 for negative -
-    // it keeps spinning on its own (no need to hold the button) until a
-    // "stall" is detected, then stops. Stall here means bunchArm is being
-    // commanded to move but its actual velocity has sat near zero for a bit,
-    // i.e. it's jammed against something/at its limit - not a hard current
-    // threshold, since that varies by gearset.
     static bool wasL1Held = false;
     static bool wasL2Held = false;
-    static int bunchArmDir = 0; // 0 = idle, 1 = running +, -1 = running -
-    static uint32_t bunchArmStartMs = 0;
-    static uint32_t bunchArmZeroSinceMs = 0;
-    const int BUNCHARM_SPEED = 100;                   // red gearset max velocity (rpm)
-    const uint32_t BUNCHARM_STARTUP_GRACE_MS = 300;    // ignore the stall check right after starting (still spinning up from rest)
-    const uint32_t BUNCHARM_STALL_TIME_MS = 150;       // velocity must stay ~0 this long to count as stalled
-    const double BUNCHARM_STALL_VELOCITY = 5.0;        // rpm
+    const int BUNCHARM_SPEED = 100;             // red gearset max velocity (rpm)
+    const double BUNCHARM_POS_TARGET = -1500.0;    // bunchArm motor degrees - L1 target (placeholder, tune to the mechanism)
+    const double BUNCHARM_NEG_TARGET = 0.0;     // bunchArm motor degrees - L2/home target (placeholder, tune to the mechanism)
 
     bool l1Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
     bool l1Tapped = l1Held && !wasL1Held;
@@ -240,32 +144,9 @@ void jawheadControl() {
     wasL2Held = l2Held;
 
     if (l1Tapped) {
-      bunchArmDir = 1;
-      bunchArmStartMs = nowMs;
-      bunchArmZeroSinceMs = 0;
+      bunchArm.move_absolute(BUNCHARM_POS_TARGET, BUNCHARM_SPEED);
     } else if (l2Tapped) {
-      bunchArmDir = -1;
-      bunchArmStartMs = nowMs;
-      bunchArmZeroSinceMs = 0;
-    }
-
-    if (bunchArmDir != 0) {
-      bunchArm.move_velocity(bunchArmDir * BUNCHARM_SPEED);
-
-      if (nowMs - bunchArmStartMs > BUNCHARM_STARTUP_GRACE_MS) {
-        double actualVel = std::abs(bunchArm.get_actual_velocity());
-        if (actualVel < BUNCHARM_STALL_VELOCITY) {
-          if (bunchArmZeroSinceMs == 0) bunchArmZeroSinceMs = nowMs;
-          if (nowMs - bunchArmZeroSinceMs > BUNCHARM_STALL_TIME_MS) {
-            bunchArmDir = 0; // stalled - stop
-            bunchArm.move_velocity(0);
-          }
-        } else {
-          bunchArmZeroSinceMs = 0; // still actually moving, reset the stall timer
-        }
-      }
-    } else {
-      bunchArm.move_velocity(0);
+      bunchArm.move_absolute(BUNCHARM_NEG_TARGET, BUNCHARM_SPEED);
     }
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
@@ -302,11 +183,11 @@ void jawheadControl() {
     if (intakeForward) {
       intake1.move_velocity(600);
       intake2.move_velocity(-600);
-      bunchy.move_velocity(200);
+      bunchy.move_velocity(-200);
     } else if (intakeBackward) {
       intake1.move_velocity(-600);
       intake2.move_velocity(600);
-      bunchy.move_velocity(-200);
+      bunchy.move_velocity(200);
     } else {
       intake1.move_velocity(0);
       intake2.move_velocity(0);
