@@ -103,10 +103,10 @@ void jawheadControl() {
     // on the joystick to drive the robot backward, and vice versa).
     // Debounced (like the clamp below) so switch bounce on the physical
     // button can't register as two rapid taps wthat cancel each other out.
-    bool downHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-    bool downTapped = downHeld && !wasDownHeld;
-    wasDownHeld = downHeld;
-    if (downTapped && (nowMs - lastReverseToggleMs >= BUTTON_DEBOUNCE_MS)) {
+    bool driveReverseToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+    bool driveReverseToggleTapped = driveReverseToggleHeld && !wasDownHeld;
+    wasDownHeld = driveReverseToggleHeld;
+    if (driveReverseToggleTapped && (nowMs - lastReverseToggleMs >= BUTTON_DEBOUNCE_MS)) {
       lastReverseToggleMs = nowMs;
       driveReversed = !driveReversed;
     }
@@ -114,10 +114,10 @@ void jawheadControl() {
     // Tap Y to switch the clamp cleanly on/off (edge-detected so holding Y
     // doesn't rapid-fire clamp.toggle() every loop and leave it in a
     // random state).
-    bool yHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
-    bool yTapped = yHeld && !wasYHeld;
-    wasYHeld = yHeld;
-    if (yTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
+    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+    bool clampToggleTapped = clampToggleHeld && !wasYHeld;
+    wasYHeld = clampToggleHeld;
+    if (clampToggleTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
       lastClampToggleMs = nowMs;
       clampOn = !clampOn;
       if (clampOn) {
@@ -129,24 +129,21 @@ void jawheadControl() {
 
     liftControl();
 
-    static bool wasL1Held = false;
-    static bool wasL2Held = false;
-    const int BUNCHARM_SPEED = 100;             // red gearset max velocity (rpm)
-    const double BUNCHARM_POS_TARGET = -1500.0;    // bunchArm motor degrees - L1 target (placeholder, tune to the mechanism)
-    const double BUNCHARM_NEG_TARGET = 0.0;     // bunchArm motor degrees - L2/home target (placeholder, tune to the mechanism)
+    // Holding L1 drives bunchArm one way, holding L2 drives it the other -
+    // letting go of either stops it (and holds, via brake mode) wherever it
+    // is, same hold-to-move/release-to-stop behavior as liftControl() before
+    // it switched to move_absolute(). No target-seeking here.
+    const int BUNCHARM_SPEED = 100; // red gearset max velocity (rpm)
 
-    bool l1Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
-    bool l1Tapped = l1Held && !wasL1Held;
-    wasL1Held = l1Held;
+    bool bunchArmExtendHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+    bool bunchArmRetractHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
 
-    bool l2Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
-    bool l2Tapped = l2Held && !wasL2Held;
-    wasL2Held = l2Held;
-
-    if (l1Tapped) {
-      bunchArm.move_absolute(BUNCHARM_POS_TARGET, BUNCHARM_SPEED);
-    } else if (l2Tapped) {
-      bunchArm.move_absolute(BUNCHARM_NEG_TARGET, BUNCHARM_SPEED);
+    if (bunchArmExtendHeld) {
+      bunchArm.move_velocity(BUNCHARM_SPEED);
+    } else if (bunchArmRetractHeld) {
+      bunchArm.move_velocity(-BUNCHARM_SPEED);
+    } else {
+      bunchArm.move_velocity(0);
     }
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
