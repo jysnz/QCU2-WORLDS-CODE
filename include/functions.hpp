@@ -56,3 +56,4 @@ void restoreMotorPositions();
 // ─── Operator control
 // ─────────────────────────────────────────────────────────
 void catapultControl();
+void liftFlipControl();

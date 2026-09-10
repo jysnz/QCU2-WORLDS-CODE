@@ -14,13 +14,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({-16, 17, -18, 19, -20}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({11, -2, 13, -14, 15}, pros::MotorGears::green);
-pros::MotorGroup arm({1, 10}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-11, 12, -13, 14, -15}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-16, 17, -18, 19, -20}, pros::MotorGears::green);
 
-pros::adi::Pneumatics clamp('A', false);
+pros::Motor flipMotor(1, pros::MotorGears::green);
+pros::Motor liftMotor(10, pros::MotorGears::green);
 
-pros::Imu imu(9);
+pros::adi::Pneumatics pneumaticA('A', false);
+pros::adi::Pneumatics pneumaticB('B', false);
+
+pros::Imu imu(21);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
@@ -70,9 +73,11 @@ void loadAutonSelection() {
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
     loadAutonSelection();
-    
+
     // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
     chassis.calibrate();
+    flipMotor.tare_position();
+    liftMotor.tare_position();
 
     // ── Cyber-HUD On-screen UI ──
     static pros::Task screen_task([]() {
@@ -173,7 +178,8 @@ void initialize() {
                 int yBase = 60 + tempsScroll;
                 drawTechCard(15, yBase, "[ DRIVE_L ]", left_motor_group.get_temperature());
                 drawTechCard(220, yBase, "[ DRIVE_R ]", right_motor_group.get_temperature());
-                drawTechCard(15, yBase + 65, "[ ARM ]", arm.get_temperature());
+                drawTechCard(15, yBase + 65, "[ FLIP ]", flipMotor.get_temperature());
+                drawTechCard(220, yBase + 65, "[ LIFT ]", liftMotor.get_temperature());
 
             } else {
                 for (int i = 0; i < (int)autonNames.size(); i++) {
@@ -232,6 +238,10 @@ void initialize() {
 }
 
 void opcontrol() {
+    // Runs in the background for the whole driver control period, alongside
+    // whichever of the functions below owns the main loop.
+    static pros::Task liftFlipTask(liftFlipControl);
+
     // Hold DPAD-LEFT when driver control starts to enter the PID tuner
     if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
         pidTunerControl();
