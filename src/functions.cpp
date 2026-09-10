@@ -5,6 +5,34 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <utility>
+#include <vector>
+
+// Spins a single fresh, non-reversed handle on rawPort for a moment and
+// reports which way it physically turned, alongside how it's currently
+// configured (reversed or not) - shared by both the MotorGroup and
+// individual-motor variants below.
+static void printMotorDirectionLine(const char *name, std::uint8_t rawPort,
+                                     bool configuredReversed, int &y) {
+  pros::Motor testMotor(rawPort);
+  testMotor.move_voltage(6000);
+  pros::delay(300);
+  double velocity = testMotor.get_actual_velocity();
+  testMotor.move_voltage(0);
+  pros::delay(200); // let it coast to a stop before testing the next one
+
+  const char *spinDirection =
+      (velocity > 1)    ? "+"
+      : (velocity < -1) ? "-"
+                         : "? (no movement)";
+  const char *configuredAs = configuredReversed ? "-" : "+";
+
+  pros::screen::print(pros::E_TEXT_SMALL, 10, y,
+                       "%s (port %2d): spins %s | configured %s", name,
+                       (int)rawPort, spinDirection, configuredAs);
+  y += 16;
+}
 
 static void testMotorGroupDirections(const char *label,
                                       pros::MotorGroup &group, int &y) {
@@ -17,36 +45,52 @@ static void testMotorGroupDirections(const char *label,
   for (int i = 0; i < group.size(); i++) {
     std::int8_t configuredPort = ports[i]; // negative = reversed in code
     std::uint8_t rawPort = std::abs(configuredPort);
-
+    char name[8];
+    snprintf(name, sizeof(name), "#%d", i + 1);
     // Fresh, non-reversed handle on the raw port so the result reflects the
     // motor's actual wiring, not the sign already applied by the group.
-    pros::Motor testMotor(rawPort);
-    testMotor.move_voltage(6000);
-    pros::delay(300);
-    double velocity = testMotor.get_actual_velocity();
-    testMotor.move_voltage(0);
-    pros::delay(200); // let it coast to a stop before testing the next one
-
-    const char *spinDirection =
-        (velocity > 1)    ? "+"
-        : (velocity < -1) ? "-"
-                           : "? (no movement)";
-    const char *configuredAs = (configuredPort < 0) ? "-" : "+";
-
-    pros::screen::print(pros::E_TEXT_SMALL, 10, y,
-                         "Port %2d: spins %s | configured %s", (int)rawPort,
-                         spinDirection, configuredAs);
-    y += 16;
+    printMotorDirectionLine(name, rawPort, configuredPort < 0, y);
   }
 
   y += 10;
 }
 
-void testDrivetrainMotorDirections() {
+// Same idea as testMotorGroupDirections(), but for a labeled group of
+// standalone pros::Motor instances (lift1/lift2, intake1/intake2, etc.)
+// rather than a MotorGroup - each entry is {display name, motor}.
+static void
+testMotorsDirections(const char *label,
+                      std::vector<std::pair<const char *, pros::Motor *>>
+                          motors,
+                      int &y) {
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_MEDIUM, 10, y, "%s", label);
+  y += 20;
+
+  for (auto &entry : motors) {
+    const char *name = entry.first;
+    pros::Motor *motor = entry.second;
+    std::uint8_t rawPort = std::abs(motor->get_port());
+    printMotorDirectionLine(name, rawPort, motor->is_reversed(), y);
+  }
+
+  y += 10;
+}
+
+// Runs the spin-direction test on every motor on the robot, grouped by
+// subsystem, and reports the results on the brain screen. Run this on its
+// own (e.g. as the selected autonomous routine) - do not run it at the same
+// time as jawheadControl(), since both drive the motors.
+void testAllMotorDirections() {
   pros::screen::erase();
   int y = 10;
   testMotorGroupDirections("LEFT DRIVE", left_motor_group, y);
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
+  testMotorsDirections("LIFT", {{"lift1", &lift1}, {"lift2", &lift2}}, y);
+  testMotorsDirections("INTAKE", {{"intake1", &intake1}, {"intake2", &intake2}},
+                        y);
+  testMotorsDirections("BUNCH", {{"bunchy", &bunchy}, {"bunchArm", &bunchArm}},
+                        y);
 }
 
 void drivetrainReset(){

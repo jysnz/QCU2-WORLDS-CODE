@@ -9,3 +9,5 @@ void drivetrainReset();
 void liftControl();
 
 void jawheadControl();
+
+void testAllMotorDirections();
