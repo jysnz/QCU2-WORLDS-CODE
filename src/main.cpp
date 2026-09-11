@@ -306,8 +306,22 @@ void initialize() {
 }
 
 void opcontrol() {
-    // Hold DPAD-LEFT when driver control starts to enter the PID tuner
-    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
+    // Hold DPAD-LEFT when driver control starts to enter the PID tuner.
+    // A single instantaneous read here misses the press almost every time --
+    // you can only start pressing it once you see/feel driver control begin,
+    // which is after this line would have already sampled false. Poll for a
+    // short window instead so a hold that starts right at opcontrol() still
+    // gets caught.
+    bool enterTuner = false;
+    for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
+        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
+            enterTuner = true;
+            break;
+        }
+        pros::delay(20);
+    }
+
+    if (enterTuner) {
         pidTunerControl();
     } else {
         jawheadControl();

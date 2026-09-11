@@ -8,7 +8,8 @@ void thirty_sec(){
     chassis.waitUntilDone();
     chassis.moveToPoint(0, -12, 3000, {.forwards = false, .maxSpeed = 100});
     chassis.waitUntilDone();
-    chassis.turnToHeading(-90, 2000, {.maxSpeed = 120});
+    chassis.turnToHeading(-90, 1000); // Turn to matchload
+    
 }
 
 // No auton selector - only one autonomous routine.
