@@ -2,19 +2,25 @@
 
 // ─── PID Tuner ───────────────────────────────────────────────────────────────
 // On-robot tuning mode for the LemLib angular/lateral controllers.
-// Enter by HOLDING DPAD-LEFT when driver control starts.
+// Enter by HOLDING DPAD-LEFT when driver control starts. See the full
+// controls reference at the top of src/pid_tuner.cpp -- short version:
 //
-// Controls inside the tuner:
-//   Y            toggle ANGULAR / LATERAL controller
+//   Y            toggle which controller LEFT/RIGHT/UP/DOWN edit (ANGULAR
+//                or LATERAL); doesn't affect R1/R2 below
 //   LEFT/RIGHT   select gain (kP -> kI -> kD)
-//   UP/DOWN      adjust selected gain (hold R2 for fine step, x0.1)
-//   A            run small test  (90 deg turn / 24 in drive)
-//   X            run big test    (180 deg turn / 48 in drive)
-//   B            run return test (back to heading 0 / drive back)
+//   L1/L2        move the digit cursor (coarser/finer)
+//   UP/DOWN      adjust the selected gain by the current digit's step
+//   A/X/B        run a single test (small / big / return) in whichever
+//                mode Y currently has selected
+//   R1           run the ANGULAR sweep (chained turns + return-to-start),
+//                regardless of Y mode
+//   R2           run the LATERAL sweep (chained drives + return-to-start),
+//                regardless of Y mode
 //
-// The brain screen shows the gain panel plus a live error-vs-time graph of
-// each run; the controller screen shows gains and the last run's overshoot /
-// settle time / final error. Full CSV telemetry streams over `pros terminal`.
+// The brain screen shows the gain panel plus a live target-vs-actual graph
+// of each run; the controller screen shows gains and the last run's
+// overshoot / settle time / final error. Full CSV telemetry streams over
+// `pros terminal`.
 void pidTunerControl();
 
 // True while the tuner owns the brain screen; the HUD task in main.cpp must
