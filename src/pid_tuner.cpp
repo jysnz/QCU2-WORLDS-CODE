@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // PID TUNER — CONTROLS REFERENCE
 // ─────────────────────────────────────────────────────────────────────────────
-// ENTERING THE TUNER
-//   Hold DPAD-LEFT when driver control starts (opcontrol). Normal driving
-//   runs if the button is not held.
+// ENTERING / EXITING THE TUNER
+//   Tap "PID TUNING" on the driver menu shown at the start of driver
+//   control (see driver_menu.hpp/.cpp). Tap BACK (top-right) to exit back
+//   to that menu.
 //
 // SELECTING WHAT TO TUNE
 //   Y            toggle ANGULAR (turns, cyan header) / LATERAL (drive,
@@ -197,6 +198,19 @@ static const int GX = 160, GY = 40, GW = 310, GH = 160;
 
 static const char *kGainNames[3] = {"kP", "kI", "kD"};
 
+// ─── Exit button ──────────────────────────────────────────────────────────
+// Tapping this (top-right of the header) exits back to the driver menu --
+// otherwise there'd be no way out of the tuner short of restarting the
+// program.
+static const int kBackX0 = 410, kBackY0 = 3, kBackX1 = 476, kBackY1 = 27;
+static void drawBackButton() {
+  pros::screen::set_pen(0x000000);
+  pros::screen::fill_rect(kBackX0, kBackY0, kBackX1, kBackY1);
+  pros::screen::set_eraser(0x000000);
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_SMALL, kBackX0 + 6, kBackY0 + 6, "BACK");
+}
+
 // ─── Value-scale graph ────────────────────────────────────────────────────
 // Classic PID step-response view: a flat/step target line (pink) and the
 // actual value chasing it (green), both against one absolute value axis
@@ -305,6 +319,7 @@ static void drawTunerUI() {
   pros::screen::set_pen(0x000000);
   pros::screen::print(pros::E_TEXT_MEDIUM, 10, 7, "PID TUNER // %s",
                       tuningAngular ? "ANGULAR (turns)" : "LATERAL (drive)");
+  drawBackButton();
 
   for (int i = 0; i < 3; i++) {
     int y = 40 + i * 45;
@@ -702,7 +717,22 @@ void pidTunerControl() {
   EdgeButton btnL1{pros::E_CONTROLLER_DIGITAL_L1};
   EdgeButton btnL2{pros::E_CONTROLLER_DIGITAL_L2};
 
+  bool wasTouched = false;
   while (true) {
+    pros::screen_touch_status_s_t status = pros::screen::touch_status();
+    bool touchPress = status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched;
+    if (status.touch_status == pros::E_TOUCH_PRESSED)
+      wasTouched = true;
+    else if (status.touch_status == pros::E_TOUCH_RELEASED)
+      wasTouched = false;
+    if (touchPress && status.x >= kBackX0 && status.x <= kBackX1 &&
+        status.y >= kBackY0 && status.y <= kBackY1) {
+      pidTunerActive = false;
+      controller.rumble(".");
+      printf("PID TUNER EXIT\n");
+      return; // back to the driver menu
+    }
+
     bool upEdge = up.pressed(), downEdge = down.pressed();
     bool leftEdge = left.pressed(), rightEdge = right.pressed();
     bool aEdge = btnA.pressed(), bEdge = btnB.pressed(), xEdge = btnX.pressed();
