@@ -1,8 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // POINT PLANNER — see include/point_planner.hpp for the full controls
-// reference. Short version: dial in (x, y) with the controller, press A,
-// and the chassis runs a single chassis.moveToPoint() to that field
-// position. Nothing more -- no waypoint queue, no PID editing.
+// reference. Short version: dial in (x, y) and a speed with the controller,
+// press A, and the chassis runs a single chassis.moveToPoint() to that field
+// position. R1 swaps the tool over to chassis.turnToHeading() mode, where
+// you dial in a heading and speed instead. Nothing more -- no waypoint
+// queue, no PID editing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "point_planner.hpp"
@@ -16,11 +18,42 @@
 
 bool pointPlannerActive = false;
 
+// ─── Mode ────────────────────────────────────────────────────────────────────
+// MOVE_TO_POINT drives to (targetX, targetY); TURN_TO_HEADING turns in place
+// to targetHeading. R1 toggles between them.
+enum class PlannerMode { MOVE_TO_POINT, TURN_TO_HEADING };
+static PlannerMode mode = PlannerMode::MOVE_TO_POINT;
+
 // ─── Target state ────────────────────────────────────────────────────────────
 static float targetX = 24.0f;
 static float targetY = 24.0f;
-static int selectedField = 1; // 0 = X, 1 = Y
-static bool driveForwards = true;
+static float targetHeading = 0.0f;
+static float targetSpeed = 127.0f; // 0-127, passed as maxSpeed
+static int selectedField = 1;      // index into the current mode's field list
+static bool driveForwards = true;  // moveToPoint only
+
+// Number of editable fields for the current mode: {X, Y, SPEED} or
+// {HEADING, SPEED}.
+static int fieldCount() {
+  return mode == PlannerMode::MOVE_TO_POINT ? 3 : 2;
+}
+
+// Pointer to whichever field is currently selected, so UP/DOWN and the
+// digit cursor can edit it without a mode-specific switch at every call
+// site.
+static float *selectedFieldPtr() {
+  if (mode == PlannerMode::MOVE_TO_POINT) {
+    switch (selectedField) {
+    case 0:
+      return &targetX;
+    case 1:
+      return &targetY;
+    default:
+      return &targetSpeed;
+    }
+  }
+  return selectedField == 0 ? &targetHeading : &targetSpeed;
+}
 
 // Digit cursor, same idea as the PID tuner: UP/DOWN adjusts the selected
 // field by 10^digitExp, and L1/L2 move which digit that is.
@@ -33,8 +66,9 @@ static float digitStep() { return std::pow(10.0f, (float)digitExp); }
 struct PlanResult {
   bool ran = false;
   bool cancelled = false; // true if X aborted the run early
-  float finalX = 0, finalY = 0;
-  float error = 0; // straight-line distance from target at the end
+  bool isTurn = false;    // true if this was a turnToHeading run
+  float finalX = 0, finalY = 0, finalHeading = 0;
+  float error = 0; // straight-line distance (in) or heading error (deg)
   int durationMs = 0;
 };
 static PlanResult lastResult;
@@ -101,17 +135,45 @@ static void drawCrosshair(float x, float y) {
   pros::screen::draw_circle(px, py, 3);
 }
 
+// Draws a pink arrow from the robot's current position out to a fixed
+// length in the target heading direction -- the turnToHeading equivalent
+// of the crosshair. Heading is compass-style: 0 = +y, increasing clockwise.
+static void drawHeadingIndicator(float originX, float originY,
+                                 float headingDeg) {
+  static const float kLen = 24.0f; // inches, just for visualization
+  float rad = lemlib::degToRad(headingDeg);
+  float tipX = originX + std::sin(rad) * kLen;
+  float tipY = originY + std::cos(rad) * kLen;
+
+  int ox, oy, tx, ty;
+  toPixel(originX, originY, ox, oy);
+  toPixel(tipX, tipY, tx, ty);
+
+  pros::screen::set_pen(ui::TARGET_LINE);
+  pros::screen::draw_line(ox, oy, tx, ty);
+  pros::screen::draw_circle(ox, oy, 3);
+  pros::screen::draw_circle(tx, ty, 3);
+}
+
 static void drawFooter() {
   using namespace ui;
   pros::screen::set_pen(FOOTER_BG);
   pros::screen::fill_rect(0, 215, 480, 240);
   pros::screen::set_pen(lastResult.cancelled ? TARGET_LINE : GRAY);
   if (lastResult.ran) {
-    pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
-                        "%sfinal (%.2f, %.2f) // error %.2f in // %dms",
-                        lastResult.cancelled ? "CANCELLED // " : "",
-                        lastResult.finalX, lastResult.finalY,
-                        lastResult.error, lastResult.durationMs);
+    if (lastResult.isTurn) {
+      pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
+                          "%sfinal heading %.2f // error %.2f deg // %dms",
+                          lastResult.cancelled ? "CANCELLED // " : "",
+                          lastResult.finalHeading, lastResult.error,
+                          lastResult.durationMs);
+    } else {
+      pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
+                          "%sfinal (%.2f, %.2f) // error %.2f in // %dms",
+                          lastResult.cancelled ? "CANCELLED // " : "",
+                          lastResult.finalX, lastResult.finalY,
+                          lastResult.error, lastResult.durationMs);
+    }
   } else {
     pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
                         "no run yet -- press A to go, X to cancel one");
@@ -128,49 +190,73 @@ static void drawPlannerUI() {
   pros::screen::set_pen(CYAN);
   pros::screen::fill_rect(0, 0, 480, 30);
   pros::screen::set_pen(0x000000);
-  pros::screen::print(pros::E_TEXT_MEDIUM, 10, 7, "POINT PLANNER // %s",
-                      driveForwards ? "FORWARDS" : "BACKWARDS");
+  bool isMove = mode == PlannerMode::MOVE_TO_POINT;
+  pros::screen::print(pros::E_TEXT_MEDIUM, 10, 7, "%s%s",
+                      isMove ? "MOVE TO POINT" : "TURN TO HEADING",
+                      isMove ? (driveForwards ? " // FWD" : " // BWD") : "");
 
-  const char *names[2] = {"X", "Y"};
-  float values[2] = {targetX, targetY};
-  for (int i = 0; i < 2; i++) {
-    int y = 40 + i * 45;
+  const char *namesMove[3] = {"X", "Y", "SPD"};
+  const char *namesTurn[2] = {"HDG", "SPD"};
+  float valuesMove[3] = {targetX, targetY, targetSpeed};
+  float valuesTurn[2] = {targetHeading, targetSpeed};
+  const char **names = isMove ? namesMove : namesTurn;
+  float *values = isMove ? valuesMove : valuesTurn;
+  int fc = fieldCount();
+  for (int i = 0; i < fc; i++) {
+    int y = 40 + i * 42;
     bool sel = (i == selectedField);
 
     pros::screen::set_pen(sel ? SEL_BG : CARD);
-    pros::screen::fill_rect(10, y, 150, y + 38);
+    pros::screen::fill_rect(10, y, 150, y + 34);
     pros::screen::set_pen(sel ? ORANGE : AXIS);
-    pros::screen::draw_rect(10, y, 150, y + 38);
+    pros::screen::draw_rect(10, y, 150, y + 34);
     if (sel) {
       pros::screen::set_pen(ORANGE);
-      pros::screen::fill_rect(10, y, 14, y + 38);
+      pros::screen::fill_rect(10, y, 14, y + 34);
     }
 
     pros::screen::set_pen(sel ? 0xFFFFFF : GRAY);
-    pros::screen::print(pros::E_TEXT_SMALL, 22, y + 4, "%s", names[i]);
+    pros::screen::print(pros::E_TEXT_SMALL, 22, y + 3, "%s", names[i]);
     pros::screen::set_pen(sel ? CYAN : GRAY);
-    pros::screen::print(pros::E_TEXT_MEDIUM, 22, y + 17, "%.2f", values[i]);
+    pros::screen::print(pros::E_TEXT_MEDIUM, 22, y + 15, "%.2f", values[i]);
   }
 
   pros::screen::set_pen(GRAY);
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 130, "</>:field  Y:dir");
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 144, "^/v:adj  L1/L2:digit");
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 158, "step %.2f", digitStep());
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 178, "B:reset pose to 0,0,0");
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 192, "A:go  X:cancel run");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 160, "</>:field  ^/v:adj");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 172, "L1/L2:digit  step %.2f",
+                      digitStep());
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 184, "Y:dir  R1:move/turn");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 196, "B:reset pose to 0,0,0");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 208, "A:go  X:cancel run");
 
   drawFieldFrame();
-  drawCrosshair(targetX, targetY);
+  if (isMove) {
+    drawCrosshair(targetX, targetY);
+  } else {
+    lemlib::Pose pose = chassis.getPose();
+    drawHeadingIndicator(pose.x, pose.y, targetHeading);
+  }
 
   drawFooter();
 }
 
-// ─── Run ──────────────────────────────────────────────────────────────────────
-// Issues ONE chassis.moveToPoint() to (targetX, targetY), tracing the
-// actual path (green) on top of the target crosshair (pink) as it drives,
-// and streaming CSV telemetry the same way the PID tuner does. Holding X
-// at any point aborts the motion immediately (chassis.cancelMotion()).
-static void runToPoint() {
+// Watches for X (abort) while a motion is running, common to both modes.
+// Returns true if the motion was cancelled.
+static bool waitForCancel() {
+  if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
+    chassis.cancelMotion();
+    return true;
+  }
+  return false;
+}
+
+// ─── Run: moveToPoint ────────────────────────────────────────────────────────
+// Issues ONE chassis.moveToPoint() to (targetX, targetY) at targetSpeed,
+// tracing the actual path (green) on top of the target crosshair (pink) as
+// it drives, and streaming CSV telemetry the same way the PID tuner does.
+// Holding X at any point aborts the motion immediately
+// (chassis.cancelMotion()).
+static void runMoveToPoint() {
   lemlib::Pose start = chassis.getPose();
   float dist = std::hypot(targetX - start.x, targetY - start.y);
   // Longer moves get more time; clamped to a sane floor/ceiling so a tiny
@@ -181,7 +267,8 @@ static void runToPoint() {
   drawFieldFrame();
   drawCrosshair(targetX, targetY);
 
-  chassis.moveToPoint(targetX, targetY, timeoutMs, {.forwards = driveForwards},
+  chassis.moveToPoint(targetX, targetY, timeoutMs,
+                      {.forwards = driveForwards, .maxSpeed = targetSpeed},
                       true);
   // isInMotion() can briefly read false right after an async motion is
   // issued, before its task has flagged itself running (see the PID
@@ -197,8 +284,7 @@ static void runToPoint() {
   while (chassis.isInMotion()) {
     // X aborts the run immediately -- checked every sample (20ms) so it
     // reacts as fast as the loop itself, not just once at the top.
-    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
-      chassis.cancelMotion();
+    if (waitForCancel()) {
       cancelled = true;
       break;
     }
@@ -223,6 +309,7 @@ static void runToPoint() {
   lemlib::Pose end = chassis.getPose();
   lastResult.ran = true;
   lastResult.cancelled = cancelled;
+  lastResult.isTurn = false;
   lastResult.finalX = end.x;
   lastResult.finalY = end.y;
   lastResult.error = std::hypot(targetX - end.x, targetY - end.y);
@@ -235,6 +322,77 @@ static void runToPoint() {
   drawFooter();
 }
 
+// ─── Run: turnToHeading ──────────────────────────────────────────────────────
+// Issues ONE chassis.turnToHeading() to targetHeading at targetSpeed,
+// redrawing the pink heading indicator each sample so it tracks the robot
+// as it turns, and streaming CSV telemetry. Holding X aborts immediately.
+static float headingError(float target, float actual) {
+  float diff = std::fmod(target - actual + 180.0f, 360.0f);
+  if (diff < 0)
+    diff += 360.0f;
+  return std::abs(diff - 180.0f);
+}
+
+static void runTurnToHeading() {
+  lemlib::Pose start = chassis.getPose();
+  float err0 = headingError(targetHeading, start.theta);
+  // Longer turns get more time; same floor/ceiling idea as moveToPoint.
+  int timeoutMs = (int)std::clamp(err0 * 20.0f + 800.0f, 800.0f, 4000.0f);
+
+  drawFieldFrame();
+  drawHeadingIndicator(start.x, start.y, targetHeading);
+
+  chassis.turnToHeading(targetHeading, timeoutMs, {.maxSpeed = targetSpeed},
+                        true);
+  pros::delay(10);
+
+  uint32_t startMs = pros::millis();
+  bool cancelled = false;
+  printf("CSV,ms,heading,target_heading,error\n");
+  while (chassis.isInMotion()) {
+    if (waitForCancel()) {
+      cancelled = true;
+      break;
+    }
+
+    lemlib::Pose pose = chassis.getPose();
+    float error = headingError(targetHeading, pose.theta);
+    uint32_t t = pros::millis() - startMs;
+
+    drawFieldFrame();
+    drawHeadingIndicator(pose.x, pose.y, pose.theta);
+
+    printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, pose.theta,
+           targetHeading, error);
+    pros::delay(20);
+  }
+  chassis.waitUntilDone();
+
+  lemlib::Pose end = chassis.getPose();
+  lastResult.ran = true;
+  lastResult.cancelled = cancelled;
+  lastResult.isTurn = true;
+  lastResult.finalHeading = end.theta;
+  lastResult.error = headingError(targetHeading, end.theta);
+  lastResult.durationMs = (int)(pros::millis() - startMs);
+
+  printf("RESULT %sfinal_heading=%.2f error=%.2f dur=%dms\n",
+         cancelled ? "CANCELLED " : "", end.theta, lastResult.error,
+         lastResult.durationMs);
+  controller.rumble(cancelled ? "-" : ".");
+  drawFieldFrame();
+  drawHeadingIndicator(end.x, end.y, targetHeading);
+  drawFooter();
+}
+
+static void runPlan() {
+  if (mode == PlannerMode::MOVE_TO_POINT) {
+    runMoveToPoint();
+  } else {
+    runTurnToHeading();
+  }
+}
+
 // ─── Controller screen ───────────────────────────────────────────────────────
 static void drawControllerUI() {
   static uint32_t lastDraw = 0;
@@ -243,14 +401,23 @@ static void drawControllerUI() {
     return;
   lastDraw = pros::millis();
 
+  bool isMove = mode == PlannerMode::MOVE_TO_POINT;
+  const char *namesMove[3] = {"X", "Y", "SPD"};
+  const char *namesTurn[2] = {"HDG", "SPD"};
+  const char *fieldName =
+      isMove ? namesMove[selectedField] : namesTurn[selectedField];
+
   switch (line) {
   case 0:
-    controller.print(0, 0, "X%.2f Y%.2f %s ", targetX, targetY,
-                     driveForwards ? "FWD" : "BWD");
+    if (isMove)
+      controller.print(0, 0, "X%.2f Y%.2f S%.0f %s", targetX, targetY,
+                       targetSpeed, driveForwards ? "FWD" : "BWD");
+    else
+      controller.print(0, 0, "HDG%.2f S%.0f       ", targetHeading,
+                       targetSpeed);
     break;
   case 1:
-    controller.print(1, 0, "edit:%s +/-%.2f   ",
-                     selectedField == 0 ? "X" : "Y", digitStep());
+    controller.print(1, 0, "edit:%s +/-%.2f   ", fieldName, digitStep());
     break;
   default:
     if (lastResult.cancelled)
@@ -259,7 +426,7 @@ static void drawControllerUI() {
       controller.print(2, 0, "err%.2f %dms       ", lastResult.error,
                        lastResult.durationMs);
     else
-      controller.print(2, 0, "A:run X:cancel      ");
+      controller.print(2, 0, "A:run R1:mode       ");
     break;
   }
   line = (line + 1) % 3;
@@ -297,17 +464,26 @@ void pointPlannerControl() {
   EdgeButton btnY{pros::E_CONTROLLER_DIGITAL_Y};
   EdgeButton btnL1{pros::E_CONTROLLER_DIGITAL_L1};
   EdgeButton btnL2{pros::E_CONTROLLER_DIGITAL_L2};
+  EdgeButton btnR1{pros::E_CONTROLLER_DIGITAL_R1};
 
   while (true) {
     bool leftEdge = left.pressed(), rightEdge = right.pressed();
     bool upEdge = up.pressed(), downEdge = down.pressed();
     bool aEdge = btnA.pressed(), bEdge = btnB.pressed(), yEdge = btnY.pressed();
     bool l1Edge = btnL1.pressed(), l2Edge = btnL2.pressed();
+    bool r1Edge = btnR1.pressed();
 
-    bool dirty = leftEdge || rightEdge || yEdge || l1Edge || l2Edge;
-    // Only 2 fields (X, Y), so LEFT and RIGHT both just toggle between them.
+    bool dirty = leftEdge || rightEdge || yEdge || l1Edge || l2Edge || r1Edge;
+
+    if (r1Edge) {
+      mode = mode == PlannerMode::MOVE_TO_POINT ? PlannerMode::TURN_TO_HEADING
+                                                 : PlannerMode::MOVE_TO_POINT;
+      selectedField = std::min(selectedField, fieldCount() - 1);
+      lastResult = PlanResult{}; // units differ between modes -- drop it
+    }
+    // LEFT and RIGHT both just cycle through the current mode's fields.
     if (leftEdge || rightEdge)
-      selectedField = (selectedField + 1) % 2;
+      selectedField = (selectedField + 1) % fieldCount();
     if (yEdge)
       driveForwards = !driveForwards;
     if (l1Edge)
@@ -317,8 +493,13 @@ void pointPlannerControl() {
 
     if (upEdge || downEdge) {
       float step = downEdge ? -digitStep() : digitStep();
-      float &field = selectedField == 0 ? targetX : targetY;
-      field += step;
+      *selectedFieldPtr() += step;
+      targetSpeed = std::clamp(targetSpeed, 0.0f, 127.0f);
+      if (mode == PlannerMode::TURN_TO_HEADING) {
+        targetHeading = std::fmod(targetHeading, 360.0f);
+        if (targetHeading < 0)
+          targetHeading += 360.0f;
+      }
       dirty = true;
     }
 
@@ -328,7 +509,7 @@ void pointPlannerControl() {
     }
 
     if (aEdge) {
-      runToPoint();
+      runPlan();
     } else if (dirty) {
       drawPlannerUI();
     }

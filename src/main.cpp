@@ -78,6 +78,25 @@ void initialize() {
 
         int tempsScroll = 0;
 
+        // ── Motor stress modal state ──
+        // Pops up over the dashboard whenever any motor reports itself over
+        // temperature or over its current limit. Tapping the X dismisses it,
+        // but the dismissal only lasts STRESS_MODAL_COOLDOWN_MS -- if the
+        // motor is still stressed once that expires, the modal comes back.
+        // Clearing the stress condition entirely resets the dismissal so the
+        // next stress event alerts immediately instead of waiting out a
+        // stale cooldown.
+        const uint32_t STRESS_MODAL_COOLDOWN_MS = 60000; // 1 minute
+        bool stressModalOpen = false;
+        bool stressModalDismissed = false;
+        uint32_t stressDismissedAtMs = 0;
+        const int MODAL_X0 = 90, MODAL_Y0 = 50, MODAL_X1 = 390, MODAL_Y1 = 190;
+        const int CLOSE_SIZE = 26;
+        const int CLOSE_X0 = MODAL_X1 - CLOSE_SIZE - 8;
+        const int CLOSE_Y0 = MODAL_Y0 + 8;
+        const int CLOSE_X1 = CLOSE_X0 + CLOSE_SIZE;
+        const int CLOSE_Y1 = CLOSE_Y0 + CLOSE_SIZE;
+
         // ── Dirty-state tracking to eliminate unnecessary full-screen redraws (flicker fix) ──
         // The old loop cleared and redrew the ENTIRE screen every 35ms even when nothing
         // on screen had actually changed, which is what caused the visible flicker. Now we
@@ -86,6 +105,7 @@ void initialize() {
         int lastTempsScroll = INT32_MIN;
         int lastImu = INT32_MIN;
         int lastBattery = INT32_MIN;
+        bool lastStressModalOpen = false;
         std::vector<int> lastTemps; // rounded to nearest 0.5C so tiny sensor jitter doesn't trigger redraws
 
         while (true) {
@@ -97,12 +117,22 @@ void initialize() {
             }
 
             pros::screen_touch_status_s_t status = pros::screen::touch_status();
+            uint32_t nowMs = pros::millis();
 
             // ── Input Detection ──
             static bool wasTouched = false;
             if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
-                // Scroll Buttons (Far Right Column: 430 to 480)
-                if (status.x > 430) {
+                if (stressModalOpen) {
+                    // The modal owns all touch input while it's up -- only the
+                    // X button does anything.
+                    if (status.x >= CLOSE_X0 && status.x <= CLOSE_X1 &&
+                        status.y >= CLOSE_Y0 && status.y <= CLOSE_Y1) {
+                        stressModalOpen = false;
+                        stressModalDismissed = true;
+                        stressDismissedAtMs = nowMs;
+                    }
+                } else if (status.x > 430) {
+                    // Scroll Buttons (Far Right Column: 430 to 480)
                     if (status.y > 60 && status.y < 130) { // UP Arrow
                         tempsScroll += 60;
                     }
@@ -139,6 +169,60 @@ void initialize() {
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
 
+            // ── Motor stress detection ──
+            // "Stressed" = the motor itself is reporting over-temperature or
+            // over-current, straight from the V5 firmware -- not just our
+            // own display thresholds.
+            std::vector<std::string> stressedMotors;
+            auto checkGroupStress = [&](const char *prefix, std::vector<std::int32_t> &overTemp,
+                                        std::vector<std::int32_t> &overCurrent, std::vector<std::int8_t> &ports) {
+                for (size_t i = 0; i < overTemp.size(); i++) {
+                    bool hot = overTemp[i] > 0;
+                    bool overC = i < overCurrent.size() && overCurrent[i] > 0;
+                    if (!hot && !overC) continue;
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%s%d P%d %s", prefix, (int)i + 1, (int)ports[i],
+                             hot && overC ? "HOT+OC" : (hot ? "HOT" : "OC"));
+                    stressedMotors.push_back(buf);
+                }
+            };
+            auto checkSingleStress = [&](const char *name, pros::Motor &m) {
+                bool hot = m.is_over_temp() > 0;
+                bool overC = m.is_over_current() > 0;
+                if (!hot && !overC) return;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%s %s", name, hot && overC ? "HOT+OC" : (hot ? "HOT" : "OC"));
+                stressedMotors.push_back(buf);
+            };
+
+            std::vector<std::int32_t> leftOverTemp = left_motor_group.is_over_temp_all();
+            std::vector<std::int32_t> leftOverCurrent = left_motor_group.is_over_current_all();
+            std::vector<std::int32_t> rightOverTemp = right_motor_group.is_over_temp_all();
+            std::vector<std::int32_t> rightOverCurrent = right_motor_group.is_over_current_all();
+            checkGroupStress("L", leftOverTemp, leftOverCurrent, leftPorts);
+            checkGroupStress("R", rightOverTemp, rightOverCurrent, rightPorts);
+            checkSingleStress("Intake1", intake1);
+            checkSingleStress("Intake2", intake2);
+            checkSingleStress("Lift1", lift1);
+            checkSingleStress("Lift2", lift2);
+            checkSingleStress("Bunch", bunchy);
+            checkSingleStress("BunchArm", bunchArm);
+
+            bool isStressed = !stressedMotors.empty();
+
+            // Cooldown elapsed? Make the modal eligible to alert again.
+            if (stressModalDismissed && nowMs - stressDismissedAtMs >= STRESS_MODAL_COOLDOWN_MS) {
+                stressModalDismissed = false;
+            }
+            if (!isStressed) {
+                // Condition cleared -- hide the modal and forget any pending
+                // dismissal so the next stress event alerts right away.
+                stressModalOpen = false;
+                stressModalDismissed = false;
+            } else if (!stressModalDismissed) {
+                stressModalOpen = true;
+            }
+
             // Build a rounded snapshot of every motor temp for change detection
             std::vector<int> tempsNow;
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
@@ -152,14 +236,14 @@ void initialize() {
             // while a motor is spinning its temperature (and the IMU heading, while driving)
             // changes almost every loop, which was forcing a full-screen clear+redraw ~28x/sec
             // and is what caused the visible flicker as soon as a motor was connected and running.
-            bool interactiveChanged = forceRedraw || tempsScroll != lastTempsScroll;
+            bool interactiveChanged = forceRedraw || tempsScroll != lastTempsScroll ||
+                                       stressModalOpen != lastStressModalOpen;
             bool telemetryChanged = imuNow != lastImu ||
                                      batteryNow != lastBattery ||
                                      tempsNow != lastTemps;
 
             static uint32_t lastTelemetryRedraw = 0;
             const uint32_t TELEMETRY_REDRAW_INTERVAL_MS = 300;
-            uint32_t nowMs = pros::millis();
             bool telemetryDue = telemetryChanged && (nowMs - lastTelemetryRedraw >= TELEMETRY_REDRAW_INTERVAL_MS);
 
             bool dataChanged = interactiveChanged || telemetryDue;
@@ -294,11 +378,41 @@ void initialize() {
             pros::screen::set_pen(TEXT_DIM);
             pros::screen::print(pros::E_TEXT_SMALL, 240, 222, "BAT %.0f%%", batteryPct);
 
+            // ── Motor stress modal (drawn last so it sits on top of everything) ──
+            if (stressModalOpen) {
+                fillRoundedRect(MODAL_X0, MODAL_Y0, MODAL_X1, MODAL_Y1, 10, ACCENT_RED);
+                fillRoundedRect(MODAL_X0 + 3, MODAL_Y0 + 3, MODAL_X1 - 3, MODAL_Y1 - 3, 8, CARD_BG);
+
+                pros::screen::set_eraser(CARD_BG);
+                pros::screen::set_pen(ACCENT_RED);
+                pros::screen::print(pros::E_TEXT_MEDIUM, MODAL_X0 + 16, MODAL_Y0 + 16, "MOTOR STRESS WARNING");
+
+                pros::screen::set_pen(TEXT_DIM);
+                int lineY = MODAL_Y0 + 42;
+                const int maxLines = 4;
+                for (int i = 0; i < (int)stressedMotors.size() && i < maxLines; i++) {
+                    pros::screen::print(pros::E_TEXT_SMALL, MODAL_X0 + 16, lineY, "%s",
+                                        stressedMotors[i].c_str());
+                    lineY += 15;
+                }
+                if ((int)stressedMotors.size() > maxLines) {
+                    pros::screen::print(pros::E_TEXT_SMALL, MODAL_X0 + 16, lineY, "+%d more",
+                                        (int)stressedMotors.size() - maxLines);
+                }
+
+                // X close button, top-right corner of the card
+                fillRoundedRect(CLOSE_X0, CLOSE_Y0, CLOSE_X1, CLOSE_Y1, 5, ACCENT_RED);
+                pros::screen::set_eraser(ACCENT_RED);
+                pros::screen::set_pen(CARD_BG);
+                pros::screen::print(pros::E_TEXT_MEDIUM, CLOSE_X0 + 7, CLOSE_Y0 + 3, "X");
+            }
+
             // Update dirty-tracking snapshot
             lastTempsScroll = tempsScroll;
             lastImu = imuNow;
             lastBattery = batteryNow;
             lastTemps = tempsNow;
+            lastStressModalOpen = stressModalOpen;
             forceRedraw = false;
 
             pros::delay(35);
@@ -320,7 +434,7 @@ void opcontrol() {
     // (normal driving) never did. Fixed here -- both now default to `false`
     // and only flip on an actual press.
     bool enterTuner = false;
-    bool enterPlanner = true;
+    bool enterPlanner = false;
     for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
             enterTuner = true;
