@@ -147,6 +147,8 @@ void jawheadControl() {
     // on the joystick to drive the robot backward, and vice versa).
     // Debounced (like the clamp below) so switch bounce on the physical
     // button can't register as two rapid taps wthat cancel each other out.
+    bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+    bool liftBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
     bool driveReverseToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool driveReverseToggleTapped = driveReverseToggleHeld && !wasDownHeld;
     wasDownHeld = driveReverseToggleHeld;
@@ -220,6 +222,14 @@ void jawheadControl() {
 
     left_motor_group.move(std::clamp(move + turn, -MAX_SPEED, MAX_SPEED));
     right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
+
+    if(liftForward) {
+      lift.move_velocity(200);
+    } else if (liftBackward) {
+      lift.move_velocity(-200);
+    } else {
+      lift.move_velocity(0);
+    }
 
     if (intakeForward) {
       intake1.move_velocity(600);

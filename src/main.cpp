@@ -24,7 +24,8 @@ pros::Motor intake2(17, pros::MotorGears::green);
 pros::Motor lift1(18, pros::MotorGears::green);
 pros::Motor lift2(19, pros::MotorGears::green);
 pros::Motor bunchy(14, pros::MotorGears::green);
-pros::Motor bunchArm(13, pros::MotorGears::red);
+pros::Motor bunchArm(1, pros::MotorGears::red);
+pros::Motor lift(13, pros::MotorGears::green);
 
 pros::adi::Pneumatics clamp('A', false);
 

@@ -12,6 +12,7 @@ extern pros::Motor intake1;
 extern pros::Motor intake2;
 extern pros::Motor lift1;
 extern pros::Motor lift2;
+extern pros::Motor lift;
 extern pros::Motor bunchy;
 extern pros::Motor bunchArm;
 
