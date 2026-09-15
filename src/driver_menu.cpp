@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "driver_menu.hpp"
+#include "autonomous_builder.hpp"
 #include "pid_tuner.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -439,8 +440,9 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[4] = {
+static const GridItem kHomeItems[5] = {
     {"PID TUNING"},
+  {"AUTON BUILDER"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
     {"DRIVE"},
@@ -466,7 +468,7 @@ static const GridItem kLateralItems[2] = {
 static void drawHome() {
   clearScreen();
   drawHeader("DRIVER MENU", nullptr, ui::CYAN);
-  drawGrid(kHomeItems, 4);
+  drawGrid(kHomeItems, 5);
 }
 
 static void drawPathType() {
@@ -1082,15 +1084,18 @@ void driverMenuControl() {
 
       switch (screen) {
       case Screen::HOME: {
-        int hit = gridHitTest(4, x, y);
+        int hit = gridHitTest(5, x, y);
         if (hit == 0) {
           pidTunerControl(); // returns once its own BACK button is tapped
           goHome();
         } else if (hit == 1) {
-          goPathType();
+          autonomousBuilderControl();
+          goHome();
         } else if (hit == 2) {
-          goMotorTest();
+          goPathType();
         } else if (hit == 3) {
+          goMotorTest();
+        } else if (hit == 4) {
           driverMenuActive = false;
           return; // caller falls through to normal driving
         }

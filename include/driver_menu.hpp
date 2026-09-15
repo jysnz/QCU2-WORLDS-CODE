@@ -4,7 +4,8 @@
 // The touchscreen entry point for driver control. Shown as soon as
 // opcontrol() starts, replacing the old "hold DPAD-LEFT/UP" scheme:
 //
-//   HOME              [ PID TUNING ] [ PATH PLANNER ] [ DRIVE ]
+//   HOME              [ PID TUNING ] [ AUTON BUILDER ] [ PATH PLANNER ]
+//                     [ TEST MOTORS ] [ DRIVE ]
 //     - PID TUNING      hands off to pidTunerControl() (see pid_tuner.hpp);
 //                       its own BACK button returns here to the home menu.
 //     - DRIVE           dismisses the menu; opcontrol() falls through to
@@ -31,6 +32,7 @@
 // to normal driving; picking PID TUNING or a motion hands off to a loop
 // that owns the brain screen until its own BACK button is tapped, at which
 // point this menu resumes.
+// The AUTON BUILDER entry opens the Brain touchscreen drag/drop editor.
 void driverMenuControl();
 
 // True while this menu (or one of its Path Planner screens) owns the brain
