@@ -39,6 +39,21 @@ PATH PLANNER
     movement blocks, run buttons and code export. The mirror keeps
     showing what the brain screen shows meanwhile.
 
+DRIVING (LAPTOP DRIVE screen)
+    HOME -> LAPTOP DRIVE puts the brain on a screen that hands the
+    drivetrain to this window's keyboard:
+
+        W  forward      S  backward      A  left      D  right
+
+    held together they mix, and the power slider under the mirror sets
+    how hard. The robot only moves while a key is actually down.
+
+    Each command goes over as "DRIVE left right" and expires on the brain
+    after 300 ms, so it's repeated while you hold a key and a stop is
+    sent the moment you let go, leave the screen, click away from the
+    window or close it. If this program dies mid-drive, the brain's own
+    watchdog stops the robot.
+
 KEYBOARD (EDIT screen)
     Left / Right        previous / next field         (controller LEFT/RIGHT)
     Up / Down           nudge value by the digit step (controller UP/DOWN)
@@ -231,7 +246,8 @@ class PacketStream:
 
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
-                 "PLANNER", "HANDOFF")
+                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF")
+DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
 
@@ -618,7 +634,17 @@ SCREEN_HEADER = {
     "ANGULAR_LIST": ("PATH PLANNER", "ANGULAR", CYAN),
     "LATERAL_LIST": ("PATH PLANNER", "LATERAL", ORANGE),
     "MOTOR_TEST": ("TEST MOTORS", "DRIVETRAIN", CYAN),
+    "REMOTE_DRIVE": ("LAPTOP DRIVE", "W A S D", CYAN),
+    "TEMPS": ("MOTOR TEMPS", None, CYAN),
 }
+
+# Motor temperature tiles (drawTempsScreen): cyan up to 45C, orange to 55C,
+# red past it -- the same thresholds the brain and the driving HUD use.
+TEMP_HOT = "#FF4D4D"
+
+
+def temp_color(t):
+    return CYAN if t < 45 else (ORANGE if t < 55 else TEMP_HOT)
 ANGULAR_MOTIONS = ("TURN TO HEADING", "TURN TO POINT", "SWING TO HEADING", "SWING TO POINT")
 
 # pros::E_TEXT_SMALL / E_TEXT_MEDIUM -- the brain's fonts are a proportional
@@ -906,6 +932,92 @@ class BrainScreen:
                 self.print(FONT_SMALL, 16, CODE_Y0 + 3 + i * 12, line)
         self.drawFooter(st["footer"], False)
 
+    # -- MOTOR TEMPS (drawTempsScreen) --
+    def drawTempTile(self, x, y, tileW, label, temp):
+        if y + 46 < 55 or y > 215:      # outside the scrolling content area
+            return
+        col = temp_color(temp)
+        self.fillRoundedRect(x, y, x + tileW, y + 46, 5, CARD)
+        self.set_pen(col)
+        self.fill_circle(x + tileW - 9, y + 9, 4)
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, x + 8, y + 5, label)
+        self.set_pen(col)
+        self.print(FONT_SMALL, x + 8, y + 20, f"{temp:.1f}C")
+        barX, barY, barW, barH = x + 8, y + 46 - 9, tileW - 16, 4
+        frac = min(1.0, max(0.0, (temp - 20.0) / 50.0))
+        self.fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, AXIS)
+        if int(barW * frac) >= 4:
+            self.fillRoundedRect(barX, barY, barX + int(barW * frac), barY + barH, 2, col)
+
+    def drawTempsScreen(self, st):
+        """The brain sends the tiles down the FIELDS segment: a section
+        header is an entry whose label starts with '#' (its value is
+        "<colour>:<tiles per row>"), and every entry after it is one
+        motor, "<name> <n> P<port>" with its temperature."""
+        self.clearScreen()
+        self.drawHeader("MOTOR TEMPS", None, CYAN)
+        self.drawBackButton()
+        rowLeft, rowRight, labelH, gap, rowH = 15, 428, 14, 6, 66
+
+        sections = []       # (label, colour, tilesPerRow, [(name, temp), ...])
+        scroll = 0
+        for label, value, _ in st["fields"]:
+            if label == "$scroll":
+                scroll = int(value)
+            elif label.startswith("#"):
+                colour, _, per = value.partition(":")
+                try:
+                    sections.append((label[1:], "#" + colour, int(per or 1), []))
+                except ValueError:
+                    sections.append((label[1:], GRAY, 1, []))
+            elif sections:
+                try:
+                    sections[-1][3].append((label, float(value)))
+                except ValueError:
+                    pass
+
+        hottest = max((t for _, _, _, ms in sections for _, t in ms), default=0.0)
+        for i, (label, colour, per, motors) in enumerate(sections):
+            labelY = 55 + scroll + i * rowH
+            tileY = labelY + labelH
+            if tileY + 46 < 55 or labelY > 215:
+                continue
+            if 50 <= labelY and labelY + labelH <= 215:
+                self.set_pen(colour)
+                self.print(FONT_SMALL, rowLeft, labelY, label)
+            tileW = (rowRight - rowLeft - (per - 1) * gap) // per
+            for j, (name, temp) in enumerate(motors[:per]):
+                self.drawTempTile(rowLeft + j * (tileW + gap), tileY, tileW, name, temp)
+
+        if st["canUp"] or st["canDown"]:
+            for r, can, glyph in ((K_SCROLL_UP, st["canUp"], "^"),
+                                  (K_SCROLL_DOWN, st["canDown"], "v")):
+                self.fillRoundedRect(*r, 8, CARD)
+                self.set_pen(CYAN if can else AXIS)
+                self.print(FONT_MEDIUM, r[0] + 28, r[1] + 28, glyph)
+        self.set_pen(FOOTER_BG)
+        self.fill_rect(0, 215, 480, 240)
+        self.set_pen(temp_color(hottest))
+        self.print(FONT_SMALL, 10, 222, f"hottest {hottest:.1f}C")
+
+    # -- LAPTOP DRIVE (drawRemoteDriveScreen) --
+    def drawRemoteDriveScreen(self, st):
+        self.clearScreen()
+        self.drawHeader("LAPTOP DRIVE", "W A S D", CYAN)
+        self.drawBackButton()
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 10, FY + 2, "Drive from the laptop's keyboard:")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 10, FY + 16, "W forward   S back   A left   D right")
+        self.print(FONT_SMALL, 10, FY + 30, "in this window")
+        self.print(FONT_SMALL, 10, FY + 44, "The robot stops the moment you let go.")
+        plot = st["plot"]
+        if plot:
+            self.drawFieldFrame()
+            self.drawHeadingIndicator(plot["poseX"], plot["poseY"], plot["poseTheta"])
+        self.drawFooter(st["footer"], False)
+
     # -- handoff notice (the brain screen belongs to something we don't mirror) --
     def drawHandoff(self, what):
         self.clearScreen()
@@ -926,6 +1038,10 @@ class BrainScreen:
             self.drawMotorTestScreen(st)
         elif tag == "PLANNER":
             self.drawPlannerScreen(st)
+        elif tag == "REMOTE_DRIVE":
+            self.drawRemoteDriveScreen(st)
+        elif tag == "TEMPS":
+            self.drawTempsScreen(st)
         elif tag == "HANDOFF":
             self.drawHandoff(st["breadcrumb"])
         elif tag in SCREEN_HEADER:
@@ -976,6 +1092,16 @@ class RemoteTouchApp:
             tk.Button(bar, text=name, command=lambda k=key: self.sendKey(k)).pack(side="left",
                                                                                    padx=(6, 0))
 
+        dbar = tk.Frame(root)
+        dbar.pack(fill="x", padx=6, pady=(4, 0))
+        self.driveLabel = tk.Label(dbar, text="drive: tap LAPTOP DRIVE on the brain",
+                                   font=("Segoe UI", 9), width=34, anchor="w", fg="#666666")
+        self.driveLabel.pack(side="left")
+        tk.Label(dbar, text="power", font=("Segoe UI", 8), fg="#666666").pack(side="left")
+        self.powerVar = tk.IntVar(value=70)
+        tk.Scale(dbar, from_=10, to=127, orient="horizontal", variable=self.powerVar,
+                 length=120, showvalue=True).pack(side="left")
+
         self.hint = tk.Label(
             root,
             text="Click a button to tap it on the brain.  EDIT screen: arrows = field/nudge, "
@@ -990,9 +1116,21 @@ class RemoteTouchApp:
         self.lastState = None
         for keysym, name in (("Left", "LEFT"), ("Right", "RIGHT"), ("Up", "UP"),
                              ("Down", "DOWN"), ("Prior", "L1"), ("Next", "L2"),
-                             ("a", "A"), ("A", "A"), ("x", "X"), ("X", "X"), ("b", "B"),
-                             ("B", "B")):
+                             ("x", "X"), ("X", "X"), ("b", "B"), ("B", "B")):
             self.canvas.bind(f"<KeyPress-{keysym}>", lambda e, n=name: self.sendKey(n))
+        # W/A/S/D drive the robot on the LAPTOP DRIVE screen. "a" is also
+        # the A button everywhere else, so it's handled per-key rather than
+        # by a catch-all: Tk only fires the most specific binding, and a
+        # <KeyPress> one would never see these letters anyway.
+        self.driveKeys = set()      # keys held right now
+        self.driveLast = None       # last (l, r) sent, so it isn't resent
+        self.driveJob = None        # keepalive callback
+        for k in ("w", "a", "s", "d", "W", "A", "S", "D"):
+            self.canvas.bind(f"<KeyPress-{k}>", self.onDriveKeyPress)
+            self.canvas.bind(f"<KeyRelease-{k}>", self.onDriveKeyRelease)
+        # Clicking away, or closing the window, must not leave it driving.
+        self.canvas.bind("<FocusOut>", lambda e: self.stopDrive())
+        root.protocol("WM_DELETE_WINDOW", self.onClose)
         self.canvas.bind("<KeyPress-Escape>", self.onEscape)
         self.canvas.bind("<KeyPress>", self.onCanvasKey)
         self.canvas.focus_set()
@@ -1011,7 +1149,13 @@ class RemoteTouchApp:
             pass
         if state:
             self.gotState = True
+            left = (self.lastState is not None and self.lastState["screen"] == DRIVE_SCREEN
+                    and state["screen"] != DRIVE_SCREEN)
             self.lastState = state
+            if left:            # the brain left the drive screen mid-drive
+                self.stopDrive()
+            elif state["screen"] == DRIVE_SCREEN and not self.driveKeys:
+                self.driveLabel.config(text="drive: hold W A S D", fg="#666666")
             self.render(state)
             self.updateValueLabel(state)
             self.updatePlanner(state)
@@ -1070,6 +1214,83 @@ class RemoteTouchApp:
                 self.link.sendTouch((x0 + x1) // 2, (y0 + y1) // 2)
                 self.flash(x0, y0, x1, y1)
                 return
+
+    # -- driving (W/A/S/D on the LAPTOP DRIVE screen) --
+    # The brain drops a DRIVE command it hasn't heard from in 300 ms, so
+    # the held one is repeated this often. Slow enough not to crowd the
+    # link (its sends are paced 60 ms apart), well inside the timeout.
+    DRIVE_KEEPALIVE_MS = 120
+
+    def driving(self):
+        return self.lastState is not None and self.lastState["screen"] == DRIVE_SCREEN
+
+    def onDriveKeyPress(self, event):
+        k = event.keysym.lower()
+        if not self.driving():
+            if k == "a":            # everywhere else, "a" is still the A button
+                self.sendKey("A")
+            return
+        if k in ("w", "a", "s", "d"):
+            self.driveKeys.add(k)
+            self._sendDrive()
+            if self.driveJob is None:
+                self._driveTick()
+
+    def onDriveKeyRelease(self, event):
+        if self.driveKeys:
+            self.driveKeys.discard(event.keysym.lower())
+            self._sendDrive()
+
+    def driveMix(self):
+        """W/S drive, A/D turn, mixed when held together. Turning gets a
+        bit less than full power -- at full it spins faster than anyone
+        can steer by keyboard."""
+        p = self.powerVar.get()
+        fwd = ("w" in self.driveKeys) - ("s" in self.driveKeys)
+        turn = ("d" in self.driveKeys) - ("a" in self.driveKeys)
+        l = fwd * p + turn * p * 0.7
+        r = fwd * p - turn * p * 0.7
+        cap = max(abs(l), abs(r), 1.0)
+        if cap > 127:               # keep the mix's shape when it clips
+            l, r = l * 127 / cap, r * 127 / cap
+        return int(round(max(-127, min(127, l)))), int(round(max(-127, min(127, r))))
+
+    def _sendDrive(self, force=False):
+        l, r = self.driveMix() if self.driveKeys else (0, 0)
+        if (l, r) != self.driveLast or force:
+            self.link._send(f"DRIVE {l} {r}")
+            self.driveLast = (l, r)
+        self.driveLabel.config(
+            text=f"drive: L {l:+4d}  R {r:+4d}" if (l, r) != (0, 0) else "drive: hold W A S D",
+            fg="#1a7f37" if (l, r) != (0, 0) else "#666666")
+
+    def _driveTick(self):
+        """Keepalive: resends the held command so the brain's watchdog
+        doesn't time it out mid-drive."""
+        if not self.driveKeys or not self.driving():
+            self.driveJob = None
+            self.stopDrive()
+            return
+        self._sendDrive(force=True)
+        self.driveJob = self.root.after(self.DRIVE_KEEPALIVE_MS, self._driveTick)
+
+    def stopDrive(self, _e=None):
+        """Stop, and mean it: keys dropped, keepalive cancelled, a zero
+        command sent. If that line never lands, the brain's 300 ms
+        watchdog stops the robot anyway."""
+        if self.driveJob is not None:
+            self.root.after_cancel(self.driveJob)
+            self.driveJob = None
+        self.driveKeys.clear()
+        if self.driveLast not in (None, (0, 0)):
+            self.link._send("DRIVE 0 0")
+        self.driveLast = (0, 0)
+        self.driveLabel.config(text="drive: hold W A S D" if self.driving()
+                               else "drive: tap LAPTOP DRIVE on the brain", fg="#666666")
+
+    def onClose(self):
+        self.stopDrive()
+        self.root.destroy()
 
     def onCanvasKey(self, event):
         # A digit / sign / dot typed on the mirror starts a value entry.

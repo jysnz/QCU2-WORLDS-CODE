@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
-//   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE
+//   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
+//           | MOTOR TEMPS
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -503,7 +504,17 @@ static float headingError(float target, float actual) {
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
-enum class Screen { HOME, PATH_TYPE, ANGULAR_LIST, LATERAL_LIST, EDIT, MOTOR_TEST, PLANNER };
+enum class Screen {
+  HOME,
+  PATH_TYPE,
+  ANGULAR_LIST,
+  LATERAL_LIST,
+  EDIT,
+  MOTOR_TEST,
+  PLANNER,
+  REMOTE_DRIVE,
+  TEMPS
+};
 static Screen screen = Screen::HOME;
 
 // ─── Button grid: 3 per row, with an up/down scroll sidebar on the right
@@ -611,12 +622,15 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[4] = {
+static const GridItem kHomeItems[5] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
     {"DRIVE"},
+    {"LAPTOP DRIVE"},
+    {"MOTOR TEMPS"},
 };
+static const int kHomeItemCount = 6;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -638,7 +652,7 @@ static const GridItem kLateralItems[2] = {
 static void drawHome() {
   clearScreen();
   drawHeader("DRIVER MENU", nullptr, ui::CYAN);
-  drawGrid(kHomeItems, 4);
+  drawGrid(kHomeItems, kHomeItemCount);
 }
 
 static void drawPathType() {
@@ -1348,6 +1362,9 @@ struct RemoteInput {
   int planRun = -2;           // -2 = none pending, -1 = all, >= 0 = that step
   bool poseSet = false;
   float poseX = 0, poseY = 0, poseTheta = 0;
+  int driveL = 0, driveR = 0;     // laptop WASD driving, see applyRemoteDrive()
+  uint32_t driveAt = 0;           // when that command arrived (pros::millis)
+  bool driveActive = false;
 };
 static RemoteInput remoteInput;
 static pros::Mutex remoteTouchMutex;
@@ -1357,7 +1374,7 @@ static void remoteTouchListenerTask(void *) {
   while (true) {
     if (!fgets(line, sizeof(line), stdin))
       continue;
-    int x, y, idx;
+    int x, y, idx, dl, dr;
     char name[16], value[24];
     float fx, fy, ft;
     if (strncmp(line, "PLAN ", 5) == 0) {
@@ -1395,6 +1412,13 @@ static void remoteTouchListenerTask(void *) {
       remoteInput.poseX = fx;
       remoteInput.poseY = fy;
       remoteInput.poseTheta = ft;
+      remoteTouchMutex.give();
+    } else if (sscanf(line, "DRIVE %d %d", &dl, &dr) == 2) {
+      remoteTouchMutex.take();
+      remoteInput.driveL = std::clamp(dl, -127, 127);
+      remoteInput.driveR = std::clamp(dr, -127, 127);
+      remoteInput.driveAt = pros::millis();
+      remoteInput.driveActive = true;
       remoteTouchMutex.give();
     } else if (sscanf(line, "TOUCH %d %d", &x, &y) == 2) {
       remoteTouchMutex.take();
@@ -1502,6 +1526,120 @@ static bool applyRemoteFieldEdits() {
     selectedField = setIdx;
   }
   return dirty;
+}
+
+// Laptop driving: tools/path_planner.py's "Drive (WASD)" sends
+// "DRIVE <left> <right>" (-127..127) while keys are held, and repeats the
+// command as a keepalive.
+//
+// The command deliberately EXPIRES. A radio link drops lines, the laptop
+// window can lose focus with a key still down, the Python side can be
+// killed outright -- and none of those must leave the drivetrain powered.
+// So a command is only obeyed while it's fresh, and the moment it goes
+// stale the motors are stopped once, here, on the robot.
+static constexpr uint32_t kRemoteDriveTimeoutMs = 300;
+static bool remoteDriving = false;
+
+static void applyRemoteDrive() {
+  int l, r;
+  uint32_t at;
+  bool active;
+  remoteTouchMutex.take();
+  l = remoteInput.driveL;
+  r = remoteInput.driveR;
+  at = remoteInput.driveAt;
+  active = remoteInput.driveActive;
+  remoteTouchMutex.give();
+
+  // Only the two screens that mean it: LAPTOP DRIVE, and the planner
+  // (whose own Drive button sends the same command). Anywhere else a
+  // stray DRIVE line is ignored rather than surprising anyone.
+  bool armed = screen == Screen::REMOTE_DRIVE || screen == Screen::PLANNER;
+  bool fresh = armed && active && (pros::millis() - at) <= kRemoteDriveTimeoutMs;
+  if (fresh) {
+    left_motor_group.move(l);
+    right_motor_group.move(r);
+    remoteDriving = true;
+  } else if (remoteDriving) {
+    left_motor_group.move(0);
+    right_motor_group.move(0);
+    remoteDriving = false;
+    remoteTouchMutex.take();
+    remoteInput.driveActive = false;
+    remoteTouchMutex.give();
+  }
+}
+
+// Stops a laptop-driven robot and forgets the command, for the paths that
+// leave this menu (a motion is about to run, or we're handing control back
+// to the driver).
+static void stopRemoteDrive() {
+  remoteTouchMutex.take();
+  remoteInput.driveActive = false;
+  remoteInput.driveL = remoteInput.driveR = 0;
+  remoteTouchMutex.give();
+  if (remoteDriving) {
+    left_motor_group.move(0);
+    right_motor_group.move(0);
+    remoteDriving = false;
+  }
+}
+
+// HOME -> LAPTOP DRIVE. Driving the robot from the laptop's keyboard:
+// W / A / S / D in tools/remote_touch.py's window (or the path planner's)
+// become "DRIVE left right" lines, which applyRemoteDrive() puts on the
+// motors for as long as they keep arriving.
+static int drawnDriveL = 0, drawnDriveR = 0;
+static bool drawnDriveLive = false;
+
+// Just the numbers, redrawn as they change -- repainting the whole screen
+// at the loop's rate would flicker.
+static void drawRemoteDriveStatus() {
+  using namespace ui;
+  int l, r;
+  remoteTouchMutex.take();
+  l = remoteInput.driveL;
+  r = remoteInput.driveR;
+  remoteTouchMutex.give();
+  if (!remoteDriving)
+    l = r = 0;
+
+  pros::screen::set_pen(BG);
+  pros::screen::fill_rect(10, FY + 60, 470, FY + 104);
+  pros::screen::set_eraser(BG);
+  pros::screen::set_pen(remoteDriving ? CYAN : GRAY);
+  pros::screen::print(pros::E_TEXT_MEDIUM, 10, FY + 62, "L %4d   R %4d", l, r);
+  pros::screen::set_pen(remoteDriving ? GREEN : GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 90,
+                      remoteDriving ? "driving" : "waiting for the laptop");
+
+  lemlib::Pose pose = chassis.getPose();
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "pose (%.1f, %.1f) hdg %.1f", pose.x, pose.y,
+                      pose.theta);
+  drawnDriveL = l;
+  drawnDriveR = r;
+  drawnDriveLive = remoteDriving;
+}
+
+static void drawRemoteDriveScreen() {
+  using namespace ui;
+  clearScreen();
+  drawHeader("LAPTOP DRIVE", "W A S D", CYAN);
+  drawBackButton();
+
+  pros::screen::set_eraser(BG);
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 2, "Drive from the laptop's keyboard:");
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 16, "W forward   S back   A left   D right");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 30, "in tools/remote_touch.py's window");
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 44, "The robot stops the moment you let go.");
+
+  drawnDriveL = drawnDriveR = -1; // force the status to paint
+  drawRemoteDriveStatus();
 }
 
 // Applies pending PLAN */POSE commands. Returns true if a run was
@@ -1624,7 +1762,7 @@ static void sendRemoteUiState(bool force) {
   switch (screen) {
   case Screen::HOME:
     screenTag = "HOME";
-    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kHomeItems, 4);
+    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kHomeItems, kHomeItemCount);
     formatScrollState(scrollBuf, sizeof(scrollBuf), 4);
     break;
   case Screen::PATH_TYPE:
@@ -1685,6 +1823,50 @@ static void sendRemoteUiState(bool force) {
         break;
       trailN += w;
     }
+    break;
+  }
+  case Screen::TEMPS: {
+    screenTag = "TEMPS";
+    breadcrumb = "";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    // Reuses the FIELDS segment ("label,value,selected;"), which is
+    // already a name/value list -- no new segment for the laptop to learn.
+    // A section header rides along as an entry whose label starts with '#'.
+    std::vector<double> temps[kTempSections];
+    std::vector<std::int8_t> ports[kTempSections];
+    collectTemps(temps, ports);
+    // How far the list is scrolled, so the mirror lands on the same rows.
+    fieldsN += snprintf(fieldsBuf + fieldsN, sizeof(fieldsBuf) - fieldsN, "$scroll,%d,0;",
+                        tempsScroll);
+    for (int sIdx = 0; sIdx < kTempSections; sIdx++) {
+      const TempSection &info = kTempSectionInfo[sIdx];
+      // "#<label>,<colour>:<tiles per row>,0;" -- the segment's third
+      // value is a flag to everything else, so the layout rides in the
+      // value instead.
+      fieldsN += snprintf(fieldsBuf + fieldsN, sizeof(fieldsBuf) - fieldsN, "#%s,%06X:%d,0;",
+                          info.label, (unsigned)info.color, info.tilesPerRow);
+      for (int i = 0; i < (int)temps[sIdx].size() && i < info.tilesPerRow; i++)
+        fieldsN += snprintf(fieldsBuf + fieldsN, sizeof(fieldsBuf) - fieldsN, "%s %d P%d,%.1f,0;",
+                            info.prefix, i + 1, (int)std::abs(ports[sIdx][i]), temps[sIdx][i]);
+    }
+    if (tempsMinScroll() < 0) {
+      btnN += snprintf(btnBuf + btnN, sizeof(btnBuf) - btnN, "%d,%d,%d,%d,^;", kScrollUp.x0,
+                       kScrollUp.y0, kScrollUp.x1, kScrollUp.y1);
+      btnN += snprintf(btnBuf + btnN, sizeof(btnBuf) - btnN, "%d,%d,%d,%d,v;", kScrollDown.x0,
+                       kScrollDown.y0, kScrollDown.x1, kScrollDown.y1);
+    }
+    snprintf(scrollBuf, sizeof(scrollBuf), "%d,%d", tempsScroll < 0 ? 1 : 0,
+             tempsScroll > tempsMinScroll() ? 1 : 0);
+    break;
+  }
+  case Screen::REMOTE_DRIVE: {
+    screenTag = "REMOTE_DRIVE";
+    breadcrumb = "W A S D";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    lemlib::Pose pose = chassis.getPose();
+    snprintf(plotBuf, sizeof(plotBuf), "3,0,0,0,0,0,%.2f,%.2f,%.2f", pose.x, pose.y, pose.theta);
+    snprintf(footerBuf, sizeof(footerBuf), "W/A/S/D drives   L %d  R %d",
+             remoteDriving ? remoteInput.driveL : 0, remoteDriving ? remoteInput.driveR : 0);
     break;
   }
   case Screen::PLANNER: {
@@ -1779,6 +1961,132 @@ static void sendRemoteHandoff(const char *what) {
          "|SEL:0|ACTIVE:-1,-1|PLAN:|PATH:\n", what);
 }
 
+// ─── Motor temperatures ──────────────────────────────────────────────────────
+// HOME -> MOTOR TEMPS. The same tiles the driving HUD in main.cpp shows
+// (card, status dot, temperature, heat gauge, coloured by how hot), for
+// every motor on the robot, laid out in the same sections. The HUD only
+// draws while the driver menu is closed, so this is how you see the
+// temperatures without leaving the menu.
+static const int kTempRowH = 66;   // one section: its label plus a row of tiles
+static const int kTempTileH = 46;
+static const int kTempSections = 5;
+static int tempsScroll = 0;        // pixels, <= 0 (content scrolled up)
+
+struct TempSection {
+  const char *label;
+  uint32_t color;
+  const char *prefix;
+  int tilesPerRow;
+};
+
+// The five groups, in the order the HUD lists them.
+static void collectTemps(std::vector<double> temps[kTempSections],
+                         std::vector<std::int8_t> ports[kTempSections]) {
+  temps[0] = left_motor_group.get_temperature_all();
+  ports[0] = left_motor_group.get_port_all();
+  temps[1] = right_motor_group.get_temperature_all();
+  ports[1] = right_motor_group.get_port_all();
+  temps[2] = {intake1.get_temperature(), intake2.get_temperature()};
+  ports[2] = {intake1.get_port(), intake2.get_port()};
+  temps[3] = {lift1.get_temperature(), lift2.get_temperature()};
+  ports[3] = {lift1.get_port(), lift2.get_port()};
+  temps[4] = {bunchy.get_temperature(), bunchArm.get_temperature()};
+  ports[4] = {bunchy.get_port(), bunchArm.get_port()};
+}
+
+static const TempSection kTempSectionInfo[kTempSections] = {
+    {"LEFT DRIVETRAIN", ui::CYAN, "L", 5},
+    {"RIGHT DRIVETRAIN", ui::ORANGE, "R", 5},
+    {"INTAKE", ui::GREEN, "Intake", 2},
+    {"LIFT", ui::CYAN, "Lift", 2},
+    {"BUNCH", ui::ORANGE, "Bunch", 2},
+};
+
+// Cyan up to 45C, orange to 55C, red past it -- the HUD's thresholds.
+static uint32_t tempColor(double t) {
+  return t < 45 ? ui::CYAN : (t < 55 ? ui::ORANGE : 0xFF4D4D);
+}
+
+static void drawTempTile(int x, int y, int tileW, const char *label, double temp) {
+  using namespace ui;
+  if (y + kTempTileH < 55 || y > 215) // outside the scrolling content area
+    return;
+  uint32_t col = tempColor(temp);
+  fillRoundedRect(x, y, x + tileW, y + kTempTileH, 5, CARD);
+  pros::screen::set_pen(col);
+  pros::screen::fill_circle(x + tileW - 9, y + 9, 4);
+  pros::screen::set_eraser(CARD);
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 5, "%s", label);
+  pros::screen::set_pen(col);
+  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 20, "%.1fC", temp);
+
+  int barX = x + 8, barY = y + kTempTileH - 9, barW = tileW - 16, barH = 4;
+  double frac = (temp - 20.0) / 50.0; // 20C..70C
+  frac = std::clamp(frac, 0.0, 1.0);
+  fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, AXIS);
+  int fillW = (int)(barW * frac);
+  if (fillW >= 4)
+    fillRoundedRect(barX, barY, barX + fillW, barY + barH, 2, col);
+}
+
+static int tempsMinScroll() {
+  int content = kTempSections * kTempRowH;
+  return content > 160 ? -(content - 160) : 0;
+}
+
+static void drawTempsScreen() {
+  using namespace ui;
+  clearScreen();
+  drawHeader("MOTOR TEMPS", nullptr, CYAN);
+  drawBackButton();
+
+  std::vector<double> temps[kTempSections];
+  std::vector<std::int8_t> ports[kTempSections];
+  collectTemps(temps, ports);
+
+  const int rowLeft = 15, rowRight = 428, labelH = 14, gap = 6;
+  double hottest = 0;
+  for (int sIdx = 0; sIdx < kTempSections; sIdx++) {
+    const TempSection &info = kTempSectionInfo[sIdx];
+    int labelY = 55 + tempsScroll + sIdx * kTempRowH;
+    int tileY = labelY + labelH;
+    for (double t : temps[sIdx])
+      hottest = std::max(hottest, t);
+    if (tileY + kTempTileH < 55 || labelY > 215)
+      continue;
+    if (labelY >= 50 && labelY + labelH <= 215) {
+      pros::screen::set_eraser(BG);
+      pros::screen::set_pen(info.color);
+      pros::screen::print(pros::E_TEXT_SMALL, rowLeft, labelY, "%s", info.label);
+    }
+    int tileW = (rowRight - rowLeft - (info.tilesPerRow - 1) * gap) / info.tilesPerRow;
+    for (int i = 0; i < (int)temps[sIdx].size() && i < info.tilesPerRow; i++) {
+      char label[24];
+      snprintf(label, sizeof(label), "%s %d P%d", info.prefix, i + 1, (int)std::abs(ports[sIdx][i]));
+      drawTempTile(rowLeft + i * (tileW + gap), tileY, tileW, label, temps[sIdx][i]);
+    }
+  }
+
+  // Scroll arrows in the same rects (and the same look) the grid screens use.
+  if (tempsMinScroll() < 0) {
+    bool canUp = tempsScroll < 0, canDown = tempsScroll > tempsMinScroll();
+    fillRoundedRect(kScrollUp.x0, kScrollUp.y0, kScrollUp.x1, kScrollUp.y1, 8, CARD);
+    fillRoundedRect(kScrollDown.x0, kScrollDown.y0, kScrollDown.x1, kScrollDown.y1, 8, CARD);
+    pros::screen::set_eraser(CARD);
+    pros::screen::set_pen(canUp ? CYAN : AXIS);
+    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollUp.x0 + 28, kScrollUp.y0 + 28, "^");
+    pros::screen::set_pen(canDown ? CYAN : AXIS);
+    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollDown.x0 + 28, kScrollDown.y0 + 28, "v");
+  }
+
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_eraser(FOOTER_BG);
+  pros::screen::set_pen(tempColor(hottest));
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "hottest %.1fC", hottest);
+}
+
 // ─── Navigation ──────────────────────────────────────────────────────────────
 static void goHome() {
   screen = Screen::HOME;
@@ -1805,9 +2113,21 @@ static void goPlanner() {
   scrollOffset = 0;
   drawPlannerScreen();
 }
+static void goTemps() {
+  screen = Screen::TEMPS;
+  scrollOffset = 0;
+  tempsScroll = 0;
+  drawTempsScreen();
+}
+static void goRemoteDrive() {
+  screen = Screen::REMOTE_DRIVE;
+  scrollOffset = 0;
+  drawRemoteDriveScreen();
+}
 static void goMotorTest() {
   screen = Screen::MOTOR_TEST;
   scrollOffset = 0;
+  stopRemoteDrive(); // this test drives the motors itself
   runMotorDirectionTest(); // blocks; draws its own screen live as it goes
 }
 
@@ -1882,7 +2202,7 @@ void driverMenuControl() {
 
       switch (screen) {
       case Screen::HOME: {
-        int hit = gridHitTest(4, x, y);
+        int hit = gridHitTest(kHomeItemCount, x, y);
         if (hit == 0) {
           sendRemoteHandoff("PID TUNER");
           pidTunerControl(); // returns once its own BACK button is tapped
@@ -1893,8 +2213,13 @@ void driverMenuControl() {
           goMotorTest();
         } else if (hit == 3) {
           sendRemoteHandoff("DRIVING");
+          stopRemoteDrive();
           driverMenuActive = false;
           return; // caller falls through to normal driving
+        } else if (hit == 4) {
+          goRemoteDrive();
+        } else if (hit == 5) {
+          goTemps();
         }
         break;
       }
@@ -1958,6 +2283,23 @@ void driverMenuControl() {
         else if (inRect(kBrainEditor, x, y))
           goPathType();
         break;
+      case Screen::REMOTE_DRIVE:
+        if (inRect(kBack, x, y)) {
+          stopRemoteDrive(); // leaving the screen gives the drivetrain up
+          goHome();
+        }
+        break;
+      case Screen::TEMPS:
+        if (inRect(kBack, x, y)) {
+          goHome();
+        } else if (inRect(kScrollUp, x, y)) {
+          tempsScroll = std::min(0, tempsScroll + kTempRowH);
+          drawTempsScreen();
+        } else if (inRect(kScrollDown, x, y)) {
+          tempsScroll = std::max(tempsMinScroll(), tempsScroll - kTempRowH);
+          drawTempsScreen();
+        }
+        break;
       }
     }
 
@@ -1966,10 +2308,32 @@ void driverMenuControl() {
     {
       int runWhich;
       if (applyRemotePlanCommands(runWhich)) {
+        stopRemoteDrive(); // a planned motion takes the drivetrain over
         if (screen != Screen::PLANNER)
           goPlanner();
         runPlan(runWhich);
       }
+    }
+
+    // Temperatures creep rather than jump, so this screen is repainted a
+    // few times a second instead of every tick.
+    if (screen == Screen::TEMPS) {
+      static uint32_t lastTempDraw = 0;
+      if (pros::millis() - lastTempDraw >= 500) {
+        lastTempDraw = pros::millis();
+        drawTempsScreen();
+      }
+    }
+
+    applyRemoteDrive();
+    if (screen == Screen::REMOTE_DRIVE) {
+      int l, r;
+      remoteTouchMutex.take();
+      l = remoteDriving ? remoteInput.driveL : 0;
+      r = remoteDriving ? remoteInput.driveR : 0;
+      remoteTouchMutex.give();
+      if (l != drawnDriveL || r != drawnDriveR || remoteDriving != drawnDriveLive)
+        drawRemoteDriveStatus();
     }
 
     // Controller edges OR'd with the laptop's KEY presses -- from here on
@@ -1984,8 +2348,10 @@ void driverMenuControl() {
     bool l2Edge = btnL2.pressed() || takeRemoteKey(RK_L2);
     takeRemoteKey(RK_X); // only meaningful mid-run (waitForCancel); drop stale ones
 
-    if (screen == Screen::PLANNER && aEdge)
+    if (screen == Screen::PLANNER && aEdge) {
+      stopRemoteDrive();
       runPlan(-1);
+    }
 
     if (screen == Screen::EDIT && !fields.empty()) {
       bool dirty = leftEdge || rightEdge || l1Edge || l2Edge;

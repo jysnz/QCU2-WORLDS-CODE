@@ -76,6 +76,23 @@ DRAWING A PATH WITH THE MOUSE (path.jerryio style)
     and "Trace blocks" goes the other way, loading the existing blocks'
     points back in as control points to re-draw.
 
+DRIVING IT FROM HERE
+    "Drive (WASD)" hands the drivetrain to the keyboard: W / S drive
+    forwards and back, A / D turn, held together they mix (arcade). The
+    power slider sets how hard, and the robot only moves while a key is
+    actually down.
+
+    The robot is told to move by "DRIVE left right" lines, which expire on
+    the brain after 300 ms. The planner repeats the current command as a
+    keepalive while you hold a key and sends a stop the moment you let go,
+    lose the window's focus, or switch the mode off -- so a dropped radio
+    line, a window that loses focus mid-key, or this program being killed
+    outright all end with the robot stopped rather than driving on.
+
+    This needs the firmware that understands DRIVE (src/driver_menu.cpp);
+    an older brain will simply ignore it. The brain has to be on the
+    driver menu (any screen of it) for the command to be applied.
+
 RUN / EXPORT
     F5 / Run all       sends the whole list to the brain and runs it there,
                        block after block, exactly like an autonomous would.
@@ -749,6 +766,10 @@ class PlannerWindow(tk.Toplevel):
         self.selected = None
         self.start = [0.0, 0.0, 0.0]   # start pose used to draw the route
         self.pickStart = False
+        self.driveMode = False         # WASD driving on/off
+        self.driveKeys = set()         # keys held right now
+        self.driveLast = None          # last (l, r) sent, to avoid resending
+        self.driveJob = None           # keepalive callback
         self.drawMode = False          # mouse path editor on/off
         self.waypoints = []            # control points: (x, y, CURVE/STRAIGHT)
         self.drag = None               # ("wp", i) or ("block", i) while dragging
@@ -764,7 +785,8 @@ class PlannerWindow(tk.Toplevel):
         self._redrawPending = False    # see redrawMap(): draws are coalesced
         self._simCache = (None, None)  # (key, simulate() result)
         self._lastState = None         # last robot state drawn, to skip no-ops
-        self.protocol("WM_DELETE_WINDOW", self.withdraw)  # hide, don't destroy
+        # Hiding the window must not leave the robot driving on.
+        self.protocol("WM_DELETE_WINDOW", lambda: (self.stopDrive(), self.withdraw()))
 
         self._buildUi()
         self._bindKeys()
@@ -912,6 +934,22 @@ class PlannerWindow(tk.Toplevel):
             tk.Button(mv, text=kind, width=14, command=lambda k=kind: self.addBlock(k)) \
                 .grid(row=i // 4, column=i % 4, padx=3, pady=3)
 
+        # driving
+        dr = tk.LabelFrame(right, text="drive", fg="#ccc", bg="#14141a", font=("Segoe UI", 9))
+        dr.pack(fill="x", pady=(0, 6))
+        drow = tk.Frame(dr, bg="#14141a")
+        drow.pack(fill="x", padx=4, pady=4)
+        self.driveBtn = tk.Button(drow, text="Drive (WASD)", command=self.toggleDrive)
+        self.driveBtn.pack(side="left")
+        tk.Label(drow, text="power", fg="#888", bg="#14141a").pack(side="left", padx=(8, 2))
+        self.powerVar = tk.IntVar(value=70)
+        tk.Scale(drow, from_=10, to=127, orient="horizontal", variable=self.powerVar,
+                 length=110, bg="#14141a", fg="#ddd", highlightthickness=0,
+                 troughcolor="#161B22").pack(side="left")
+        self.driveStatus = tk.Label(drow, text="off", fg="#777", bg="#14141a",
+                                    font=("Consolas", 9))
+        self.driveStatus.pack(side="left", padx=8)
+
         # run / export bar
         bar = tk.Frame(right, bg="#14141a")
         bar.pack(fill="x")
@@ -937,7 +975,7 @@ class PlannerWindow(tk.Toplevel):
     def _bindKeys(self):
         self.bind("<F5>", lambda e: self.runAll())
         self.bind("<F6>", lambda e: self.runSelected())
-        self.bind("<Escape>", lambda e: self.stop())
+        self.bind("<Escape>", lambda e: (self.stopDrive(), self.stop()))
         self.bind("<Control-s>", lambda e: self.savePlan())
         self.bind("<Control-o>", lambda e: self.loadPlan())
         self.bind("<Control-e>", lambda e: self.exportCode())
@@ -945,8 +983,13 @@ class PlannerWindow(tk.Toplevel):
         # ...and the draw-path keys, which must not fire while a number is
         # being typed into one of the entries (Tk sends the key to the
         # widget first, then here).
-        self.bind("<d>", lambda e: None if self._typing() else self.toggleDraw())
-        self.bind("<D>", lambda e: None if self._typing() else self.toggleDraw())
+        # W/A/S/D drive the robot while drive mode is on; "d" only toggles
+        # the path editor when it isn't (it would otherwise do both).
+        self.bind("<KeyPress>", self.onDriveKeyPress, add="+")
+        self.bind("<KeyRelease>", self.onDriveKeyRelease, add="+")
+        self.bind("<FocusOut>", lambda e: self.stopDrive() if self.driveMode else None)
+        self.bind("<d>", lambda e: None if self._typing() or self.driveMode else self.toggleDraw())
+        self.bind("<D>", lambda e: None if self._typing() or self.driveMode else self.toggleDraw())
         self.bind("<Control-z>", lambda e: None if self._typing() else self.undoWaypoint())
         self.bind("<BackSpace>", lambda e: None if self._typing() else self.undoWaypoint())
         self.bind("<Return>", lambda e: self.applyDrawnPath()
@@ -1454,6 +1497,89 @@ class PlannerWindow(tk.Toplevel):
         self.waypoints.append((round(x, 1), round(y, 1), STRAIGHT))
         self.redrawMap()
 
+    # -- driving (WASD) --
+    # The brain drops a DRIVE command it hasn't heard from in 300 ms, so
+    # the current one is repeated this often while a key is held. Well
+    # inside that, and slow enough not to crowd the radio link (the vexcom
+    # link paces its sends 60 ms apart).
+    DRIVE_KEEPALIVE_MS = 120
+
+    def toggleDrive(self):
+        self.driveMode = not self.driveMode
+        self.driveBtn.config(relief="sunken" if self.driveMode else "raised")
+        if self.driveMode:
+            if self.drawMode:      # W/A/S/D would fight the drawing keys
+                self.toggleDraw()
+            self.focus_set()
+            self.driveStatus.config(text="ready -- hold W A S D", fg="#2ECC71")
+            self._driveTick()
+        else:
+            self.stopDrive()
+
+    def onDriveKeyPress(self, e):
+        if not self.driveMode or self._typing():
+            return
+        k = e.keysym.lower()
+        if k in ("w", "a", "s", "d"):
+            self.driveKeys.add(k)
+            self._sendDrive()
+
+    def onDriveKeyRelease(self, e):
+        if not self.driveMode:
+            return
+        self.driveKeys.discard(e.keysym.lower())
+        self._sendDrive()
+
+    def driveMix(self):
+        """W/S forwards and back, A/D turn, mixed arcade style when held
+        together. Turning is given a bit less than full power -- at full
+        it spins faster than anyone can steer by keyboard."""
+        p = self.powerVar.get()
+        fwd = ("w" in self.driveKeys) - ("s" in self.driveKeys)
+        turn = ("d" in self.driveKeys) - ("a" in self.driveKeys)
+        l = fwd * p + turn * p * 0.7
+        r = fwd * p - turn * p * 0.7
+        cap = max(1.0, abs(l), abs(r), float(p))
+        if cap > 127:               # keep the mix's shape when it clips
+            l, r = l * 127 / cap, r * 127 / cap
+        return int(round(max(-127, min(127, l)))), int(round(max(-127, min(127, r))))
+
+    def _sendDrive(self, force=False):
+        l, r = self.driveMix() if self.driveMode else (0, 0)
+        if (l, r) != self.driveLast or force:
+            self.link._send(f"DRIVE {l} {r}")
+            self.driveLast = (l, r)
+        if not self.driveMode:
+            return
+        if (l, r) == (0, 0):
+            self.driveStatus.config(text="ready -- hold W A S D", fg="#2ECC71")
+        else:
+            self.driveStatus.config(text=f"L {l:+4d}  R {r:+4d}", fg="#00F0FF")
+
+    def _driveTick(self):
+        """Keepalive: resends the held command so the brain's watchdog
+        doesn't time it out mid-drive."""
+        if not self.driveMode:
+            return
+        if self.driveKeys:
+            self._sendDrive(force=True)
+        self.driveJob = self.after(self.DRIVE_KEEPALIVE_MS, self._driveTick)
+
+    def stopDrive(self, _e=None):
+        """Stop, and mean it: the keys are dropped, the keepalive is
+        cancelled and a zero command goes out. If it doesn't arrive, the
+        brain's 300 ms watchdog stops the robot anyway."""
+        if self.driveJob is not None:
+            self.after_cancel(self.driveJob)
+            self.driveJob = None
+        self.driveKeys.clear()
+        if self.driveMode or self.driveLast not in (None, (0, 0)):
+            self.link._send("DRIVE 0 0")
+            self.driveLast = (0, 0)
+        self.driveMode = False
+        self.driveBtn.config(relief="raised")
+        self.driveStatus.config(text="off", fg="#777")
+
     # -- start pose --
     def togglePickStart(self):
         self.pickStart = not self.pickStart
@@ -1649,6 +1775,8 @@ class PlannerWindow(tk.Toplevel):
         """which: None = all, int = that block."""
         if not self.blocks:
             return
+        if self.driveMode:      # the motion is about to take the drivetrain
+            self.stopDrive()
         self.pendingRun = "ALL" if which is None else which
         self.uploadTries = 1
         self.uploadPlan()
