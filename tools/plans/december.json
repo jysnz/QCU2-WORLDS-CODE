@@ -1,0 +1,47 @@
+{
+  "start": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "blocks": [
+    {
+      "kind": "turnToPoint",
+      "x": 0.3,
+      "y": 24.9,
+      "timeout": 2000,
+      "forwards": true,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 0.7,
+      "timeout": 2000,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 0.7,
+      "timeout": 2000,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    }
+  ]
+}
