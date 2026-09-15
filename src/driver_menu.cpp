@@ -920,7 +920,8 @@ static void runMotion() {
     sendRemoteUiState(); // keep the laptop's plot moving with the brain's
     pros::delay(20);
   }
-  chassis.waitUntilDone();
+  // no chassis.waitUntilDone(): the isInMotion() loop is the wait, and
+  // waitUntilDone() hangs if the motion never started (see runPlanStep)
 
   lemlib::Pose end = chassis.getPose();
   lastResult.ran = true;
@@ -1199,9 +1200,18 @@ static void drawPlannerScreen() {
 // the run was cancelled (controller X or the laptop's stop).
 static bool runPlanStep(const PlanStep &st) {
   if (st.kind == StepKind::WAIT_UNTIL_DONE) {
-    // The runner already waits for each motion, so this is instant here;
-    // it exists so the plan mirrors the exported code one-to-one.
-    chassis.waitUntilDone();
+    // The runner already waits for each motion, so normally this returns
+    // at once; it exists so the plan mirrors the exported code one-to-one.
+    // Deliberately NOT chassis.waitUntilDone(): that spins until
+    // distTraveled == -1, which lemlib only sets when a motion *ends* --
+    // before any motion has run it stays at its initial 0 and the call
+    // never returns, which left the plan stuck in RUNNING forever.
+    while (chassis.isInMotion()) {
+      if (waitForCancel())
+        return false;
+      sendRemoteUiState();
+      pros::delay(10);
+    }
     return true;
   }
   if (st.kind == StepKind::SET_POSE) {
@@ -1248,7 +1258,8 @@ static bool runPlanStep(const PlanStep &st) {
     sendRemoteUiState();
     pros::delay(20);
   }
-  chassis.waitUntilDone();
+  // (no chassis.waitUntilDone() here -- see WAIT_UNTIL_DONE above; the
+  // isInMotion() loop above is the wait)
   return true;
 }
 

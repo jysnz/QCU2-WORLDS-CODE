@@ -479,8 +479,11 @@ class VexcomLink:
         self.error = None        # set if vexcom quits on us (port busy, etc.)
         self._lastLines = []
         self._stop = False
+        self._outq = queue.Queue()
         self._thread = threading.Thread(target=self._readLoop, daemon=True)
         self._thread.start()
+        self._sender = threading.Thread(target=self._sendLoop, daemon=True)
+        self._sender.start()
 
     def _readLoop(self):
         stream = PacketStream()
@@ -523,12 +526,28 @@ class VexcomLink:
     def sendRate(self, ms):
         self._send(f"RATE {ms}")
 
+    # Lines written to vexcom back-to-back get lost on the radio: only the
+    # first ~130 bytes of a burst make it to the brain, the rest vanish
+    # (measured: 4 or 8 PLAN ADDs in one go -> the robot holds 2; the same
+    # lines 50 ms apart all arrive). So every line goes through a queue
+    # and a sender thread that spaces them out; callers never block.
+    SEND_GAP_S = 0.06
+
     def _send(self, line):
-        try:
-            self.proc.stdin.write((line + "\n").encode("ascii", errors="ignore"))
-            self.proc.stdin.flush()
-        except (OSError, ValueError):
-            pass
+        self._outq.put(line)
+
+    def _sendLoop(self):
+        while not self._stop:
+            try:
+                line = self._outq.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                self.proc.stdin.write((line + "\n").encode("ascii", errors="ignore"))
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+            time.sleep(self.SEND_GAP_S)
 
     def _setChannel(self, chan):
         try:
@@ -538,6 +557,10 @@ class VexcomLink:
             pass
 
     def close(self):
+        # let anything queued (e.g. a PLAN STOP) go out first
+        t = time.time()
+        while not self._outq.empty() and time.time() - t < 2:
+            time.sleep(0.05)
         self._stop = True
         try:
             self.proc.kill()
@@ -1117,8 +1140,30 @@ class RemoteTouchApp:
         self.root.after(150, lambda: self.canvas.delete(rect))
 
 
+def claim_single_instance():
+    """Only one copy of this tool can talk to the robot (one port), and a
+    second copy would just close the first one's vexcom -- so refuse to
+    start twice. Windows named mutex; elsewhere just allow it."""
+    if os.name != "nt":
+        return True
+    import ctypes
+    ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\v5-remote-touch")
+    return ctypes.windll.kernel32.GetLastError() != 183   # ERROR_ALREADY_EXISTS
+
+
 def main():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner
+    if not claim_single_instance():
+        print("remote_touch.py is already running -- use that window (only one can hold the port).")
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            from tkinter import messagebox
+            messagebox.showinfo("Remote Touch", "Remote Touch is already running.\n\n"
+                                "Use the window that's open -- only one copy can talk to the robot.")
+        except Exception:
+            pass
+        sys.exit(1)
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("port", nargs="?", help="Serial port, e.g. COM5 (auto-detected if omitted)")
