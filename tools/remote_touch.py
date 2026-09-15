@@ -33,6 +33,12 @@ HOW IT WORKS
         SEL <index>           select EDIT field #index
         SET <index> <value>   type a value straight into EDIT field #index
 
+PATH PLANNER
+    Tapping PATH PLANNER (on the brain or here) opens a second, larger
+    window -- see tools/path_planner.py -- with the field map, stackable
+    movement blocks, run buttons and code export. The mirror keeps
+    showing what the brain screen shows meanwhile.
+
 KEYBOARD (EDIT screen)
     Left / Right        previous / next field         (controller LEFT/RIGHT)
     Up / Down           nudge value by the digit step (controller UP/DOWN)
@@ -225,7 +231,8 @@ class PacketStream:
 
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
-                 "HANDOFF")
+                 "PLANNER", "HANDOFF")
+PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
 
 def _ints(text, n):
@@ -265,7 +272,8 @@ def parse_rui_line(line):
     # the rest of the line on it separates the tagged segments cleanly
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
-                                "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE")}
+                                "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
+                                "PATH")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -320,6 +328,20 @@ def parse_rui_line(line):
 
     active = _ints(segments["ACTIVE"], 2) or [-1, -1]
 
+    plan = None
+    v = _ints(segments["PLAN"], 3)
+    if v and 0 <= v[0] < len(PLAN_STATUS):
+        plan = (PLAN_STATUS[v[0]], v[1], v[2])
+
+    path = []
+    for chunk in segments["PATH"].split(";"):
+        f = chunk.split(",")
+        if len(f) == 2:
+            try:
+                path.append((float(f[0]), float(f[1])))
+            except ValueError:
+                pass
+
     return {
         "screen": screen,
         "breadcrumb": breadcrumb,
@@ -337,6 +359,8 @@ def parse_rui_line(line):
         "selected": int(segments["SEL"]) if segments["SEL"].lstrip("-").isdigit() else 0,
         "activeSide": active[0],
         "activeIdx": active[1],
+        "plan": plan,
+        "path": path,
     }
 
 
@@ -536,6 +560,7 @@ K_SCROLL_DOWN = (435, 140, 475, 210)
 K_BACK = (396, 14, 468, 40)
 K_MOTOR_LEFT = (10, 58, 233, 210)
 K_MOTOR_RIGHT = (247, 58, 470, 210)
+K_BRAIN_EDITOR = (10, 140, 150, 166)
 
 # Which header title/colour each screen tag draws with (drawHome() etc.).
 # EDIT's title is the motion name, which arrives as the breadcrumb.
@@ -793,6 +818,46 @@ class BrainScreen:
                                 idx if side == 1 else -1)
         self.drawFooter(st["footer"], False)
 
+    # -- PLANNER (drawPlannerScreen) --
+    def drawPlannerScreen(self, st):
+        self.clearScreen()
+        self.drawHeader("PATH PLANNER", "LAPTOP", ORANGE)
+        self.drawBackButton()
+        status, idx, count = st["plan"] or ("IDLE", -1, 0)
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 10, FY + 2, "Plan on the laptop:")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 10, FY + 14, "tools/remote_touch.py")
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 10, FY + 34, f"{count} step{'' if count == 1 else 's'}")
+        self.set_pen({"CANCELLED": TARGET_LINE, "RUNNING": CYAN}.get(status, GRAY))
+        self.print(FONT_SMALL, 10, FY + 46, f"{status} {idx + 1}/{count}" if idx >= 0 else status)
+        x0, y0, x1, y1 = K_BRAIN_EDITOR
+        self.fillRoundedRect(x0, y0, x1, y1, 6, CARD)
+        self.set_pen(CYAN)
+        self.print(FONT_SMALL, x0 + 10, y0 + 7, "BRAIN EDITOR >")
+
+        self.drawFieldFrame()
+        if len(st["trail"]) > 1:
+            self.set_pen(PATH_LINE)
+            prev = st["trail"][0]
+            for pt in st["trail"][1:]:
+                self.draw_line(prev[0], prev[1], pt[0], pt[1])
+                prev = pt
+        plot = st["plot"]
+        if plot:
+            self.drawHeadingIndicator(plot["poseX"], plot["poseY"], plot["poseTheta"])
+
+        self.set_pen(CARD)
+        self.fill_rect(10, CODE_Y0, 470, CODE_Y1)
+        self.set_pen(AXIS)
+        self.draw_rect(10, CODE_Y0, 470, CODE_Y1)
+        self.set_pen(GREEN)
+        for i, line in enumerate(st["code"][:3]):
+            if line:
+                self.print(FONT_SMALL, 16, CODE_Y0 + 3 + i * 12, line)
+        self.drawFooter(st["footer"], False)
+
     # -- handoff notice (the brain screen belongs to something we don't mirror) --
     def drawHandoff(self, what):
         self.clearScreen()
@@ -811,6 +876,8 @@ class BrainScreen:
             self.drawEditUI(st)
         elif tag == "MOTOR_TEST":
             self.drawMotorTestScreen(st)
+        elif tag == "PLANNER":
+            self.drawPlannerScreen(st)
         elif tag == "HANDOFF":
             self.drawHandoff(st["breadcrumb"])
         elif tag in SCREEN_HEADER:
@@ -882,6 +949,7 @@ class RemoteTouchApp:
 
         self.startedAt = time.time()
         self.gotState = False
+        self.planner = None
         self.pollQueue()
 
     def pollQueue(self):
@@ -896,6 +964,7 @@ class RemoteTouchApp:
             self.lastState = state
             self.render(state)
             self.updateValueLabel(state)
+            self.updatePlanner(state)
         elif not self.gotState and time.time() - self.startedAt > 5:
             self.showWaitingHint()
         self.root.after(50, self.pollQueue)
@@ -923,6 +992,23 @@ class RemoteTouchApp:
                  (f"  /  {state['breadcrumb']}" if state["breadcrumb"] not in ("", "-") else ""))
         self.canvas.delete("all")
         BrainScreen(self.canvas).draw(state)
+
+    # -- laptop path planner window --
+    def updatePlanner(self, state):
+        """The brain's PATH PLANNER screen is planned from a separate, big
+        window (tools/path_planner.py): open it the first time the brain
+        gets there, and keep it fed with every state after that."""
+        if state["screen"] == "PLANNER" and self.planner is None:
+            try:
+                from path_planner import PlannerWindow
+            except ImportError as e:
+                self.status.config(text=f"path_planner.py failed to load: {e}")
+                return
+            self.planner = PlannerWindow(self.root, self.link)
+        if self.planner is not None:
+            if state["screen"] == "PLANNER" and self.planner.state() == "withdrawn":
+                self.planner.deiconify()
+            self.planner.applyState(state)
 
     # -- keyboard / value entry --
     def sendKey(self, name):
@@ -1005,6 +1091,7 @@ class RemoteTouchApp:
 
 
 def main():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("port", nargs="?", help="Serial port, e.g. COM5 (auto-detected if omitted)")

@@ -222,6 +222,159 @@ static lemlib::DriveSide sideFromIdx(int idx) {
   return idx == 1 ? lemlib::DriveSide::RIGHT : lemlib::DriveSide::LEFT;
 }
 
+// ─── Plan steps ──────────────────────────────────────────────────────────────
+// One movement with every parameter it needs, as a plain value. The
+// on-brain EDIT screen builds one of these from its p* globals; the laptop
+// planner sends whole sequences of them (see "Laptop path planner" below).
+// Both run through startStep()/formatStepCode() so the code preview, the
+// exported code and what the robot actually does can't drift apart.
+enum class StepKind {
+  TURN_TO_HEADING, // == Motion::* for the first six, so the two cast freely
+  TURN_TO_POINT,
+  SWING_TO_HEADING,
+  SWING_TO_POINT,
+  MOVE_TO_POINT,
+  MOVE_TO_POSE,
+  WAIT,     // pros::delay(timeoutMs)
+  SET_POSE, // chassis.setPose(x, y, theta)
+};
+struct PlanStep {
+  StepKind kind = StepKind::MOVE_TO_POINT;
+  float x = 0, y = 0, theta = 0;
+  int timeoutMs = 2000; // for WAIT this is the delay itself
+  bool forwards = true;
+  int dirIdx = 0, sideIdx = 0;
+  float maxSpeed = 127, minSpeed = 0, earlyExit = 0, lead = 0.6f, drift = 0;
+};
+
+static bool stepHasPointTarget(StepKind k) {
+  return k == StepKind::TURN_TO_POINT || k == StepKind::SWING_TO_POINT ||
+         k == StepKind::MOVE_TO_POINT || k == StepKind::MOVE_TO_POSE;
+}
+
+// Issues the step's chassis call asynchronously (WAIT/SET_POSE are not
+// motions; callers handle those). Mirrors runMotion()'s original switch.
+static void startStep(const PlanStep &st) {
+  lemlib::AngularDirection dir = directionFromIdx(st.dirIdx);
+  lemlib::DriveSide side = sideFromIdx(st.sideIdx);
+  switch (st.kind) {
+  case StepKind::TURN_TO_HEADING:
+    chassis.turnToHeading(st.theta, st.timeoutMs,
+                          {.direction = dir,
+                           .maxSpeed = (int)st.maxSpeed,
+                           .minSpeed = (int)st.minSpeed,
+                           .earlyExitRange = st.earlyExit},
+                          true);
+    break;
+  case StepKind::TURN_TO_POINT:
+    chassis.turnToPoint(st.x, st.y, st.timeoutMs,
+                        {.forwards = st.forwards,
+                         .direction = dir,
+                         .maxSpeed = (int)st.maxSpeed,
+                         .minSpeed = (int)st.minSpeed,
+                         .earlyExitRange = st.earlyExit},
+                        true);
+    break;
+  case StepKind::SWING_TO_HEADING:
+    chassis.swingToHeading(st.theta, side, st.timeoutMs,
+                           {.direction = dir,
+                            .maxSpeed = st.maxSpeed,
+                            .minSpeed = st.minSpeed,
+                            .earlyExitRange = st.earlyExit},
+                           true);
+    break;
+  case StepKind::SWING_TO_POINT:
+    chassis.swingToPoint(st.x, st.y, side, st.timeoutMs,
+                         {.forwards = st.forwards,
+                          .direction = dir,
+                          .maxSpeed = st.maxSpeed,
+                          .minSpeed = st.minSpeed,
+                          .earlyExitRange = st.earlyExit},
+                         true);
+    break;
+  case StepKind::MOVE_TO_POINT:
+    chassis.moveToPoint(st.x, st.y, st.timeoutMs,
+                        {.forwards = st.forwards,
+                         .maxSpeed = st.maxSpeed,
+                         .minSpeed = st.minSpeed,
+                         .earlyExitRange = st.earlyExit},
+                        true);
+    break;
+  case StepKind::MOVE_TO_POSE:
+    chassis.moveToPose(st.x, st.y, st.theta, st.timeoutMs,
+                       {.forwards = st.forwards,
+                        .horizontalDrift = st.drift,
+                        .lead = st.lead,
+                        .maxSpeed = st.maxSpeed,
+                        .minSpeed = st.minSpeed,
+                        .earlyExitRange = st.earlyExit},
+                       true);
+    break;
+  case StepKind::WAIT:
+  case StepKind::SET_POSE:
+    break;
+  }
+}
+
+// The exact C++ startStep() issues, as up to 3 lines of E_TEXT_SMALL.
+static void formatStepCode(const PlanStep &st, char lines[3][80]) {
+  lines[0][0] = lines[1][0] = lines[2][0] = '\0';
+  const char *fwdLbl = st.forwards ? "true" : "false";
+  const char *dirLbl = kDirectionLabels[std::clamp(st.dirIdx, 0, 2)];
+  const char *sideLbl = kSideLabels[std::clamp(st.sideIdx, 0, 1)];
+
+  switch (st.kind) {
+  case StepKind::TURN_TO_HEADING:
+    snprintf(lines[0], 80, "chassis.turnToHeading(%.2f, %d,", st.theta, st.timeoutMs);
+    snprintf(lines[1], 80, "  {.direction=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", dirLbl,
+             st.maxSpeed, st.minSpeed);
+    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", st.earlyExit);
+    break;
+  case StepKind::TURN_TO_POINT:
+    snprintf(lines[0], 80, "chassis.turnToPoint(%.2f, %.2f, %d,", st.x, st.y, st.timeoutMs);
+    snprintf(lines[1], 80, "  {.forwards=%s, .direction=%s, .maxSpeed=%.0f,", fwdLbl, dirLbl,
+             st.maxSpeed);
+    snprintf(lines[2], 80, "   .minSpeed=%.0f, .earlyExitRange=%.2f});", st.minSpeed,
+             st.earlyExit);
+    break;
+  case StepKind::SWING_TO_HEADING:
+    snprintf(lines[0], 80, "chassis.swingToHeading(%.2f, %s, %d,", st.theta, sideLbl,
+             st.timeoutMs);
+    snprintf(lines[1], 80, "  {.direction=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", dirLbl,
+             st.maxSpeed, st.minSpeed);
+    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", st.earlyExit);
+    break;
+  case StepKind::SWING_TO_POINT:
+    snprintf(lines[0], 80, "chassis.swingToPoint(%.2f, %.2f, %s, %d,", st.x, st.y, sideLbl,
+             st.timeoutMs);
+    snprintf(lines[1], 80, "  {.forwards=%s, .direction=%s, .maxSpeed=%.0f,", fwdLbl, dirLbl,
+             st.maxSpeed);
+    snprintf(lines[2], 80, "   .minSpeed=%.0f, .earlyExitRange=%.2f});", st.minSpeed,
+             st.earlyExit);
+    break;
+  case StepKind::MOVE_TO_POINT:
+    snprintf(lines[0], 80, "chassis.moveToPoint(%.2f, %.2f, %d,", st.x, st.y, st.timeoutMs);
+    snprintf(lines[1], 80, "  {.forwards=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", fwdLbl,
+             st.maxSpeed, st.minSpeed);
+    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", st.earlyExit);
+    break;
+  case StepKind::MOVE_TO_POSE:
+    snprintf(lines[0], 80, "chassis.moveToPose(%.2f, %.2f, %.2f, %d,", st.x, st.y, st.theta,
+             st.timeoutMs);
+    snprintf(lines[1], 80, "  {.forwards=%s, .horizontalDrift=%.2f, .lead=%.2f,", fwdLbl,
+             st.drift, st.lead);
+    snprintf(lines[2], 80, "   .maxSpeed=%.0f, .minSpeed=%.0f, .earlyExitRange=%.2f});",
+             st.maxSpeed, st.minSpeed, st.earlyExit);
+    break;
+  case StepKind::WAIT:
+    snprintf(lines[0], 80, "pros::delay(%d);", st.timeoutMs);
+    break;
+  case StepKind::SET_POSE:
+    snprintf(lines[0], 80, "chassis.setPose(%.2f, %.2f, %.2f);", st.x, st.y, st.theta);
+    break;
+  }
+}
+
 // ─── Editable field descriptors ──────────────────────────────────────────────
 enum class FieldKind { NUMERIC, CHOICE };
 struct FieldDef {
@@ -344,7 +497,7 @@ static float headingError(float target, float actual) {
 }
 
 // ─── Screens ──────────────────────────────────────────────────────────────────
-enum class Screen { HOME, PATH_TYPE, ANGULAR_LIST, LATERAL_LIST, EDIT, MOTOR_TEST };
+enum class Screen { HOME, PATH_TYPE, ANGULAR_LIST, LATERAL_LIST, EDIT, MOTOR_TEST, PLANNER };
 static Screen screen = Screen::HOME;
 
 // ─── Button grid: 3 per row, with an up/down scroll sidebar on the right
@@ -566,58 +719,26 @@ static void drawFooter() {
 // parameter shows the real C++ that results, not just the raw number.
 // Kept in its own function (rather than duplicated by hand) and mirrored
 // against runMotion()'s switch so the two can't drift apart.
-static void formatMotionCode(char lines[3][80]) {
-  lines[0][0] = lines[1][0] = lines[2][0] = '\0';
-  bool forwards = pForwardsIdx < 0.5f;
-  const char *fwdLbl = forwards ? "true" : "false";
-  const char *dirLbl = kDirectionLabels[std::clamp((int)std::lround(pDirectionIdx), 0, 2)];
-  const char *sideLbl = kSideLabels[std::clamp((int)std::lround(pSideIdx), 0, 1)];
-  int timeoutMs = (int)pTimeoutMs;
-
-  switch (currentMotion) {
-  case Motion::TURN_TO_HEADING:
-    snprintf(lines[0], 80, "chassis.turnToHeading(%.2f, %d,", pTheta, timeoutMs);
-    snprintf(lines[1], 80, "  {.direction=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", dirLbl,
-             pMaxSpeed, pMinSpeed);
-    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", pEarlyExitRange);
-    break;
-  case Motion::TURN_TO_POINT:
-    snprintf(lines[0], 80, "chassis.turnToPoint(%.2f, %.2f, %d,", pX, pY, timeoutMs);
-    snprintf(lines[1], 80, "  {.forwards=%s, .direction=%s, .maxSpeed=%.0f,", fwdLbl, dirLbl,
-             pMaxSpeed);
-    snprintf(lines[2], 80, "   .minSpeed=%.0f, .earlyExitRange=%.2f});", pMinSpeed,
-             pEarlyExitRange);
-    break;
-  case Motion::SWING_TO_HEADING:
-    snprintf(lines[0], 80, "chassis.swingToHeading(%.2f, %s, %d,", pTheta, sideLbl, timeoutMs);
-    snprintf(lines[1], 80, "  {.direction=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", dirLbl,
-             pMaxSpeed, pMinSpeed);
-    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", pEarlyExitRange);
-    break;
-  case Motion::SWING_TO_POINT:
-    snprintf(lines[0], 80, "chassis.swingToPoint(%.2f, %.2f, %s, %d,", pX, pY, sideLbl,
-             timeoutMs);
-    snprintf(lines[1], 80, "  {.forwards=%s, .direction=%s, .maxSpeed=%.0f,", fwdLbl, dirLbl,
-             pMaxSpeed);
-    snprintf(lines[2], 80, "   .minSpeed=%.0f, .earlyExitRange=%.2f});", pMinSpeed,
-             pEarlyExitRange);
-    break;
-  case Motion::MOVE_TO_POINT:
-    snprintf(lines[0], 80, "chassis.moveToPoint(%.2f, %.2f, %d,", pX, pY, timeoutMs);
-    snprintf(lines[1], 80, "  {.forwards=%s, .maxSpeed=%.0f, .minSpeed=%.0f,", fwdLbl,
-             pMaxSpeed, pMinSpeed);
-    snprintf(lines[2], 80, "   .earlyExitRange=%.2f});", pEarlyExitRange);
-    break;
-  case Motion::MOVE_TO_POSE:
-    snprintf(lines[0], 80, "chassis.moveToPose(%.2f, %.2f, %.2f, %d,", pX, pY, pTheta,
-             timeoutMs);
-    snprintf(lines[1], 80, "  {.forwards=%s, .horizontalDrift=%.2f, .lead=%.2f,", fwdLbl,
-             pHorizontalDrift, pLead);
-    snprintf(lines[2], 80, "   .maxSpeed=%.0f, .minSpeed=%.0f, .earlyExitRange=%.2f});",
-             pMaxSpeed, pMinSpeed, pEarlyExitRange);
-    break;
-  }
+// The EDIT screen's current p* parameters as one PlanStep.
+static PlanStep currentParamsAsStep() {
+  PlanStep st;
+  st.kind = (StepKind)(int)currentMotion;
+  st.x = pX;
+  st.y = pY;
+  st.theta = pTheta;
+  st.timeoutMs = (int)pTimeoutMs;
+  st.forwards = pForwardsIdx < 0.5f;
+  st.dirIdx = std::clamp((int)std::lround(pDirectionIdx), 0, 2);
+  st.sideIdx = std::clamp((int)std::lround(pSideIdx), 0, 1);
+  st.maxSpeed = pMaxSpeed;
+  st.minSpeed = pMinSpeed;
+  st.earlyExit = pEarlyExitRange;
+  st.lead = pLead;
+  st.drift = pHorizontalDrift;
+  return st;
 }
+
+static void formatMotionCode(char lines[3][80]) { formatStepCode(currentParamsAsStep(), lines); }
 
 // Full-width strip between the field plot/list and the footer -- never
 // overlaps either since it lives in the dedicated ui::CODE_Y0..CODE_Y1 gap.
@@ -742,10 +863,6 @@ static bool waitForCancel() {
 
 static void runMotion() {
   const MotionInfo &info = kMotionInfo[(int)currentMotion];
-  int timeoutMs = (int)pTimeoutMs;
-  bool forwards = pForwardsIdx < 0.5f;
-  lemlib::AngularDirection dir = directionFromIdx((int)std::lround(pDirectionIdx));
-  lemlib::DriveSide side = sideFromIdx((int)std::lround(pSideIdx));
 
   lemlib::Pose start = chassis.getPose();
   drawFieldFrame();
@@ -753,60 +870,7 @@ static void runMotion() {
   remotePlotMode = 0;
   remoteTrail.clear();
 
-  switch (currentMotion) {
-  case Motion::TURN_TO_HEADING:
-    chassis.turnToHeading(pTheta, timeoutMs,
-                          {.direction = dir,
-                           .maxSpeed = (int)pMaxSpeed,
-                           .minSpeed = (int)pMinSpeed,
-                           .earlyExitRange = pEarlyExitRange},
-                          true);
-    break;
-  case Motion::TURN_TO_POINT:
-    chassis.turnToPoint(pX, pY, timeoutMs,
-                        {.forwards = forwards,
-                         .direction = dir,
-                         .maxSpeed = (int)pMaxSpeed,
-                         .minSpeed = (int)pMinSpeed,
-                         .earlyExitRange = pEarlyExitRange},
-                        true);
-    break;
-  case Motion::SWING_TO_HEADING:
-    chassis.swingToHeading(pTheta, side, timeoutMs,
-                           {.direction = dir,
-                            .maxSpeed = pMaxSpeed,
-                            .minSpeed = pMinSpeed,
-                            .earlyExitRange = pEarlyExitRange},
-                           true);
-    break;
-  case Motion::SWING_TO_POINT:
-    chassis.swingToPoint(pX, pY, side, timeoutMs,
-                         {.forwards = forwards,
-                          .direction = dir,
-                          .maxSpeed = pMaxSpeed,
-                          .minSpeed = pMinSpeed,
-                          .earlyExitRange = pEarlyExitRange},
-                         true);
-    break;
-  case Motion::MOVE_TO_POINT:
-    chassis.moveToPoint(pX, pY, timeoutMs,
-                        {.forwards = forwards,
-                         .maxSpeed = pMaxSpeed,
-                         .minSpeed = pMinSpeed,
-                         .earlyExitRange = pEarlyExitRange},
-                        true);
-    break;
-  case Motion::MOVE_TO_POSE:
-    chassis.moveToPose(pX, pY, pTheta, timeoutMs,
-                       {.forwards = forwards,
-                        .horizontalDrift = pHorizontalDrift,
-                        .lead = pLead,
-                        .maxSpeed = pMaxSpeed,
-                        .minSpeed = pMinSpeed,
-                        .earlyExitRange = pEarlyExitRange},
-                       true);
-    break;
-  }
+  startStep(currentParamsAsStep());
 
   // isInMotion() can briefly read false right after an async motion is
   // issued, before its task has flagged itself running.
@@ -1035,6 +1099,180 @@ static void runMotorDirectionTest() {
   controller.rumble(".");
 }
 
+// ─── Laptop path planner ─────────────────────────────────────────────────
+// HOME -> PATH PLANNER lands here. The actual planning UI lives on the
+// laptop (tools/path_planner.py, opened by tools/remote_touch.py): a big
+// field map, stackable movement blocks, parameters, and code export. The
+// brain just holds the block list the laptop sends it, runs it on request
+// exactly the way an autonomous routine would, and shows the live plot
+// here so the two screens agree. The old on-brain editor is still one tap
+// away (BRAIN EDITOR) for when there's no laptop around.
+static std::vector<PlanStep> plan;
+static const size_t kMaxPlanSteps = 48;
+enum class PlanStatus { IDLE, RUNNING, DONE, CANCELLED };
+static PlanStatus planStatus = PlanStatus::IDLE;
+static int planStepIdx = -1;                      // step being run / last run
+static std::vector<std::pair<float, float>> planPath; // robot path in inches, for the laptop map
+static const Rect kBrainEditor = {10, 140, 150, 166};
+
+static const char *planStatusText() {
+  switch (planStatus) {
+  case PlanStatus::RUNNING:
+    return "RUNNING";
+  case PlanStatus::DONE:
+    return "DONE";
+  case PlanStatus::CANCELLED:
+    return "CANCELLED";
+  default:
+    return "IDLE";
+  }
+}
+
+static void drawPlannerScreen() {
+  using namespace ui;
+  clearScreen();
+  drawHeader("PATH PLANNER", "LAPTOP", ORANGE);
+  drawBackButton();
+
+  pros::screen::set_eraser(BG);
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 2, "Plan on the laptop:");
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 14, "tools/remote_touch.py");
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 34, "%d step%s", (int)plan.size(),
+                      plan.size() == 1 ? "" : "s");
+  pros::screen::set_pen(planStatus == PlanStatus::CANCELLED ? TARGET_LINE
+                        : planStatus == PlanStatus::RUNNING ? CYAN
+                                                            : GRAY);
+  if (planStepIdx >= 0)
+    pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 46, "%s %d/%d", planStatusText(),
+                        planStepIdx + 1, (int)plan.size());
+  else
+    pros::screen::print(pros::E_TEXT_SMALL, 10, FY + 46, "%s", planStatusText());
+
+  fillRoundedRect(kBrainEditor.x0, kBrainEditor.y0, kBrainEditor.x1, kBrainEditor.y1, 6, CARD);
+  pros::screen::set_eraser(CARD);
+  pros::screen::set_pen(CYAN);
+  pros::screen::print(pros::E_TEXT_SMALL, kBrainEditor.x0 + 10, kBrainEditor.y0 + 7,
+                      "BRAIN EDITOR >");
+
+  drawFieldFrame();
+  // Trail so far, then the robot's live pose on top.
+  pros::screen::set_pen(PATH_LINE);
+  for (size_t i = 1; i < remoteTrail.size(); i++)
+    pros::screen::draw_line(remoteTrail[i - 1].first, remoteTrail[i - 1].second,
+                            remoteTrail[i].first, remoteTrail[i].second);
+  lemlib::Pose pose = chassis.getPose();
+  drawHeadingIndicator(pose.x, pose.y, pose.theta);
+  remotePlotMode = 3;
+  remoteLivePose = pose;
+
+  // Current / last step's code in the strip, footer with the pose.
+  pros::screen::set_pen(CARD);
+  pros::screen::fill_rect(10, CODE_Y0, 470, CODE_Y1);
+  pros::screen::set_pen(AXIS);
+  pros::screen::draw_rect(10, CODE_Y0, 470, CODE_Y1);
+  if (planStepIdx >= 0 && planStepIdx < (int)plan.size()) {
+    char lines[3][80];
+    formatStepCode(plan[planStepIdx], lines);
+    pros::screen::set_eraser(CARD);
+    pros::screen::set_pen(GREEN);
+    for (int i = 0; i < 3; i++)
+      if (lines[i][0])
+        pros::screen::print(pros::E_TEXT_SMALL, 16, CODE_Y0 + 3 + i * 12, "%s", lines[i]);
+  }
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "pose (%.1f, %.1f) hdg %.1f   A:run all  X:stop",
+                      pose.x, pose.y, pose.theta);
+}
+
+// Runs one step to completion, drawing the plot live. Returns false if
+// the run was cancelled (controller X or the laptop's stop).
+static bool runPlanStep(const PlanStep &st) {
+  if (st.kind == StepKind::SET_POSE) {
+    chassis.setPose(st.x, st.y, st.theta);
+    remoteTrail.clear();
+    planPath.clear();
+    drawPlannerScreen();
+    return true;
+  }
+  if (st.kind == StepKind::WAIT) {
+    uint32_t until = pros::millis() + st.timeoutMs;
+    while (pros::millis() < until) {
+      if (waitForCancel())
+        return false;
+      sendRemoteUiState();
+      pros::delay(20);
+    }
+    return true;
+  }
+
+  lemlib::Pose start = chassis.getPose();
+  int prevX, prevY;
+  toPixel(start.x, start.y, prevX, prevY);
+  if (remoteTrail.empty())
+    remoteTrail.push_back({(int16_t)prevX, (int16_t)prevY});
+  if (planPath.empty())
+    planPath.push_back({start.x, start.y});
+
+  startStep(st);
+  pros::delay(10);
+  while (chassis.isInMotion()) {
+    if (waitForCancel())
+      return false;
+    lemlib::Pose pose = chassis.getPose();
+    int px, py;
+    toPixel(pose.x, pose.y, px, py);
+    pros::screen::set_pen(ui::PATH_LINE);
+    pros::screen::draw_line(prevX, prevY, px, py);
+    prevX = px;
+    prevY = py;
+    remoteTrail.push_back({(int16_t)px, (int16_t)py});
+    planPath.push_back({pose.x, pose.y});
+    remoteLivePose = pose;
+    sendRemoteUiState();
+    pros::delay(20);
+  }
+  chassis.waitUntilDone();
+  return true;
+}
+
+// Runs the whole plan (only < 0) or just step `only`.
+static void runPlan(int only) {
+  if (plan.empty())
+    return;
+  int from = only < 0 ? 0 : std::clamp(only, 0, (int)plan.size() - 1);
+  int to = only < 0 ? (int)plan.size() - 1 : from;
+  if (only < 0) {
+    remoteTrail.clear();
+    planPath.clear();
+  }
+  planStatus = PlanStatus::RUNNING;
+  takeRemoteKey(RK_X); // don't let a stale stop cancel the first step
+  printf("PLAN START %d..%d\n", from, to);
+  for (int i = from; i <= to; i++) {
+    planStepIdx = i;
+    drawPlannerScreen();
+    sendRemoteUiState(true);
+    if (!runPlanStep(plan[i])) {
+      planStatus = PlanStatus::CANCELLED;
+      controller.rumble("-");
+      drawPlannerScreen();
+      sendRemoteUiState(true);
+      printf("PLAN CANCELLED at %d\n", i);
+      return;
+    }
+  }
+  planStatus = PlanStatus::DONE;
+  controller.rumble(".");
+  drawPlannerScreen();
+  sendRemoteUiState(true);
+  printf("PLAN DONE\n");
+}
+
 // ─── Remote touch bridge ──────────────────────────────────────────────────
 // Lets a laptop mirror this menu over the same USB cable already used by
 // `pros terminal` and "tap" it remotely -- see tools/remote_touch.py for
@@ -1063,6 +1301,12 @@ static void runMotorDirectionTest() {
 //   RATE <ms>            how often to send the RUI state line. The laptop
 //                        asks for a slower rate when it's talking through
 //                        the controller's radio link instead of a cable.
+//   PLAN CLEAR           drop the block list
+//   PLAN ADD k x y th t fwd dir side max min exit lead drift
+//                        append one step (k = StepKind index)
+//   PLAN RUN [i]         run the whole plan, or just step i
+//   PLAN STOP            cancel a running plan (same as controller X)
+//   POSE x y th          chassis.setPose(x, y, th) right now
 struct RemoteTouch {
   bool pending = false;
   int x = 0, y = 0;
@@ -1076,18 +1320,60 @@ struct RemoteInput {
   int setIndex = -1;          // -1 = none pending
   char setValue[24] = "";
   int sendIntervalMs = 150;   // RUI line period (see sendRemoteUiState)
+  bool planClear = false;
+  std::vector<PlanStep> planAdds;
+  int planRun = -2;           // -2 = none pending, -1 = all, >= 0 = that step
+  bool poseSet = false;
+  float poseX = 0, poseY = 0, poseTheta = 0;
 };
 static RemoteInput remoteInput;
 static pros::Mutex remoteTouchMutex;
 
 static void remoteTouchListenerTask(void *) {
-  char line[64];
+  char line[160];
   while (true) {
     if (!fgets(line, sizeof(line), stdin))
       continue;
     int x, y, idx;
     char name[16], value[24];
-    if (sscanf(line, "TOUCH %d %d", &x, &y) == 2) {
+    float fx, fy, ft;
+    if (strncmp(line, "PLAN ", 5) == 0) {
+      const char *rest = line + 5;
+      PlanStep st;
+      int k, fwd;
+      if (strncmp(rest, "CLEAR", 5) == 0) {
+        remoteTouchMutex.take();
+        remoteInput.planClear = true;
+        remoteInput.planAdds.clear();
+        remoteTouchMutex.give();
+      } else if (sscanf(rest, "ADD %d %f %f %f %d %d %d %d %f %f %f %f %f", &k, &st.x, &st.y,
+                        &st.theta, &st.timeoutMs, &fwd, &st.dirIdx, &st.sideIdx, &st.maxSpeed,
+                        &st.minSpeed, &st.earlyExit, &st.lead, &st.drift) == 13) {
+        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::SET_POSE);
+        st.forwards = fwd != 0;
+        remoteTouchMutex.take();
+        if (remoteInput.planAdds.size() < kMaxPlanSteps)
+          remoteInput.planAdds.push_back(st);
+        remoteTouchMutex.give();
+      } else if (strncmp(rest, "RUN", 3) == 0) {
+        int only = -1;
+        sscanf(rest, "RUN %d", &only);
+        remoteTouchMutex.take();
+        remoteInput.planRun = only;
+        remoteTouchMutex.give();
+      } else if (strncmp(rest, "STOP", 4) == 0) {
+        remoteTouchMutex.take();
+        remoteInput.key[RK_X] = true;
+        remoteTouchMutex.give();
+      }
+    } else if (sscanf(line, "POSE %f %f %f", &fx, &fy, &ft) == 3) {
+      remoteTouchMutex.take();
+      remoteInput.poseSet = true;
+      remoteInput.poseX = fx;
+      remoteInput.poseY = fy;
+      remoteInput.poseTheta = ft;
+      remoteTouchMutex.give();
+    } else if (sscanf(line, "TOUCH %d %d", &x, &y) == 2) {
       remoteTouchMutex.take();
       remoteInput.touch = {true, x, y};
       remoteTouchMutex.give();
@@ -1195,6 +1481,48 @@ static bool applyRemoteFieldEdits() {
   return dirty;
 }
 
+// Applies pending PLAN */POSE commands. Returns true if a run was
+// requested (the caller decides whether/where to run it).
+static bool applyRemotePlanCommands(int &runWhich) {
+  bool clear, poseSet;
+  float px, py, pt;
+  std::vector<PlanStep> adds;
+  remoteTouchMutex.take();
+  clear = remoteInput.planClear;
+  adds.swap(remoteInput.planAdds);
+  runWhich = remoteInput.planRun;
+  poseSet = remoteInput.poseSet;
+  px = remoteInput.poseX;
+  py = remoteInput.poseY;
+  pt = remoteInput.poseTheta;
+  remoteInput.planClear = false;
+  remoteInput.planRun = -2;
+  remoteInput.poseSet = false;
+  remoteTouchMutex.give();
+
+  bool changed = false;
+  if (clear) {
+    plan.clear();
+    planStepIdx = -1;
+    planStatus = PlanStatus::IDLE;
+    changed = true;
+  }
+  for (const PlanStep &st : adds) {
+    if (plan.size() < kMaxPlanSteps)
+      plan.push_back(st);
+    changed = true;
+  }
+  if (poseSet) {
+    chassis.setPose(px, py, pt);
+    remoteTrail.clear();
+    planPath.clear();
+    changed = true;
+  }
+  if (changed && screen == Screen::PLANNER)
+    drawPlannerScreen();
+  return runWhich != -2;
+}
+
 // Appends one "x0,y0,x1,y1,Label;" element to `buf` (bounds-checked via
 // snprintf's return value the same way the rest of this file builds
 // strings), for every visible button of a GridItem screen.
@@ -1257,6 +1585,9 @@ static void sendRemoteUiState(bool force) {
   motorsBuf[0] = '\0';
   int motorsN = 0;
   char scrollBuf[8] = "";
+  char planBuf[32] = "";
+  char pathBuf[1024];
+  pathBuf[0] = '\0';
   char plotBuf[128] = "";
   char trailBuf[1400];
   trailBuf[0] = '\0';
@@ -1333,6 +1664,45 @@ static void sendRemoteUiState(bool force) {
     }
     break;
   }
+  case Screen::PLANNER: {
+    screenTag = "PLANNER";
+    breadcrumb = "LAPTOP";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    btnN += snprintf(btnBuf + btnN, sizeof(btnBuf) - btnN, "%d,%d,%d,%d,BRAIN EDITOR;",
+                     kBrainEditor.x0, kBrainEditor.y0, kBrainEditor.x1, kBrainEditor.y1);
+    lemlib::Pose pose = planStatus == PlanStatus::RUNNING ? remoteLivePose : chassis.getPose();
+    snprintf(plotBuf, sizeof(plotBuf), "3,0,0,0,0,0,%.2f,%.2f,%.2f", pose.x, pose.y, pose.theta);
+    snprintf(planBuf, sizeof(planBuf), "%d,%d,%d", (int)planStatus, planStepIdx, (int)plan.size());
+    snprintf(footerBuf, sizeof(footerBuf), "pose (%.1f, %.1f) hdg %.1f   A:run all  X:stop",
+             pose.x, pose.y, pose.theta);
+    if (planStepIdx >= 0 && planStepIdx < (int)plan.size()) {
+      char codeLines[3][80];
+      formatStepCode(plan[planStepIdx], codeLines);
+      snprintf(codeBuf, sizeof(codeBuf), "%s~%s~%s", codeLines[0], codeLines[1], codeLines[2]);
+    }
+    // Pixel trail for the brain-screen mirror, inch path for the map.
+    const int kMaxPts = 80;
+    int total = (int)remoteTrail.size();
+    int stride = std::max(1, (total + kMaxPts - 1) / kMaxPts);
+    for (int i = 0; i < total; i += stride) {
+      int w = snprintf(trailBuf + trailN, sizeof(trailBuf) - trailN, "%d,%d;",
+                       (int)remoteTrail[i].first, (int)remoteTrail[i].second);
+      if (w < 0 || trailN + w >= (int)sizeof(trailBuf))
+        break;
+      trailN += w;
+    }
+    int pathN = 0;
+    total = (int)planPath.size();
+    stride = std::max(1, (total + kMaxPts - 1) / kMaxPts);
+    for (int i = 0; i < total; i += stride) {
+      int w = snprintf(pathBuf + pathN, sizeof(pathBuf) - pathN, "%.1f,%.1f;",
+                       planPath[i].first, planPath[i].second);
+      if (w < 0 || pathN + w >= (int)sizeof(pathBuf))
+        break;
+      pathN += w;
+    }
+    break;
+  }
   case Screen::MOTOR_TEST: {
     screenTag = "MOTOR_TEST";
     appendBackElement(btnBuf, btnN, sizeof(btnBuf));
@@ -1361,15 +1731,16 @@ static void sendRemoteUiState(bool force) {
   // sent (or a heartbeat is due). Idle screens then cost the link
   // nothing, which matters over the controller's radio: every byte we
   // push out delays the taps coming back in.
-  static char line[3072];
-  static char lastLine[3072] = "";
+  static char line[4200];
+  static char lastLine[4200] = "";
   static uint32_t lastActualSend = 0;
   const uint32_t kHeartbeatMs = 1000;
   snprintf(line, sizeof(line),
            "RUI|%s|%s|BTN:%s|FIELDS:%s|FOOTER:%s|CODE:%s|MOTORS:%s|SCROLL:%s|STEP:%.2f|FOOTC:%d"
-           "|PLOT:%s|TRAIL:%s|SEL:%d|ACTIVE:%d,%d",
+           "|PLOT:%s|TRAIL:%s|SEL:%d|ACTIVE:%d,%d|PLAN:%s|PATH:%s",
            screenTag, breadcrumb, btnBuf, fieldsBuf, footerBuf, codeBuf, motorsBuf, scrollBuf, step,
-           footerCancelled, plotBuf, trailBuf, selectedField, activeSide, activeIdx);
+           footerCancelled, plotBuf, trailBuf, selectedField, activeSide, activeIdx, planBuf,
+           pathBuf);
   bool changed = strcmp(line, lastLine) != 0;
   if (!force && !changed && pros::millis() - lastActualSend < kHeartbeatMs)
     return;
@@ -1382,7 +1753,7 @@ static void sendRemoteUiState(bool force) {
 // -- tell the laptop so it can say so instead of showing a stale HOME.
 static void sendRemoteHandoff(const char *what) {
   printf("RUI|HANDOFF|%s|BTN:|FIELDS:|FOOTER:|CODE:|MOTORS:|SCROLL:|STEP:0|FOOTC:0|PLOT:|TRAIL:"
-         "|SEL:0|ACTIVE:-1,-1\n", what);
+         "|SEL:0|ACTIVE:-1,-1|PLAN:|PATH:\n", what);
 }
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
@@ -1405,6 +1776,11 @@ static void goLateralList() {
   screen = Screen::LATERAL_LIST;
   scrollOffset = 0;
   drawLateralList();
+}
+static void goPlanner() {
+  screen = Screen::PLANNER;
+  scrollOffset = 0;
+  drawPlannerScreen();
 }
 static void goMotorTest() {
   screen = Screen::MOTOR_TEST;
@@ -1489,7 +1865,7 @@ void driverMenuControl() {
           pidTunerControl(); // returns once its own BACK button is tapped
           goHome();
         } else if (hit == 1) {
-          goPathType();
+          goPlanner();
         } else if (hit == 2) {
           goMotorTest();
         } else if (hit == 3) {
@@ -1553,6 +1929,23 @@ void driverMenuControl() {
           goHome();
         }
         break;
+      case Screen::PLANNER:
+        if (inRect(kBack, x, y))
+          goHome();
+        else if (inRect(kBrainEditor, x, y))
+          goPathType();
+        break;
+      }
+    }
+
+    // Laptop planner: block list edits apply anywhere; a run request pulls
+    // the brain onto the planner screen first so its plot shows the run.
+    {
+      int runWhich;
+      if (applyRemotePlanCommands(runWhich)) {
+        if (screen != Screen::PLANNER)
+          goPlanner();
+        runPlan(runWhich);
       }
     }
 
@@ -1567,6 +1960,9 @@ void driverMenuControl() {
     bool l1Edge = btnL1.pressed() || takeRemoteKey(RK_L1);
     bool l2Edge = btnL2.pressed() || takeRemoteKey(RK_L2);
     takeRemoteKey(RK_X); // only meaningful mid-run (waitForCancel); drop stale ones
+
+    if (screen == Screen::PLANNER && aEdge)
+      runPlan(-1);
 
     if (screen == Screen::EDIT && !fields.empty()) {
       bool dirty = leftEdge || rightEdge || l1Edge || l2Edge;
