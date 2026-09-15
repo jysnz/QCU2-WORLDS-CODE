@@ -4,9 +4,12 @@
 // The touchscreen entry point for driver control. Shown as soon as
 // opcontrol() starts, replacing the old "hold DPAD-LEFT/UP" scheme:
 //
-//   HOME              [ PID TUNING ] [ PATH PLANNER ] [ DRIVE ]
+//   HOME              [ PID TUNING ] [ PATH PLANNER ] [ TEST MOTORS ] [ DRIVE ]
 //     - PID TUNING      hands off to pidTunerControl() (see pid_tuner.hpp);
 //                       its own BACK button returns here to the home menu.
+//     - TEST MOTORS     spins every drivetrain motor one at a time and
+//                       reports, per port, whether it's configured as
+//                       reversed ("Negative") or not ("Positive").
 //     - DRIVE           dismisses the menu; opcontrol() falls through to
 //                       normal joystick driving.
 //     - PATH PLANNER    [ ANGULAR ] [ LATERAL ]                  [BACK]
@@ -31,6 +34,11 @@
 // to normal driving; picking PID TUNING or a motion hands off to a loop
 // that owns the brain screen until its own BACK button is tapped, at which
 // point this menu resumes.
+//
+// Every screen's touchscreen buttons can also be tapped remotely from a
+// laptop over the same USB cable used by `pros terminal` -- see the
+// "Remote touch bridge" section in driver_menu.cpp and
+// tools/remote_touch.py for the companion app.
 void driverMenuControl();
 
 // True while this menu (or one of its Path Planner screens) owns the brain

@@ -24,6 +24,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <strings.h>
 #include <vector>
 
 bool driverMenuActive = false;
@@ -142,6 +144,17 @@ static void drawCrosshair(float x, float y) {
   pros::screen::draw_line(px, py - 6, px, py + 6);
   pros::screen::draw_circle(px, py, 3);
 }
+
+// What the field plot is currently showing, tracked purely so the remote
+// mirror (see "Remote touch bridge" below) can redraw the same thing:
+//   0  target indicator only (drawEditUI)
+//   1  target indicator + the green trail runMotion() draws as it goes
+//   2  live heading arrow at the robot's pose (heading-only motions while
+//      running -- drawFieldFrame() wipes the target indicator there)
+// The trail is kept in brain-screen pixels, same as the lines drawn.
+static int remotePlotMode = 0;
+static std::vector<std::pair<int16_t, int16_t>> remoteTrail;
+static lemlib::Pose remoteLivePose{0, 0, 0};
 
 // Heading is compass-style: 0 = +y, increasing clockwise.
 static void drawHeadingIndicator(float originX, float originY, float headingDeg) {
@@ -506,38 +519,44 @@ static void drawTargetIndicator() {
   }
 }
 
-static void drawFooter() {
-  using namespace ui;
-  pros::screen::set_pen(FOOTER_BG);
-  pros::screen::fill_rect(0, 215, 480, 240);
-  pros::screen::set_pen(lastResult.cancelled ? TARGET_LINE : GRAY);
+// Builds the footer's status line into `buf` -- pulled out of drawFooter()
+// so the exact same text can also go out over the remote-touch bridge
+// (see sendRemoteUiState()) instead of being re-derived by hand there.
+static void buildFooterText(char *buf, size_t cap) {
   if (!lastResult.ran) {
-    pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
-                        "no run yet -- press A to go, X to cancel one");
+    snprintf(buf, cap, "no run yet -- press A to go, X to cancel one");
     return;
   }
-  char buf[100];
   int n = 0;
   if (lastResult.cancelled)
-    n += snprintf(buf + n, sizeof(buf) - n, "CANCELLED // ");
+    n += snprintf(buf + n, cap - n, "CANCELLED // ");
   switch (lastResult.kind) {
   case ErrorKind::HEADING:
   case ErrorKind::FACE_POINT:
-    n += snprintf(buf + n, sizeof(buf) - n, "final hdg %.2f // err %.2f deg ",
+    n += snprintf(buf + n, cap - n, "final hdg %.2f // err %.2f deg ",
                   lastResult.finalHeading, lastResult.headingError);
     break;
   case ErrorKind::POSITION:
-    n += snprintf(buf + n, sizeof(buf) - n, "final (%.2f, %.2f) // err %.2f in ",
+    n += snprintf(buf + n, cap - n, "final (%.2f, %.2f) // err %.2f in ",
                   lastResult.finalX, lastResult.finalY, lastResult.posError);
     break;
   case ErrorKind::POSITION_AND_HEADING:
-    n += snprintf(buf + n, sizeof(buf) - n,
+    n += snprintf(buf + n, cap - n,
                   "final (%.2f, %.2f) hdg %.2f // %.2fin %.2fdeg ",
                   lastResult.finalX, lastResult.finalY, lastResult.finalHeading,
                   lastResult.posError, lastResult.headingError);
     break;
   }
-  snprintf(buf + n, sizeof(buf) - n, "// %dms", lastResult.durationMs);
+  snprintf(buf + n, cap - n, "// %dms", lastResult.durationMs);
+}
+
+static void drawFooter() {
+  using namespace ui;
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_pen(lastResult.cancelled ? TARGET_LINE : GRAY);
+  char buf[100];
+  buildFooterText(buf, sizeof(buf));
   pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "%s", buf);
 }
 
@@ -629,6 +648,8 @@ static void drawEditUI() {
   clearScreen();
   drawHeader(info.name, info.angular ? "ANGULAR" : "LATERAL", info.angular ? CYAN : ORANGE);
   drawBackButton();
+  remotePlotMode = 0;
+  remoteTrail.clear();
 
   // Scrollable field list, left column -- auto-scrolls to keep the
   // selected field visible since some motions have up to 9 fields.
@@ -704,9 +725,15 @@ static void drawEditControllerUI() {
   line = (line + 1) % 3;
 }
 
+// Defined in the "Remote touch bridge" section below; `force` skips the
+// send-rate throttle for one-off pushes right after the screen changed.
+static void sendRemoteUiState(bool force = false);
+enum RemoteKey { RK_LEFT, RK_RIGHT, RK_UP, RK_DOWN, RK_A, RK_B, RK_X, RK_L1, RK_L2, RK_COUNT };
+static bool takeRemoteKey(RemoteKey k);
+
 // ─── Running a motion ────────────────────────────────────────────────────────
 static bool waitForCancel() {
-  if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
+  if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X) || takeRemoteKey(RK_X)) {
     chassis.cancelMotion();
     return true;
   }
@@ -723,6 +750,8 @@ static void runMotion() {
   lemlib::Pose start = chassis.getPose();
   drawFieldFrame();
   drawTargetIndicator();
+  remotePlotMode = 0;
+  remoteTrail.clear();
 
   switch (currentMotion) {
   case Motion::TURN_TO_HEADING:
@@ -786,6 +815,10 @@ static void runMotion() {
   uint32_t startMs = pros::millis();
   int prevX, prevY;
   toPixel(start.x, start.y, prevX, prevY);
+  if (info.hasPointTarget) {
+    remotePlotMode = 1;
+    remoteTrail.push_back({(int16_t)prevX, (int16_t)prevY});
+  }
 
   bool cancelled = false;
   printf("CSV,ms,x,y,theta\n");
@@ -805,12 +838,16 @@ static void runMotion() {
       pros::screen::draw_line(prevX, prevY, px, py);
       prevX = px;
       prevY = py;
+      remoteTrail.push_back({(int16_t)px, (int16_t)py});
     } else {
       drawFieldFrame();
       drawHeadingIndicator(pose.x, pose.y, pose.theta);
+      remotePlotMode = 2;
+      remoteLivePose = pose;
     }
 
     printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, pose.x, pose.y, pose.theta);
+    sendRemoteUiState(); // keep the laptop's plot moving with the brain's
     pros::delay(20);
   }
   chassis.waitUntilDone();
@@ -850,6 +887,7 @@ static void runMotion() {
          lastResult.durationMs);
   controller.rumble(cancelled ? "-" : ".");
   drawFooter();
+  sendRemoteUiState(true); // footer changed; push it right away
 }
 
 // ─── Motor direction test ──────────────────────────────────────────────────
@@ -926,8 +964,11 @@ static const Rect kMotorTestRightPanel = {247, 58, 470, 210};
 
 // Full redraw -- called after every single motor's result comes in so the
 // screen always reflects the latest state without needing a timer/poll.
+static int motorTestActiveSide = -1, motorTestActiveIdx = -1;
 static void drawMotorTestScreen(int activeSide, int activeIdx) {
   using namespace ui;
+  motorTestActiveSide = activeSide;
+  motorTestActiveIdx = activeIdx;
   clearScreen();
   drawHeader("TEST MOTORS", "DRIVETRAIN", CYAN);
   drawBackButton();
@@ -943,6 +984,7 @@ static void drawMotorTestScreen(int activeSide, int activeIdx) {
   pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
                       motorTestDone ? "done -- tap BACK to return"
                                     : "testing -- keep the drivetrain clear");
+  sendRemoteUiState(true); // this screen only redraws on change, so push each one
 }
 
 // Spins one motor -- through its actual configured (possibly reversed)
@@ -991,6 +1033,356 @@ static void runMotorDirectionTest() {
   drawMotorTestScreen(-1, -1);
   controller.print(1, 0, "done                 ");
   controller.rumble(".");
+}
+
+// ─── Remote touch bridge ──────────────────────────────────────────────────
+// Lets a laptop mirror this menu over the same USB cable already used by
+// `pros terminal` and "tap" it remotely -- see tools/remote_touch.py for
+// the companion app. Two directions, both riding on stdout/stdin:
+//   robot -> laptop   a `pros terminal`-safe line describing every
+//                      touchable button on the current screen (see
+//                      sendRemoteUiState()), sent a few times a second.
+//   laptop -> robot    a "TOUCH <x> <y>" line, read here and turned into
+//                      a synthetic touch-down the menu loop handles
+//                      exactly like a real one.
+// Only touchscreen taps are bridged -- EDIT/MOTOR_TEST field editing still
+// needs the physical controller, same as it always has.
+
+// Reading stdin blocks (there's no documented non-blocking mode for it),
+// so it lives in its own low-priority task rather than the menu loop --
+// blocking there can't stall drawing or button handling.
+// Everything the laptop can send, all guarded by one mutex:
+//   TOUCH <x> <y>        synthetic screen tap
+//   KEY <name>           one press of a controller button, by name
+//                        (LEFT RIGHT UP DOWN A B X L1 L2) -- handled on
+//                        the next loop tick exactly like a real edge
+//   SEL <index>          select EDIT field #index outright
+//   SET <index> <value>  type a value straight into EDIT field #index
+//                        (numeric, clamped to the field's range; for a
+//                        CHOICE field either the choice index or its label)
+//   RATE <ms>            how often to send the RUI state line. The laptop
+//                        asks for a slower rate when it's talking through
+//                        the controller's radio link instead of a cable.
+struct RemoteTouch {
+  bool pending = false;
+  int x = 0, y = 0;
+};
+static const char *const kRemoteKeyNames[RK_COUNT] = {"LEFT", "RIGHT", "UP", "DOWN", "A",
+                                                       "B",    "X",     "L1", "L2"};
+struct RemoteInput {
+  RemoteTouch touch;
+  bool key[RK_COUNT] = {};
+  int selIndex = -1;          // -1 = none pending
+  int setIndex = -1;          // -1 = none pending
+  char setValue[24] = "";
+  int sendIntervalMs = 150;   // RUI line period (see sendRemoteUiState)
+};
+static RemoteInput remoteInput;
+static pros::Mutex remoteTouchMutex;
+
+static void remoteTouchListenerTask(void *) {
+  char line[64];
+  while (true) {
+    if (!fgets(line, sizeof(line), stdin))
+      continue;
+    int x, y, idx;
+    char name[16], value[24];
+    if (sscanf(line, "TOUCH %d %d", &x, &y) == 2) {
+      remoteTouchMutex.take();
+      remoteInput.touch = {true, x, y};
+      remoteTouchMutex.give();
+    } else if (sscanf(line, "KEY %15s", name) == 1) {
+      for (int k = 0; k < RK_COUNT; k++) {
+        if (strcmp(name, kRemoteKeyNames[k]) == 0) {
+          remoteTouchMutex.take();
+          remoteInput.key[k] = true;
+          remoteTouchMutex.give();
+        }
+      }
+    } else if (sscanf(line, "SET %d %23s", &idx, value) == 2) {
+      remoteTouchMutex.take();
+      remoteInput.setIndex = idx;
+      snprintf(remoteInput.setValue, sizeof(remoteInput.setValue), "%s", value);
+      remoteTouchMutex.give();
+    } else if (sscanf(line, "SEL %d", &idx) == 1) {
+      remoteTouchMutex.take();
+      remoteInput.selIndex = idx;
+      remoteTouchMutex.give();
+    } else if (sscanf(line, "RATE %d", &idx) == 1) {
+      remoteTouchMutex.take();
+      remoteInput.sendIntervalMs = std::clamp(idx, 50, 2000);
+      remoteTouchMutex.give();
+    }
+  }
+}
+
+// Starts the listener the first time the menu is opened -- it then just
+// keeps running for the rest of the program, same as the HUD task.
+static void ensureRemoteTouchListener() {
+  static bool started = false;
+  if (!started) {
+    started = true;
+    pros::Task(remoteTouchListenerTask, nullptr, "remote touch listener");
+  }
+}
+
+// Pulls the latest pending remote touch (if any), clearing it -- shaped
+// like a physical touch-down edge so the caller can treat the two
+// identically.
+static bool takeRemoteTouch(int &x, int &y) {
+  bool got = false;
+  remoteTouchMutex.take();
+  if (remoteInput.touch.pending) {
+    got = true;
+    x = remoteInput.touch.x;
+    y = remoteInput.touch.y;
+    remoteInput.touch.pending = false;
+  }
+  remoteTouchMutex.give();
+  return got;
+}
+
+// One-shot read of a remote key press -- true once per KEY line received,
+// so it composes with EdgeButton::pressed() as `edge || takeRemoteKey(k)`.
+static bool takeRemoteKey(RemoteKey k) {
+  remoteTouchMutex.take();
+  bool got = remoteInput.key[k];
+  remoteInput.key[k] = false;
+  remoteTouchMutex.give();
+  return got;
+}
+
+// Applies any pending SEL/SET to the EDIT fields. Returns true if the
+// screen needs a redraw. Out-of-range indexes are ignored; values are
+// clamped exactly as UP/DOWN nudging clamps them.
+static bool applyRemoteFieldEdits() {
+  int selIdx, setIdx;
+  char value[24];
+  remoteTouchMutex.take();
+  selIdx = remoteInput.selIndex;
+  setIdx = remoteInput.setIndex;
+  snprintf(value, sizeof(value), "%s", remoteInput.setValue);
+  remoteInput.selIndex = remoteInput.setIndex = -1;
+  remoteTouchMutex.give();
+
+  bool dirty = false;
+  if (selIdx >= 0 && selIdx < (int)fields.size()) {
+    selectedField = selIdx;
+    dirty = true;
+  }
+  if (setIdx >= 0 && setIdx < (int)fields.size()) {
+    FieldDef &f = fields[setIdx];
+    if (f.kind == FieldKind::CHOICE) {
+      int idx = -1;
+      for (int i = 0; i < f.numChoices; i++)
+        if (strcasecmp(value, f.choices[i]) == 0)
+          idx = i;
+      if (idx < 0 && sscanf(value, "%d", &idx) != 1)
+        idx = -1;
+      if (idx >= 0 && idx < f.numChoices) {
+        *f.value = (float)idx;
+        dirty = true;
+      }
+    } else {
+      float v;
+      if (sscanf(value, "%f", &v) == 1) {
+        *f.value = std::clamp(v, f.minV, f.maxV);
+        dirty = true;
+      }
+    }
+    selectedField = setIdx;
+  }
+  return dirty;
+}
+
+// Appends one "x0,y0,x1,y1,Label;" element to `buf` (bounds-checked via
+// snprintf's return value the same way the rest of this file builds
+// strings), for every visible button of a GridItem screen.
+static void appendGridElements(char *buf, int &n, size_t cap, const GridItem *items, int count) {
+  for (int i = 0; i < count; i++) {
+    int row = i / GRID_COLS - scrollOffset;
+    if (row < 0 || row >= GRID_VISIBLE_ROWS)
+      continue;
+    Rect r = gridItemRect(i);
+    n += snprintf(buf + n, cap - n, "%d,%d,%d,%d,%s;", r.x0, r.y0, r.x1, r.y1, items[i].label);
+  }
+  if (gridMaxScroll(count) > 0) {
+    n += snprintf(buf + n, cap - n, "%d,%d,%d,%d,^;", kScrollUp.x0, kScrollUp.y0, kScrollUp.x1,
+                  kScrollUp.y1);
+    n += snprintf(buf + n, cap - n, "%d,%d,%d,%d,v;", kScrollDown.x0, kScrollDown.y0,
+                  kScrollDown.x1, kScrollDown.y1);
+  }
+}
+
+// "canUp,canDown" for the grid's scroll sidebar -- mirrors drawGrid()'s
+// dimming logic so the laptop can dim the same arrows.
+static void formatScrollState(char *buf, size_t cap, int count) {
+  snprintf(buf, cap, "%d,%d", scrollOffset > 0 ? 1 : 0,
+           scrollOffset < gridMaxScroll(count) ? 1 : 0);
+}
+
+static void appendBackElement(char *buf, int &n, size_t cap) {
+  n += snprintf(buf + n, cap - n, "%d,%d,%d,%d,BACK;", kBack.x0, kBack.y0, kBack.x1, kBack.y1);
+}
+
+// One line per update:
+//   RUI|<screen>|<breadcrumb>|BTN:...|FIELDS:...|FOOTER:...|CODE:...|MOTORS:...
+//      |SCROLL:up,down|STEP:d|FOOTC:c|PLOT:mode,hasPt,hasHdg,x,y,th,px,py,pth
+//      |TRAIL:x,y;x,y;...|SEL:i|ACTIVE:side,idx
+// Tagged segments so screens that don't have some kind of content (e.g.
+// HOME has no field list) just send it empty rather than needing a
+// different line shape per screen. Sent a few times a second (not every
+// loop tick -- no need to spam the link) so a laptop app can redraw its
+// mirror without polling. This carries *every* input the brain's own
+// draw*() functions read, so the laptop can run a port of the same
+// drawing code and come out pixel-for-pixel the same layout.
+static void sendRemoteUiState(bool force) {
+  static uint32_t lastSend = 0;
+  remoteTouchMutex.take();
+  uint32_t interval = remoteInput.sendIntervalMs;
+  remoteTouchMutex.give();
+  if (!force && pros::millis() - lastSend < interval)
+    return;
+  lastSend = pros::millis();
+
+  char btnBuf[512];
+  btnBuf[0] = '\0';
+  int btnN = 0;
+  char fieldsBuf[256];
+  fieldsBuf[0] = '\0';
+  int fieldsN = 0;
+  char footerBuf[100] = "";
+  char codeBuf[256] = "";
+  char motorsBuf[256];
+  motorsBuf[0] = '\0';
+  int motorsN = 0;
+  char scrollBuf[8] = "";
+  char plotBuf[128] = "";
+  char trailBuf[1400];
+  trailBuf[0] = '\0';
+  int trailN = 0;
+  float step = digitStep();
+  int footerCancelled = 0;
+  int activeSide = -1, activeIdx = -1;
+
+  const char *screenTag = "HOME", *breadcrumb = "-";
+
+  switch (screen) {
+  case Screen::HOME:
+    screenTag = "HOME";
+    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kHomeItems, 4);
+    formatScrollState(scrollBuf, sizeof(scrollBuf), 4);
+    break;
+  case Screen::PATH_TYPE:
+    screenTag = "PATH_TYPE";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kPathItems, 2);
+    formatScrollState(scrollBuf, sizeof(scrollBuf), 2);
+    break;
+  case Screen::ANGULAR_LIST:
+    screenTag = "ANGULAR_LIST";
+    breadcrumb = "ANGULAR";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kAngularItems, 4);
+    formatScrollState(scrollBuf, sizeof(scrollBuf), 4);
+    break;
+  case Screen::LATERAL_LIST:
+    screenTag = "LATERAL_LIST";
+    breadcrumb = "LATERAL";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    appendGridElements(btnBuf, btnN, sizeof(btnBuf), kLateralItems, 2);
+    formatScrollState(scrollBuf, sizeof(scrollBuf), 2);
+    break;
+  case Screen::EDIT: {
+    screenTag = "EDIT";
+    breadcrumb = kMotionInfo[(int)currentMotion].name;
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+
+    for (size_t i = 0; i < fields.size(); i++) {
+      char valBuf[16];
+      formatFieldValue(fields[i], valBuf, sizeof(valBuf));
+      fieldsN += snprintf(fieldsBuf + fieldsN, sizeof(fieldsBuf) - fieldsN, "%s,%s,%d;",
+                          fields[i].label, valBuf, (int)i == selectedField ? 1 : 0);
+    }
+
+    buildFooterText(footerBuf, sizeof(footerBuf));
+    footerCancelled = lastResult.cancelled ? 1 : 0;
+
+    char codeLines[3][80];
+    formatMotionCode(codeLines);
+    snprintf(codeBuf, sizeof(codeBuf), "%s~%s~%s", codeLines[0], codeLines[1], codeLines[2]);
+
+    // Everything drawTargetIndicator()/runMotion() feed the field plot.
+    const MotionInfo &info = kMotionInfo[(int)currentMotion];
+    lemlib::Pose pose = remotePlotMode == 2 ? remoteLivePose : chassis.getPose();
+    snprintf(plotBuf, sizeof(plotBuf), "%d,%d,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", remotePlotMode,
+             info.hasPointTarget ? 1 : 0, info.hasHeadingTarget ? 1 : 0, pX, pY, pTheta, pose.x,
+             pose.y, pose.theta);
+
+    // Trail points, thinned to a fixed budget so the line never outgrows
+    // its buffer on a long run (the plot is only 310px wide anyway).
+    const int kMaxTrailPts = 160;
+    int total = (int)remoteTrail.size();
+    int stride = std::max(1, (total + kMaxTrailPts - 1) / kMaxTrailPts);
+    for (int i = 0; i < total; i += stride) {
+      int w = snprintf(trailBuf + trailN, sizeof(trailBuf) - trailN, "%d,%d;",
+                       (int)remoteTrail[i].first, (int)remoteTrail[i].second);
+      if (w < 0 || trailN + w >= (int)sizeof(trailBuf))
+        break;
+      trailN += w;
+    }
+    break;
+  }
+  case Screen::MOTOR_TEST: {
+    screenTag = "MOTOR_TEST";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+
+    auto appendSide = [&](char side, const std::vector<MotorTestEntry> &list) {
+      for (const MotorTestEntry &e : list) {
+        const char *state = !e.tested                ? "pending"
+                            : e.noMove                ? "No spin"
+                            : e.configuredReversed    ? "Negative"
+                                                       : "Positive";
+        motorsN += snprintf(motorsBuf + motorsN, sizeof(motorsBuf) - motorsN, "%c,%d,%s;", side,
+                            (int)e.rawPort, state);
+      }
+    };
+    appendSide('L', leftMotorTest);
+    appendSide('R', rightMotorTest);
+    activeSide = motorTestActiveSide;
+    activeIdx = motorTestActiveIdx;
+    snprintf(footerBuf, sizeof(footerBuf), "%s",
+             motorTestDone ? "done -- tap BACK to return" : "testing -- keep the drivetrain clear");
+    break;
+  }
+  }
+
+  // Build the line, then only send it if it differs from the last one
+  // sent (or a heartbeat is due). Idle screens then cost the link
+  // nothing, which matters over the controller's radio: every byte we
+  // push out delays the taps coming back in.
+  static char line[3072];
+  static char lastLine[3072] = "";
+  static uint32_t lastActualSend = 0;
+  const uint32_t kHeartbeatMs = 1000;
+  snprintf(line, sizeof(line),
+           "RUI|%s|%s|BTN:%s|FIELDS:%s|FOOTER:%s|CODE:%s|MOTORS:%s|SCROLL:%s|STEP:%.2f|FOOTC:%d"
+           "|PLOT:%s|TRAIL:%s|SEL:%d|ACTIVE:%d,%d",
+           screenTag, breadcrumb, btnBuf, fieldsBuf, footerBuf, codeBuf, motorsBuf, scrollBuf, step,
+           footerCancelled, plotBuf, trailBuf, selectedField, activeSide, activeIdx);
+  bool changed = strcmp(line, lastLine) != 0;
+  if (!force && !changed && pros::millis() - lastActualSend < kHeartbeatMs)
+    return;
+  strcpy(lastLine, line);
+  lastActualSend = pros::millis();
+  printf("%s\n", line);
+}
+
+// The two places the menu hands the screen to something it doesn't mirror
+// -- tell the laptop so it can say so instead of showing a stale HOME.
+static void sendRemoteHandoff(const char *what) {
+  printf("RUI|HANDOFF|%s|BTN:|FIELDS:|FOOTER:|CODE:|MOTORS:|SCROLL:|STEP:0|FOOTC:0|PLOT:|TRAIL:"
+         "|SEL:0|ACTIVE:-1,-1\n", what);
 }
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
@@ -1053,6 +1445,7 @@ void driverMenuControl() {
   pros::delay(100); // let the HUD task finish its current frame
   controller.rumble("--");
   printf("DRIVER MENU ACTIVE\n");
+  ensureRemoteTouchListener(); // see tools/remote_touch.py
   goHome();
 
   EdgeButton left{pros::E_CONTROLLER_DIGITAL_LEFT};
@@ -1067,15 +1460,23 @@ void driverMenuControl() {
   bool wasTouched = false;
 
   while (true) {
+    sendRemoteUiState(); // throttled internally; keeps the laptop mirror live
+
     pros::screen_touch_status_s_t status = pros::screen::touch_status();
     bool pressEdge = status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched;
+    int touchX = status.x, touchY = status.y;
     if (status.touch_status == pros::E_TOUCH_PRESSED)
       wasTouched = true;
     else if (status.touch_status == pros::E_TOUCH_RELEASED)
       wasTouched = false;
 
+    // A remote tap counts exactly like a physical one -- but never
+    // overrides a real touch already in progress this tick.
+    if (!pressEdge && takeRemoteTouch(touchX, touchY))
+      pressEdge = true;
+
     if (pressEdge) {
-      int x = status.x, y = status.y;
+      int x = touchX, y = touchY;
       static const Motion kAngularMotions[4] = {Motion::TURN_TO_HEADING, Motion::TURN_TO_POINT,
                                                 Motion::SWING_TO_HEADING, Motion::SWING_TO_POINT};
       static const Motion kLateralMotions[2] = {Motion::MOVE_TO_POINT, Motion::MOVE_TO_POSE};
@@ -1084,6 +1485,7 @@ void driverMenuControl() {
       case Screen::HOME: {
         int hit = gridHitTest(4, x, y);
         if (hit == 0) {
+          sendRemoteHandoff("PID TUNER");
           pidTunerControl(); // returns once its own BACK button is tapped
           goHome();
         } else if (hit == 1) {
@@ -1091,6 +1493,7 @@ void driverMenuControl() {
         } else if (hit == 2) {
           goMotorTest();
         } else if (hit == 3) {
+          sendRemoteHandoff("DRIVING");
           driverMenuActive = false;
           return; // caller falls through to normal driving
         }
@@ -1153,13 +1556,21 @@ void driverMenuControl() {
       }
     }
 
-    bool leftEdge = left.pressed(), rightEdge = right.pressed();
-    bool upEdge = up.pressed(), downEdge = down.pressed();
-    bool aEdge = btnA.pressed(), bEdge = btnB.pressed();
-    bool l1Edge = btnL1.pressed(), l2Edge = btnL2.pressed();
+    // Controller edges OR'd with the laptop's KEY presses -- from here on
+    // the two are indistinguishable.
+    bool leftEdge = left.pressed() || takeRemoteKey(RK_LEFT);
+    bool rightEdge = right.pressed() || takeRemoteKey(RK_RIGHT);
+    bool upEdge = up.pressed() || takeRemoteKey(RK_UP);
+    bool downEdge = down.pressed() || takeRemoteKey(RK_DOWN);
+    bool aEdge = btnA.pressed() || takeRemoteKey(RK_A);
+    bool bEdge = btnB.pressed() || takeRemoteKey(RK_B);
+    bool l1Edge = btnL1.pressed() || takeRemoteKey(RK_L1);
+    bool l2Edge = btnL2.pressed() || takeRemoteKey(RK_L2);
+    takeRemoteKey(RK_X); // only meaningful mid-run (waitForCancel); drop stale ones
 
     if (screen == Screen::EDIT && !fields.empty()) {
       bool dirty = leftEdge || rightEdge || l1Edge || l2Edge;
+      dirty = applyRemoteFieldEdits() || dirty;
       if (leftEdge)
         selectedField = (selectedField + (int)fields.size() - 1) % (int)fields.size();
       if (rightEdge)
@@ -1191,6 +1602,7 @@ void driverMenuControl() {
         runMotion();
       } else if (dirty) {
         drawEditUI();
+        sendRemoteUiState(true);
       }
 
       drawEditControllerUI();
