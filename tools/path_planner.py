@@ -18,8 +18,16 @@ WHAT'S ON IT
               with move up / down / duplicate / delete.
     Bottom    movement buttons that append a block (turnToHeading,
               turnToPoint, swingToHeading, swingToPoint, moveToPoint,
-              moveToPose, wait, setPose) and, for the selected block,
-              every lemlib parameter that movement takes.
+              moveToPose, wait, setPose, waitUntilDone) and, for the
+              selected block, every lemlib parameter that movement takes.
+              Adding a movement also adds a waitUntilDone after it, since
+              lemlib motions are asynchronous -- without it the exported
+              code would start the next movement immediately.
+
+    Each block's movement is drawn on the map from wherever the previous
+    block left the robot: straight lines for moveToPoint, the curved
+    boomerang path for moveToPose, arcs for turns and swings -- so the
+    stack of blocks reads as the whole route.
 
     Clicking the map sets the selected block's target point (for blocks
     that have one). "Pick start" then a click sets the robot's start pose
@@ -57,7 +65,8 @@ MAP_PX = 560                # map is drawn this many px square
 # ─── Block definitions ──────────────────────────────────────────────────────
 # Order == StepKind on the brain (PLAN ADD sends the index).
 KINDS = ["turnToHeading", "turnToPoint", "swingToHeading", "swingToPoint",
-         "moveToPoint", "moveToPose", "wait", "setPose"]
+         "moveToPoint", "moveToPose", "wait", "setPose", "waitUntilDone"]
+MOTIONS = set(KINDS[:6])   # the ones that actually drive (async on the robot)
 
 DIRECTIONS = ["AUTO", "CW", "CCW"]
 SIDES = ["LEFT", "RIGHT"]
@@ -86,6 +95,7 @@ KIND_PARAMS = {
                    "maxSpeed", "minSpeed", "earlyExitRange"],
     "wait": ["ms"],
     "setPose": ["x", "y", "theta"],
+    "waitUntilDone": [],
 }
 HAS_POINT = {"turnToPoint", "swingToPoint", "moveToPoint", "moveToPose", "setPose"}
 HAS_HEADING = {"turnToHeading", "swingToHeading", "moveToPose", "setPose"}
@@ -109,6 +119,8 @@ def block_code(b):
     k = b["kind"]
     if k == "wait":
         return f"pros::delay({int(b['ms'])});"
+    if k == "waitUntilDone":
+        return "chassis.waitUntilDone();"
     if k == "setPose":
         return f"chassis.setPose({b['x']:.2f}, {b['y']:.2f}, {b['theta']:.2f});"
     fwd = "true" if b.get("forwards", True) else "false"
@@ -148,6 +160,8 @@ def block_summary(b):
     k = b["kind"]
     if k == "wait":
         return f"wait {int(b['ms'])} ms"
+    if k == "waitUntilDone":
+        return "waitUntilDone"
     if k == "setPose":
         return f"setPose ({b['x']:.1f}, {b['y']:.1f}) hdg {b['theta']:.1f}"
     parts = []
@@ -185,28 +199,72 @@ def export_code(blocks):
 
 
 # ─── Simulated route (for drawing the plan) ────────────────────────────────
+def heading_to(x0, y0, x1, y1, forwards=True):
+    """Compass heading (deg, 0 = +y, clockwise) from (x0,y0) to (x1,y1)."""
+    th = math.degrees(math.atan2(x1 - x0, y1 - y0))
+    return (th + (0 if forwards else 180)) % 360
+
+
+def pose_curve(x0, y0, th0, x1, y1, th1, lead, forwards=True, n=24):
+    """Points along the boomerang-style path moveToPose drives: it chases a
+    carrot point pulled back from the target along the target heading by
+    lead * distance, so the robot arrives facing th1. Drawn as a cubic
+    Bezier leaving along th0 and arriving along th1, which is what that
+    looks like on the field."""
+    d = math.hypot(x1 - x0, y1 - y0)
+    if d < 1e-6:
+        return [(x0, y0), (x1, y1)]
+    sgn = 1 if forwards else -1
+    r0, r1 = math.radians(th0), math.radians(th1)
+    k = max(0.2, lead) * d
+    c0 = (x0 + sgn * math.sin(r0) * k * 0.6, y0 + sgn * math.cos(r0) * k * 0.6)
+    c1 = (x1 - sgn * math.sin(r1) * k, y1 - sgn * math.cos(r1) * k)
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        a, b, c, e = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3
+        pts.append((a * x0 + b * c0[0] + c * c1[0] + e * x1,
+                    a * y0 + b * c0[1] + c * c1[1] + e * y1))
+    return pts
+
+
 def simulate(blocks, start):
-    """Walks the block list from `start` = (x, y, theta) and returns, per
-    block, the pose it ends at -- enough to draw the route the way the
-    robot will (roughly) take it. Turns/swings only change heading."""
+    """Walks the block list from `start` = (x, y, theta). Returns, per block,
+    (endPose, shape) where shape describes what the robot does on the way:
+        ("line", [(x, y), ...])          a straight drive (moveToPoint)
+        ("curve", [(x, y), ...])         a moveToPose boomerang
+        ("turn", x, y, fromHdg, toHdg)   a turn in place
+        ("swing", x, y, fromHdg, toHdg)  a swing turn (one side locked)
+        None                             nothing on the map (wait, ...)
+    Each block starts where the previous one ended, so the shapes chain
+    into the full route."""
     x, y, th = start
     out = []
     for b in blocks:
         k = b["kind"]
+        shape = None
         if k == "setPose":
             x, y, th = b["x"], b["y"], b["theta"]
-        elif k in ("moveToPoint", "moveToPose"):
+        elif k == "moveToPoint":
+            fwd = b.get("forwards", True)
+            shape = ("line", [(x, y), (b["x"], b["y"])])
+            if (b["x"], b["y"]) != (x, y):
+                th = heading_to(x, y, b["x"], b["y"], fwd)
             x, y = b["x"], b["y"]
-            th = b["theta"] if k == "moveToPose" else th
+        elif k == "moveToPose":
+            fwd = b.get("forwards", True)
+            shape = ("curve", pose_curve(x, y, th, b["x"], b["y"], b["theta"],
+                                         b.get("lead", 0.6), fwd))
+            x, y, th = b["x"], b["y"], b["theta"]
         elif k in ("turnToHeading", "swingToHeading"):
+            shape = ("turn" if k == "turnToHeading" else "swing", x, y, th, b["theta"])
             th = b["theta"]
         elif k in ("turnToPoint", "swingToPoint"):
-            dx, dy = b["x"] - x, b["y"] - y
-            if dx or dy:
-                th = math.degrees(math.atan2(dx, dy))
-                if not b.get("forwards", True):
-                    th += 180
-        out.append((x, y, th % 360))
+            new = heading_to(x, y, b["x"], b["y"], b.get("forwards", True)) \
+                if (b["x"], b["y"]) != (x, y) else th
+            shape = ("turn" if k == "turnToPoint" else "swing", x, y, th, new)
+            th = new
+        out.append(((x, y, th % 360), shape))
     return out
 
 
@@ -381,26 +439,31 @@ class PlannerWindow(tk.Toplevel):
             c.create_line(px, 0, px, MAP_PX, fill=col, dash=(2, 4))
             c.create_line(0, py, MAP_PX, py, fill=col, dash=(2, 4))
 
-        # planned route
-        poses = simulate(self.blocks, tuple(self.start))
-        prev = tuple(self.start)
-        self.drawRobotMarker(prev, "#FF8C00", "S")
-        for i, (b, pose) in enumerate(zip(self.blocks, poses)):
+        # planned route: every block's movement, drawn from where the
+        # previous block left the robot, so the whole stack reads as one
+        # route. Unselected blocks in pink, the selected one in cyan.
+        sim = simulate(self.blocks, tuple(self.start))
+        self.drawRobotMarker(tuple(self.start), "#FF8C00", "S")
+        for i, (b, (pose, shape)) in enumerate(zip(self.blocks, sim)):
             sel = (i == self.selected)
             col = "#00F0FF" if sel else "#FF6B81"
             w = 3 if sel else 2
-            if b["kind"] in ("moveToPoint", "moveToPose"):
-                x0, y0 = self.toMap(prev[0], prev[1])
-                x1, y1 = self.toMap(pose[0], pose[1])
-                c.create_line(x0, y0, x1, y1, fill=col, width=w, arrow="last",
-                              dash=(6, 3) if not b.get("forwards", True) else None)
-            if b["kind"] in ("turnToPoint", "swingToPoint"):
-                x0, y0 = self.toMap(pose[0], pose[1])
-                x1, y1 = self.toMap(b["x"], b["y"])
-                c.create_line(x0, y0, x1, y1, fill=col, width=1, dash=(3, 3))
-                c.create_oval(x1 - 4, y1 - 4, x1 + 4, y1 + 4, outline=col)
-            self.drawRobotMarker(pose, col, str(i + 1), small=True)
-            prev = pose
+            dash = (6, 3) if not b.get("forwards", True) else None
+            if shape and shape[0] in ("line", "curve"):
+                pts = [self.toMap(x, y) for x, y in shape[1]]
+                if len(pts) > 1:
+                    c.create_line(*[v for p in pts for v in p], fill=col, width=w, arrow="last",
+                                  dash=dash, smooth=(shape[0] == "curve"))
+            elif shape and shape[0] in ("turn", "swing"):
+                _, x, y, a0, a1 = shape
+                self.drawTurnArc(x, y, a0, a1, col, w, swing=(shape[0] == "swing"))
+                if b["kind"] in ("turnToPoint", "swingToPoint"):
+                    x0, y0 = self.toMap(x, y)
+                    x1, y1 = self.toMap(b["x"], b["y"])
+                    c.create_line(x0, y0, x1, y1, fill=col, width=1, dash=(2, 4))
+                    c.create_oval(x1 - 4, y1 - 4, x1 + 4, y1 + 4, outline=col)
+            if b["kind"] in MOTIONS or b["kind"] == "setPose":
+                self.drawRobotMarker(pose, col, str(i + 1), small=True)
 
         # robot: driven path then live pose
         if len(self.robotPath) > 1:
@@ -408,6 +471,33 @@ class PlannerWindow(tk.Toplevel):
             c.create_line(*[v for p in pts for v in p], fill="#2EFF8C", width=2)
         if self.robotPose:
             self.drawRobotMarker(self.robotPose, "#2EFF8C", "", robot=True)
+
+    def drawTurnArc(self, x, y, a0, a1, color, width, swing=False):
+        """Arc from heading a0 to a1 around (x, y) -- the short way round,
+        like lemlib's AUTO direction -- with an arrowhead at the end. Swings
+        pivot about one side of the drivetrain, so their arc is offset and
+        drawn dashed to tell them apart."""
+        px, py = self.toMap(x, y)
+        r = 22
+        delta = (a1 - a0 + 180) % 360 - 180   # signed, shortest
+        if abs(delta) < 0.5:
+            return
+        # Tk arcs: start angle CCW from +x; compass heading h -> 90 - h
+        start = 90 - a0
+        extent = -delta
+        if swing:
+            off = 9
+            side = 1 if delta > 0 else -1
+            rad = math.radians(a0 + 90 * side)
+            px, py = px + math.sin(rad) * off, py - math.cos(rad) * off
+        self.map.create_arc(px - r, py - r, px + r, py + r, start=start, extent=extent,
+                            style="arc", outline=color, width=width,
+                            dash=(3, 3) if swing else None)
+        end = math.radians(a1)
+        ex, ey = px + math.sin(end) * r, py - math.cos(end) * r
+        tang = math.radians(a1 + (90 if delta > 0 else -90))
+        self.map.create_line(ex - math.sin(tang) * 6, ey + math.cos(tang) * 6, ex, ey,
+                             fill=color, width=width, arrow="last")
 
     def drawRobotMarker(self, pose, color, label, small=False, robot=False):
         x, y, th = pose
@@ -494,15 +584,24 @@ class PlannerWindow(tk.Toplevel):
     def addBlock(self, kind):
         # New blocks start where the route currently ends, so the map shows
         # something sensible before you've typed anything.
-        poses = simulate(self.blocks, tuple(self.start))
-        end = poses[-1] if poses else tuple(self.start)
+        sim = simulate(self.blocks, tuple(self.start))
+        end = sim[-1][0] if sim else tuple(self.start)
         b = new_block(kind)
         if kind in HAS_POINT:
             b["x"], b["y"] = round(end[0], 1), round(end[1], 1)
         if kind in HAS_HEADING:
             b["theta"] = round(end[2], 1)
         at = len(self.blocks) if self.selected is None else self.selected + 1
+        # ...but never between a movement and the waitUntilDone that
+        # belongs to it.
+        if at < len(self.blocks) and self.blocks[at]["kind"] == "waitUntilDone":
+            at += 1
         self.blocks.insert(at, b)
+        # lemlib runs motions asynchronously, so every movement gets a
+        # waitUntilDone block after it -- delete it if you really do want
+        # the next block to start while the robot is still moving.
+        if kind in MOTIONS:
+            self.blocks.insert(at + 1, new_block("waitUntilDone"))
         self.selected = at
         self.refreshList()
         self.showParams()

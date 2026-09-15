@@ -428,6 +428,30 @@ class SerialLink:
             pass
 
 
+def closeOtherVexcom():
+    """The PROS VS Code extension opens its own `vexcom --user` terminal
+    (and re-opens it after every upload), which holds the only port there
+    is. Only one program can use it, so close any other vexcom before we
+    start ours -- it's just the extension's terminal, one click to reopen.
+    Returns a note for the status bar, or None if nothing was running."""
+    if os.name != "nt":
+        return None
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq vexcom.exe", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    pids = [line.split('","')[1] for line in out.splitlines() if line.startswith('"vexcom.exe"')]
+    if not pids:
+        return None
+    for pid in pids:
+        subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True, timeout=10,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    time.sleep(1.0)  # let Windows release the port
+    return f"closed the PROS terminal's vexcom (pid {', '.join(pids)}) to free the port"
+
+
 class VexcomLink:
     """Same interface as SerialLink, but the bytes go through a child
     `vexcom --user <port>` process instead of a serial handle. That's the
@@ -443,6 +467,7 @@ class VexcomLink:
         # "download" channel (1); it sits on the pit channel (0) the rest
         # of the time -- same switch `pros upload` makes for a wireless
         # upload. Put it back on close().
+        self.notice = closeOtherVexcom()
         self._setChannel(1)
         self.proc = subprocess.Popen([vexcom, "--user", port], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -899,8 +924,10 @@ class RemoteTouchApp:
         self.elements = []  # last-drawn (x0,y0,x1,y1,label) in brain coords
 
         root.title("Remote Touch -- V5 Brain")
-        self.status = tk.Label(root, text="waiting for the brain...", anchor="w",
-                                font=("Segoe UI", 9))
+        note = getattr(link, "notice", None)
+        self.status = tk.Label(root, text=("waiting for the brain..." if not note
+                                           else f"waiting for the brain...  ({note})"),
+                                anchor="w", font=("Segoe UI", 9))
         self.status.pack(fill="x", padx=6, pady=(6, 0))
 
         self.canvas = tk.Canvas(root, width=BRAIN_W * SCALE, height=BRAIN_H * SCALE,

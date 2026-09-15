@@ -235,8 +235,10 @@ enum class StepKind {
   SWING_TO_POINT,
   MOVE_TO_POINT,
   MOVE_TO_POSE,
-  WAIT,     // pros::delay(timeoutMs)
-  SET_POSE, // chassis.setPose(x, y, theta)
+  WAIT,            // pros::delay(timeoutMs)
+  SET_POSE,        // chassis.setPose(x, y, theta)
+  WAIT_UNTIL_DONE, // chassis.waitUntilDone() -- lemlib motions are async by
+                   // default, so exported code needs one after each move
 };
 struct PlanStep {
   StepKind kind = StepKind::MOVE_TO_POINT;
@@ -312,6 +314,7 @@ static void startStep(const PlanStep &st) {
     break;
   case StepKind::WAIT:
   case StepKind::SET_POSE:
+  case StepKind::WAIT_UNTIL_DONE:
     break;
   }
 }
@@ -371,6 +374,9 @@ static void formatStepCode(const PlanStep &st, char lines[3][80]) {
     break;
   case StepKind::SET_POSE:
     snprintf(lines[0], 80, "chassis.setPose(%.2f, %.2f, %.2f);", st.x, st.y, st.theta);
+    break;
+  case StepKind::WAIT_UNTIL_DONE:
+    snprintf(lines[0], 80, "chassis.waitUntilDone();");
     break;
   }
 }
@@ -1192,6 +1198,12 @@ static void drawPlannerScreen() {
 // Runs one step to completion, drawing the plot live. Returns false if
 // the run was cancelled (controller X or the laptop's stop).
 static bool runPlanStep(const PlanStep &st) {
+  if (st.kind == StepKind::WAIT_UNTIL_DONE) {
+    // The runner already waits for each motion, so this is instant here;
+    // it exists so the plan mirrors the exported code one-to-one.
+    chassis.waitUntilDone();
+    return true;
+  }
   if (st.kind == StepKind::SET_POSE) {
     chassis.setPose(st.x, st.y, st.theta);
     remoteTrail.clear();
@@ -1349,7 +1361,7 @@ static void remoteTouchListenerTask(void *) {
       } else if (sscanf(rest, "ADD %d %f %f %f %d %d %d %d %f %f %f %f %f", &k, &st.x, &st.y,
                         &st.theta, &st.timeoutMs, &fwd, &st.dirIdx, &st.sideIdx, &st.maxSpeed,
                         &st.minSpeed, &st.earlyExit, &st.lead, &st.drift) == 13) {
-        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::SET_POSE);
+        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::WAIT_UNTIL_DONE);
         st.forwards = fwd != 0;
         remoteTouchMutex.take();
         if (remoteInput.planAdds.size() < kMaxPlanSteps)
