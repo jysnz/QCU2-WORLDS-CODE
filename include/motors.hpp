@@ -4,6 +4,7 @@
 #include "pros/adi.hpp"
 #include "pros/imu.hpp"
 #include "pros/motors.hpp"
+#include "pros/rotation.hpp"
 
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
@@ -20,6 +21,8 @@ extern pros::adi::Pneumatics clamp;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;
+extern pros::Rotation horizontal_encoder;
+extern pros::Rotation vertical_encoder;
 extern pros::Controller controller;
 
 // ─── LemLib chassis ──────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
-//           | MOTOR TEMPS
+//           | MOTOR TEMPS | ROBOT POSE   (scroll down for the last one)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -514,7 +514,8 @@ enum class Screen {
   MOTOR_TEST,
   PLANNER,
   REMOTE_DRIVE,
-  TEMPS
+  TEMPS,
+  POSE
 };
 static Screen screen = Screen::HOME;
 
@@ -623,15 +624,16 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[6] = {
+static const GridItem kHomeItems[7] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
     {"DRIVE"},
     {"LAPTOP DRIVE"},
     {"MOTOR TEMPS"},
+    {"ROBOT POSE"},
 };
-static const int kHomeItemCount = 6;
+static const int kHomeItemCount = 7;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -1477,6 +1479,7 @@ static void drawTempsScreen() {
 //   PID TEST m i         PID tuner: run single test i (0 small, 1 big,
 //                        2 return) on controller m
 //   PID SWEEP m          PID tuner: run the 4-leg sweep on controller m
+//   PID CAL              PID tuner: re-calibrate the IMU and zero the pose
 //   PID STOP             PID tuner: cancel the motion in progress
 //   The PID ones are consumed by pidTunerControl() (see pid_tuner.cpp)
 //   through the take*() hooks declared in driver_menu.hpp.
@@ -1565,6 +1568,8 @@ static void remoteTouchListenerTask(void *) {
         c.kind = RemotePidCommand::TEST;
       } else if (sscanf(rest, "SWEEP %d", &c.mode) == 1) {
         c.kind = RemotePidCommand::SWEEP;
+      } else if (strncmp(rest, "CAL", 3) == 0) {
+        c.kind = RemotePidCommand::CAL;
       } else {
         ok = false;
       }
@@ -1838,6 +1843,95 @@ static void drawRemoteDriveScreen() {
   drawRemoteDriveStatus();
 }
 
+// ─── Robot pose ───────────────────────────────────────────────────────────────
+// HOME -> ROBOT POSE. Odometry's x / y / heading, live, with the robot drawn
+// on the field plot, and a RESET POSE button that puts it back to
+// (0, 0, 0) -- the same reset the EDIT screens do on B. Handy for checking
+// the tracking wheels / IMU: push the robot 24 in forward and y should say
+// 24; turn it a quarter turn clockwise and heading should say 90.
+static const Rect kResetPose = {300, 174, 468, 210};
+static lemlib::Pose drawnPose{0, 0, 0};
+
+// lemlib's pose heading is continuous (it comes from the IMU's total
+// rotation, so two turns read 720 and a quarter turn the other way reads
+// -90) -- deliberately, so it never jumps from 359 to 0 mid-motion.
+// Turns still take the short way. For reading off a screen, 0..360 is
+// what people expect, so that's what's shown, with the raw value beside it.
+static float wrap360(float deg) {
+  deg = std::fmod(deg, 360.0f);
+  return deg < 0 ? deg + 360.0f : deg;
+}
+
+// The IMU's own heading, straight from the sensor, next to odometry's --
+// if lemlib couldn't calibrate the IMU it silently falls back to computing
+// heading from the tracking wheels, and the two readings diverging (or
+// the IMU showing ERR) is how you'd find that out.
+static void formatImuStatus(char *buf, size_t cap) {
+  double h = imu.get_heading();
+  if (std::isinf(h) || std::isnan(h)) // PROS_ERR_F (infinity) when unplugged
+    snprintf(buf, cap, "IMU ERR (port %d?)", (int)imu.get_port());
+  else if (imu.is_calibrating())
+    snprintf(buf, cap, "IMU calibrating");
+  else
+    snprintf(buf, cap, "IMU %.1f", h);
+}
+
+// Just the numbers + the plot, redrawn only when the pose moves so the
+// screen doesn't flicker at the loop's rate.
+static void drawPoseReadout() {
+  using namespace ui;
+  lemlib::Pose pose = chassis.getPose();
+  char imuBuf[32];
+  formatImuStatus(imuBuf, sizeof(imuBuf));
+
+  pros::screen::set_pen(BG);
+  pros::screen::fill_rect(10, FY, 150, FY + FH);
+  pros::screen::set_eraser(BG);
+  const char *names[3] = {"X (in)", "Y (in)", "HEADING (0-360)"};
+  float vals[3] = {pose.x, pose.y, wrap360(pose.theta)};
+  for (int i = 0; i < 3; i++) {
+    int y = FY + i * 36;
+    pros::screen::set_pen(GRAY);
+    pros::screen::print(pros::E_TEXT_SMALL, 10, y, "%s", names[i]);
+    pros::screen::set_pen(i == 2 ? ORANGE : CYAN);
+    pros::screen::print(pros::E_TEXT_MEDIUM, 10, y + 13, "%.2f", vals[i]);
+  }
+
+  drawFieldFrame();
+  drawHeadingIndicator(pose.x, pose.y, pose.theta);
+
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_eraser(FOOTER_BG);
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "odom hdg %.1f (raw %.1f)   %s   B: reset",
+                      wrap360(pose.theta), pose.theta, imuBuf);
+  drawnPose = pose;
+}
+
+static void drawPoseScreen() {
+  using namespace ui;
+  clearScreen();
+  drawHeader("ROBOT POSE", "ODOMETRY", CYAN);
+  drawBackButton();
+
+  fillRoundedRect(kResetPose.x0, kResetPose.y0, kResetPose.x1, kResetPose.y1, 8, CARD);
+  fillRoundedRect(kResetPose.x0, kResetPose.y0, kResetPose.x0 + 5, kResetPose.y1, 3, ORANGE);
+  pros::screen::set_pen(AXIS);
+  pros::screen::draw_rect(kResetPose.x0, kResetPose.y0, kResetPose.x1, kResetPose.y1);
+  pros::screen::set_eraser(CARD);
+  pros::screen::set_pen(0xFFFFFF);
+  pros::screen::print(pros::E_TEXT_MEDIUM, kResetPose.x0 + 18, kResetPose.y0 + 9, "RESET POSE");
+
+  drawPoseReadout();
+}
+
+static void resetPose() {
+  chassis.setPose(0, 0, 0);
+  controller.rumble(".");
+  printf("POSE RESET\n");
+}
+
 // Applies pending PLAN */POSE commands. Returns true if a run was
 // requested (the caller decides whether/where to run it).
 static bool applyRemotePlanCommands(int &runWhich) {
@@ -2065,6 +2159,20 @@ static void sendRemoteUiState(bool force) {
              remoteDriving ? remoteInput.driveL : 0, remoteDriving ? remoteInput.driveR : 0);
     break;
   }
+  case Screen::POSE: {
+    screenTag = "POSE";
+    breadcrumb = "ODOMETRY";
+    appendBackElement(btnBuf, btnN, sizeof(btnBuf));
+    btnN += snprintf(btnBuf + btnN, sizeof(btnBuf) - btnN, "%d,%d,%d,%d,RESET POSE;",
+                     kResetPose.x0, kResetPose.y0, kResetPose.x1, kResetPose.y1);
+    lemlib::Pose pose = chassis.getPose();
+    snprintf(plotBuf, sizeof(plotBuf), "3,0,0,0,0,0,%.2f,%.2f,%.2f", pose.x, pose.y, pose.theta);
+    char imuBuf[32];
+    formatImuStatus(imuBuf, sizeof(imuBuf));
+    snprintf(footerBuf, sizeof(footerBuf), "odom hdg %.1f (raw %.1f)   %s   B: reset",
+             wrap360(pose.theta), pose.theta, imuBuf);
+    break;
+  }
   case Screen::PLANNER: {
     screenTag = "PLANNER";
     breadcrumb = "LAPTOP";
@@ -2195,6 +2303,11 @@ static void goRemoteDrive() {
   scrollOffset = 0;
   drawRemoteDriveScreen();
 }
+static void goPose() {
+  screen = Screen::POSE;
+  scrollOffset = 0;
+  drawPoseScreen();
+}
 static void goMotorTest() {
   screen = Screen::MOTOR_TEST;
   scrollOffset = 0;
@@ -2273,6 +2386,10 @@ void driverMenuControl() {
 
       switch (screen) {
       case Screen::HOME: {
+        if (gridHandleScrollTouch(kHomeItemCount, x, y)) {
+          drawHome();
+          break;
+        }
         int hit = gridHitTest(kHomeItemCount, x, y);
         if (hit == 0) {
           pidTunerControl(); // returns once its own BACK button is tapped;
@@ -2291,6 +2408,8 @@ void driverMenuControl() {
           goRemoteDrive();
         } else if (hit == 5) {
           goTemps();
+        } else if (hit == 6) {
+          goPose();
         }
         break;
       }
@@ -2360,6 +2479,15 @@ void driverMenuControl() {
           goHome();
         }
         break;
+      case Screen::POSE:
+        if (inRect(kBack, x, y)) {
+          goHome();
+        } else if (inRect(kResetPose, x, y)) {
+          resetPose();
+          drawPoseReadout();
+          sendRemoteUiState(true);
+        }
+        break;
       case Screen::TEMPS:
         if (inRect(kBack, x, y)) {
           goHome();
@@ -2396,6 +2524,14 @@ void driverMenuControl() {
       }
     }
 
+    // The pose readout only repaints when the numbers actually move.
+    if (screen == Screen::POSE) {
+      lemlib::Pose p = chassis.getPose();
+      if (std::abs(p.x - drawnPose.x) > 0.01f || std::abs(p.y - drawnPose.y) > 0.01f ||
+          std::abs(p.theta - drawnPose.theta) > 0.05f)
+        drawPoseReadout();
+    }
+
     applyRemoteDrive();
     if (screen == Screen::REMOTE_DRIVE) {
       int l, r;
@@ -2422,6 +2558,11 @@ void driverMenuControl() {
     if (screen == Screen::PLANNER && aEdge) {
       stopRemoteDrive();
       runPlan(-1);
+    }
+    if (screen == Screen::POSE && bEdge) {
+      resetPose();
+      drawPoseReadout();
+      sendRemoteUiState(true);
     }
 
     if (screen == Screen::EDIT && !fields.empty()) {

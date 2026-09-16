@@ -13,7 +13,7 @@
 //   L1/L2        move the digit cursor (coarser/finer)
 //   UP/DOWN      adjust the selected gain by the current digit's step
 //   A/X/B        run a single test (small / big / return) in whichever
-//                mode Y currently has selected
+//                mode Y currently has selected; the pose is zeroed first
 //   R1           run the ANGULAR sweep (chained turns + return-to-start),
 //                regardless of Y mode
 //   R2           run the LATERAL sweep (chained drives + return-to-start),
