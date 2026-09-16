@@ -5,6 +5,7 @@
 // opcontrol() starts, replacing the old "hold DPAD-LEFT/UP" scheme:
 //
 //   HOME              [ PID TUNING ] [ PATH PLANNER ] [ TEST MOTORS ] [ DRIVE ]
+//                     [ LAPTOP DRIVE ] [ MOTOR TEMPS ] [ ROBOT POSE ]  (scrolls)
 //     - PID TUNING      hands off to pidTunerControl() (see pid_tuner.hpp);
 //                       its own BACK button returns here to the home menu.
 //     - TEST MOTORS     spins every drivetrain motor one at a time and
@@ -12,6 +13,8 @@
 //                       reversed ("Negative") or not ("Positive").
 //     - DRIVE           dismisses the menu; opcontrol() falls through to
 //                       normal joystick driving.
+//     - ROBOT POSE      odometry's live x / y / heading with the robot on
+//                       a field plot; RESET POSE (or B) sets it to (0,0,0).
 //     - PATH PLANNER    [ ANGULAR ] [ LATERAL ]                  [BACK]
 //         - ANGULAR       [TURN TO HEADING] [TURN TO POINT]
 //                         [SWING TO HEADING] [SWING TO POINT]    [BACK]
@@ -65,7 +68,7 @@ int remoteSendIntervalMs();
 
 // "PID <verb> ..." lines from tools/pid_tuner.py, queued in arrival order.
 struct RemotePidCommand {
-  enum Kind { SET, MODE, SEL, DIGIT, TEST, SWEEP } kind;
+  enum Kind { SET, MODE, SEL, DIGIT, TEST, SWEEP, CAL } kind;
   int mode = 0;   // 0 = angular, 1 = lateral   (SET / MODE / TEST / SWEEP)
   int index = 0;  // gain 0..2, test 0..2, or digit exponent
   float value = 0;

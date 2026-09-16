@@ -9,7 +9,7 @@
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
-#include <cstdint>
+#include <cstdint> 
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -17,25 +17,44 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
-pros::Motor intake1(16, pros::MotorGears::green);
-pros::Motor intake2(17, pros::MotorGears::green);
-pros::Motor lift1(18, pros::MotorGears::green);
-pros::Motor lift2(19, pros::MotorGears::green);
-pros::Motor bunchy(14, pros::MotorGears::green);
-pros::Motor bunchArm(13, pros::MotorGears::red);
+pros::MotorGroup left_motor_group({-11, 12, -13, 14, -15}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({16, -17, 18, -19, 20}, pros::MotorGears::green);
+pros::Motor intake1(1, pros::MotorGears::green);
+pros::Motor intake2(2, pros::MotorGears::green);
+pros::Motor lift1(3, pros::MotorGears::green);
+pros::Motor lift2(4, pros::MotorGears::green);
+pros::Motor bunchy(5, pros::MotorGears::green);
+pros::Motor bunchArm(9, pros::MotorGears::red);
+
+// ─── Tracking wheels (odometry) ───
+// Rotation sensors on the two tracking wheels. Negate a port (e.g. -8) if
+// that wheel counts backwards when the robot moves forward / right.
+pros::Rotation horizontal_encoder(-8);
+pros::Rotation vertical_encoder(-7);
+// horizontal tracking wheel: offset is how far it sits behind (-) / ahead
+// (+) of the tracking centre, in inches
+lemlib::TrackingWheel horizontal_tracking_wheel(&horizontal_encoder, lemlib::Omniwheel::NEW_2, -0.90);
+// vertical tracking wheel: offset is how far it sits left (-) / right (+)
+// of the tracking centre, in inches
+lemlib::TrackingWheel vertical_tracking_wheel(&vertical_encoder, lemlib::Omniwheel::NEW_2, 0.26);
 
 pros::adi::Pneumatics clamp('A', false);
 
-pros::Imu imu(15);
+pros::Imu imu(6);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
-lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
+lemlib::OdomSensors sensors(&vertical_tracking_wheel,   // vertical tracking wheel 1
+                            nullptr,                   // vertical tracking wheel 2
+                            &horizontal_tracking_wheel, // horizontal tracking wheel 1
+                            nullptr,                   // horizontal tracking wheel 2
+                            &imu);
 lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
+// Exit conditions (1 deg for 100 ms / 3 deg for 500 ms) end a turn once it
+// has settled -- with them at 0 every turn ran for its whole timeout and
+// kD kept twitching the robot around the target the entire time.
+lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 1, 100, 3, 500, 0);
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019); 
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 

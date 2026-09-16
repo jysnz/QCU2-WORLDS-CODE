@@ -255,7 +255,7 @@ class PacketStream:
 
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
-                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER")
+                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -368,7 +368,7 @@ def parse_rui_line(line):
                 pass
 
     # PID tuner screen (sendTunerState() in pid_tuner.cpp):
-    #   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>
+    #   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>,<calibrating>
     #   RES:<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
     pid = None
     if segments["PID"]:
@@ -376,9 +376,10 @@ def parse_rui_line(line):
             v = [float(x) for x in segments["PID"].split(",")]
         except ValueError:
             v = []
-        if len(v) == 10:
+        if len(v) == 11:
             pid = {"mode": int(v[0]), "sel": int(v[1]), "digitExp": int(v[2]),
-                   "angular": v[3:6], "lateral": v[6:9], "busy": v[9] == 1}
+                   "angular": v[3:6], "lateral": v[6:9], "busy": v[9] == 1,
+                   "calibrating": v[10] == 1}
     result = None
     if segments["RES"]:
         f = segments["RES"].split(",")
@@ -672,6 +673,7 @@ K_BACK = (396, 14, 468, 40)
 K_MOTOR_LEFT = (10, 58, 233, 210)
 K_MOTOR_RIGHT = (247, 58, 470, 210)
 K_BRAIN_EDITOR = (10, 140, 150, 166)
+K_RESET_POSE = (300, 174, 468, 210)
 
 # Which header title/colour each screen tag draws with (drawHome() etc.).
 # EDIT's title is the motion name, which arrives as the breadcrumb.
@@ -1065,6 +1067,31 @@ class BrainScreen:
             self.drawHeadingIndicator(plot["poseX"], plot["poseY"], plot["poseTheta"])
         self.drawFooter(st["footer"], False)
 
+    # -- ROBOT POSE (drawPoseScreen / drawPoseReadout) --
+    def drawPoseScreen(self, st):
+        self.clearScreen()
+        self.drawHeader("ROBOT POSE", "ODOMETRY", CYAN)
+        self.drawBackButton()
+        x0, y0, x1, y1 = K_RESET_POSE
+        self.fillRoundedRect(x0, y0, x1, y1, 8, CARD)
+        self.fillRoundedRect(x0, y0, x0 + 5, y1, 3, ORANGE)
+        self.set_pen(AXIS)
+        self.draw_rect(x0, y0, x1, y1)
+        self.set_pen(WHITE)
+        self.print(FONT_MEDIUM, x0 + 18, y0 + 9, "RESET POSE")
+        plot = st["plot"]
+        vals = (plot["poseX"], plot["poseY"], plot["poseTheta"] % 360) if plot else (0, 0, 0)
+        for i, name in enumerate(("X (in)", "Y (in)", "HEADING (0-360)")):
+            y = FY + i * 36
+            self.set_pen(GRAY)
+            self.print(FONT_SMALL, 10, y, name)
+            self.set_pen(ORANGE if i == 2 else CYAN)
+            self.print(FONT_MEDIUM, 10, y + 13, f"{vals[i]:.2f}")
+        self.drawFieldFrame()
+        if plot:
+            self.drawHeadingIndicator(*vals)
+        self.drawFooter(st["footer"], False)
+
     # -- PID TUNER (drawTunerUI in pid_tuner.cpp) --
     # Header band, BACK, the three gain cards, the hint text and the footer
     # are drawn as the brain draws them. The graph area shows only its frame
@@ -1116,7 +1143,8 @@ class BrainScreen:
         self.print(FONT_SMALL, GX + GW - 160, GY + 30, f"digit step: {st['step']:.3f}")
         self.set_pen(GRAY)
         self.print(FONT_SMALL, GX + 8, GY + GH - 16,
-                   "running -- graph in the PID Tuner window" if pid and pid["busy"]
+                   "CALIBRATING -- keep the robot still" if pid and pid["calibrating"]
+                   else "running -- graph in the PID Tuner window" if pid and pid["busy"]
                    else "live graph: see the PID Tuner window")
 
         self.set_pen(FOOTER_BG)
@@ -1154,6 +1182,8 @@ class BrainScreen:
             self.drawTempsScreen(st)
         elif tag == "PID_TUNER":
             self.drawPidTunerScreen(st)
+        elif tag == "POSE":
+            self.drawPoseScreen(st)
         elif tag == "HANDOFF":
             self.drawHandoff(st["breadcrumb"])
         elif tag in SCREEN_HEADER:

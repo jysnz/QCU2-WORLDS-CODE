@@ -18,8 +18,10 @@ WHAT'S ON IT
               cursor the controller's L1/L2 move, so the brain screen
               follows along. Under each card are that controller's
               tests: the small one (90 deg / 24 in), the big one (180
-              deg / 48 in), the return, and the 4-leg sweep -- the same
-              runs the controller's A / X / B / R1 / R2 start.
+              deg / 48 in), the return (-90 deg / 24 in back), and the
+              4-leg sweep -- the same runs the controller's A / X / B /
+              R1 / R2 start. The pose (x, y, heading) is zeroed before
+              every run, so each test starts from 0.
     Right     the graph: the setpoint (pink) and the actual heading or
               position chasing it (green), against time. For a sweep,
               all four legs sit side by side, divided by grey lines and
@@ -27,6 +29,9 @@ WHAT'S ON IT
               bigger, and it stays put until the next run. Under it,
               every leg's overshoot / settle time / final error.
     STOP      (or Esc) cancels the run in progress.
+    Calibrate re-calibrates the IMU and zeroes the pose (~3 s, robot
+              still). The brain does this by itself when the tuner opens,
+              so every test starts from a trustworthy heading.
     The physical controller keeps working the whole time: what it
     changes shows up here, what's changed here shows up on the brain.
 
@@ -84,7 +89,7 @@ MODE_TITLES = ("ANGULAR (turns)", "LATERAL (drive)")
 MODE_COLORS = (CYAN, ORANGE)
 # Test buttons per mode: (label, test index) -- matches angularTests /
 # lateralTests in pid_tuner.cpp (A / X / B).
-TESTS = ((("Turn 90", 0), ("Turn 180", 1), ("Back to 0", 2)),
+TESTS = ((("Turn 90", 0), ("Turn 180", 1), ("Turn -90", 2)),
          (("Drive 24in", 0), ("Drive 48in", 1), ("Back 24in", 2)))
 UNITS = ("deg", "in")
 DIGIT_STEPS = (2, 1, 0, -1, -2, -3)       # digitExp values L1/L2 walk through
@@ -278,6 +283,12 @@ class PidTunerWindow(tk.Toplevel):
                                  fg=WHITE, activebackground=RED, relief="flat",
                                  font=("Segoe UI", 10, "bold"), cursor="hand2")
         self.stopBtn.pack(fill="x", pady=(0, 8), ipady=4)
+        self.calBtn = tk.Button(left, text="Calibrate IMU + zero pose  (~3 s, keep still)",
+                                command=self.calibrate, bg="#22222B", fg=WHITE,
+                                activebackground="#2d2d38", relief="flat",
+                                font=("Segoe UI", 9), cursor="hand2")
+        self.calBtn.pack(fill="x", pady=(0, 8))
+        self.testButtons.append(self.calBtn)
 
         files = tk.Frame(left, bg=BG)
         files.pack(fill="x")
@@ -397,6 +408,12 @@ class PidTunerWindow(tk.Toplevel):
             return False
         return True
 
+    def calibrate(self):
+        if not self.checkCanRun():
+            return
+        self.send("PID CAL")
+        self.runStatus.config(text="calibrating -- keep the robot still", fg=ORANGE)
+
     def stop(self):
         self.send("PID STOP")
         if self.busy:
@@ -408,7 +425,7 @@ class PidTunerWindow(tk.Toplevel):
         pid = state.get("pid")
         if self.onBrainScreen and pid:
             self.brain = pid
-            self.busy = pid["busy"]
+            self.busy = pid["busy"] or pid["calibrating"]
             now = time.time()
             for mode in range(2):
                 for gain in range(3):
@@ -439,10 +456,12 @@ class PidTunerWindow(tk.Toplevel):
                     for w in self.rowFrames[(mode, gain)].winfo_children():
                         if isinstance(w, tk.Label):
                             w.config(bg=CARD_SEL if sel else CARD)
+            what = ("CALIBRATING -- keep still" if pid["calibrating"] else
+                    "RUNNING" if self.busy else "idle")
             self.brainStatus.config(
-                text=f"brain: PID TUNER  {MODES[pid['mode']].upper()}  "
-                     f"{'RUNNING' if self.busy else 'idle'}  step {10.0 ** pid['digitExp']:g}",
-                fg=GREEN if self.busy else CYAN)
+                text=f"brain: PID TUNER  {MODES[pid['mode']].upper()}  {what}  "
+                     f"step {10.0 ** pid['digitExp']:g}",
+                fg=ORANGE if pid["calibrating"] else GREEN if self.busy else CYAN)
             r = state.get("result")
             if r and not self.busy and self.run is None:
                 self.runStatus.config(
@@ -764,6 +783,8 @@ class _FakeLink:
             self.digit = int(f[2])
         elif f[:2] == ["PID", "SWEEP"] or f[:2] == ["PID", "TEST"]:
             self.startFakeRun(int(f[2]), f[1] == "SWEEP", int(f[3]) if len(f) > 3 else 0)
+        elif f[:2] == ["PID", "CAL"]:
+            pass
         elif f[:2] == ["PID", "STOP"]:
             self.lines.append("PID|DONE|1")
             self.busy = False
@@ -772,7 +793,7 @@ class _FakeLink:
         return {"screen": "PID_TUNER", "breadcrumb": MODES[self.mode].upper(),
                 "pid": {"mode": self.mode, "sel": self.sel, "digitExp": self.digit,
                         "angular": self.gains["angular"], "lateral": self.gains["lateral"],
-                        "busy": self.busy},
+                        "busy": self.busy, "calibrating": False},
                 "result": ("turn90", 2.1, 640, 0.3, 1200), "selected": self.sel, "step": 0.01}
 
     def startFakeRun(self, mode, sweep, idx):

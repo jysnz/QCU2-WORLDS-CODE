@@ -24,7 +24,10 @@
 // RUNNING TESTS (make sure the robot has clear space!)
 //   A            small test:  90 deg turn   / 24 in drive forward
 //   X            big test:    180 deg turn  / 48 in drive forward
-//   B            return test: turn back to 0 / 24 in drive backward
+//   B            return test: turn -90 deg   / 24 in drive backward
+//   Every run starts by zeroing the pose (chassis.setPose(0, 0, 0)): x, y
+//   and heading all read 0 before the first motion, so each test is the
+//   same motion from the same starting numbers no matter what ran before.
 //   R1           ANGULAR sweep test (runs regardless of Y mode): chains
 //                three turns -- 45, then 90, then 180 deg (each size
 //                relative to wherever the last one stopped, not an
@@ -55,7 +58,7 @@
 //   2. Add kD until that bounce disappears and settle time drops.
 //   3. Only add kI if the green trace flattens just short of the pink line
 //      instead of reaching it.
-//   4. Verify with X (big test) and B (return test), then copy the final
+//   4. Verify with X (big test) and B (-90 test), then copy the final
 //      values into lateral_controller / angular_controller in main.cpp.
 //
 // FROM A LAPTOP (tools/pid_tuner.py, opened by tools/remote_touch.py)
@@ -64,7 +67,7 @@
 //   the tests and sweeps, stop a run, and watch the same target-vs-actual
 //   graph, bigger. The bridge is the driver menu's stdin listener (see the
 //   "Remote touch bridge" section in driver_menu.cpp):
-//     laptop -> robot   PID SET/MODE/SEL/DIGIT/TEST/SWEEP/STOP, KEY, TOUCH
+//     laptop -> robot   PID SET/MODE/SEL/DIGIT/TEST/SWEEP/CAL/STOP, KEY, TOUCH
 //     robot -> laptop   RUI|PID_TUNER|...   gains / selection / last result
 //                                           (a few times a second)
 //                       PID|RUN / LEG / END / DONE   one run's schedule,
@@ -178,9 +181,10 @@ struct TestSpec {
   bool absolute = false;
 };
 
-// Index matches the A / X / B buttons: small / big / return.
+// Index matches the A / X / B buttons: small / big / return. Heading is
+// zeroed before every run, so these are all turns from 0.
 static const TestSpec angularTests[3] = {
-    {"turn90", 90, 2500}, {"turn180", 180, 3000}, {"turn0", 0, 2500}};
+    {"turn90", 90, 2500}, {"turn180", 180, 3000}, {"turn-90", -90, 2500}};
 static const TestSpec lateralTests[3] = {
     {"drive24", 24, 3500}, {"drive48", 48, 5000}, {"driveBack", -24, 3500}};
 
@@ -217,6 +221,8 @@ static const char *lastLabel = "none";
 // read by the laptop (it's what greys its run buttons out), since the
 // tuner loop itself is blocked inside the run meanwhile.
 static bool runBusy = false;
+// Likewise while calibrateForTuning() is blocking.
+static bool calibrating = false;
 
 // ─── Laptop mirror (tools/pid_tuner.py via tools/remote_touch.py) ────────────
 // The tuner's twin of driver_menu.cpp's sendRemoteUiState(): one line
@@ -225,7 +231,7 @@ static bool runBusy = false;
 // segments keep the same shape as the driver menu's so the laptop parses
 // both with one function; BTN carries the BACK button so the mirror can
 // tap it, and PID / RES carry everything the tuner window shows:
-//   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>
+//   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>,<calibrating>
 //   RES:<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
 static void sendTunerState(bool force = false) {
   static uint32_t lastSend = 0, lastActualSend = 0;
@@ -240,11 +246,12 @@ static void sendTunerState(bool force = false) {
   snprintf(line, sizeof(line),
            "RUI|PID_TUNER|%s|BTN:410,3,476,27,BACK|FIELDS:|FOOTER:|CODE:|MOTORS:|SCROLL:"
            "|STEP:%.3f|FOOTC:0|PLOT:|TRAIL:|SEL:%d|ACTIVE:-1,-1|PLAN:|PATH:"
-           "|PID:%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d|RES:%s,%.2f,%d,%.2f,%d",
+           "|PID:%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d|RES:%s,%.2f,%d,%.2f,%d",
            tuningAngular ? "ANGULAR" : "LATERAL", digitStep(), selectedGain,
            tuningAngular ? 0 : 1, selectedGain, digitExp, angularGains.gains[0],
            angularGains.gains[1], angularGains.gains[2], lateralGains.gains[0],
-           lateralGains.gains[1], lateralGains.gains[2], runBusy ? 1 : 0, lastLabel,
+           lateralGains.gains[1], lateralGains.gains[2], runBusy ? 1 : 0, calibrating ? 1 : 0,
+           lastLabel,
            lastResult.overshoot, lastResult.settleMs, lastResult.finalError,
            lastResult.durationMs);
   bool changed = strcmp(line, lastLine) != 0;
@@ -509,12 +516,23 @@ static const float kLateralSettleBand = 1.0f; // inches
 static const int kSettleHoldMs = 250;
 static const int kSampleDelayMs = 20;
 
+// Zeroes the pose before a run: x, y and heading all start at 0. This is
+// the sensor reset lemlib supports -- taring the rotation sensors / IMU
+// directly would make odometry (which tracks each sensor's previous
+// reading) see one giant bogus step.
+static void zeroPoseForRun() {
+  chassis.setPose(0, 0, 0);
+  pros::delay(20); // let the odometry task pick the new pose up
+  printf("POSE ZEROED\n");
+}
+
 static TestResult runTest(bool angular, const TestSpec &spec) {
   const float settleBand = angular ? kAngularSettleBand : kLateralSettleBand;
   const float target = spec.target;
   const int timeoutMs = spec.timeoutMs;
 
   runBusy = true;
+  zeroPoseForRun();
   remoteStopRequested(); // drop a stale STOP so it can't cancel this run
   sendTunerState(true);
   {
@@ -528,7 +546,6 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
     startVal = chassis.getPose().theta;
     chassis.turnToHeading(target, timeoutMs, {}, true);
   } else {
-    chassis.setPose(0, 0, 0);
     startVal = 0;
     // A negative target (the "driveBack" test) is behind the chassis, not
     // in front of it -- drive there backwards instead of turning 180 deg
@@ -662,14 +679,8 @@ static void runSweep(bool angular) {
 
   // Known, repeatable starting point so "45/90/135/180" (or
   // "12/24/36/48") land where labeled instead of drifting from whatever
-  // heading/position preceded the sweep. Angular only zeroes heading;
-  // lateral zeroes the whole pose (same as a standalone lateral test).
-  if (angular) {
-    lemlib::Pose p = chassis.getPose();
-    chassis.setPose(p.x, p.y, 0);
-  } else {
-    chassis.setPose(0, 0, 0);
-  }
+  // heading/position preceded the sweep.
+  zeroPoseForRun();
 
   // Precompute each leg's time slot (x0, width) and its IDEAL cumulative
   // target level (running sum of leg sizes, or the absolute value itself
@@ -836,6 +847,35 @@ static void runSweep(bool angular) {
   sendTunerState(true);
 }
 
+// ─── Calibration ─────────────────────────────────────────────────────────────
+// Re-runs chassis.calibrate() (IMU reset, ~3 s, the robot must sit still)
+// and zeroes the pose, so every test starts from a heading and position
+// that are actually trustworthy -- not whatever the IMU drifted to since
+// initialize(), or wherever the last test left the odometry. Runs once
+// when the tuner opens and on PID CAL from the laptop.
+static void calibrateForTuning() {
+  calibrating = true;
+  sendTunerState(true);
+  pros::screen::set_pen(ui::ORANGE);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_eraser(ui::ORANGE);
+  pros::screen::set_pen(0x000000);
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222,
+                      "CALIBRATING -- keep the robot still (~3 s)");
+  pros::screen::set_eraser(ui::BG);
+  controller.print(0, 0, "CALIBRATING...  ");
+  printf("PID TUNER CALIBRATING\n");
+
+  chassis.calibrate();
+  chassis.setPose(0, 0, 0);
+
+  calibrating = false;
+  printf("PID TUNER CALIBRATED\n");
+  controller.rumble("-");
+  drawTunerUI();
+  sendTunerState(true);
+}
+
 // ─── Button edge detection ───────────────────────────────────────────────────
 // Wraps a digital button so callers can ask "was this just pressed?" without
 // hand-rolling a `wasX` bool per button.
@@ -893,6 +933,11 @@ static bool applyRemotePidCommand(const RemotePidCommand &c, bool allowRuns) {
       return false;
     runSweep(angular);
     return false;
+  case RemotePidCommand::CAL:
+    if (!allowRuns)
+      return false;
+    calibrateForTuning();
+    return false;
   }
   return false;
 }
@@ -916,6 +961,7 @@ void pidTunerControl() {
   printf("PID TUNER ACTIVE\n");
   drawTunerUI();
   sendTunerState(true);
+  calibrateForTuning(); // fresh heading / zeroed pose before any test runs
 
   EdgeButton up{pros::E_CONTROLLER_DIGITAL_UP};
   EdgeButton down{pros::E_CONTROLLER_DIGITAL_DOWN};
@@ -1011,7 +1057,8 @@ void pidTunerControl() {
       // TEST is applied before the test starts.
       RemotePidCommand cmd;
       if (takeRemotePidCommand(cmd)) {
-        bool isRun = cmd.kind == RemotePidCommand::TEST || cmd.kind == RemotePidCommand::SWEEP;
+        bool isRun = cmd.kind == RemotePidCommand::TEST || cmd.kind == RemotePidCommand::SWEEP ||
+                     cmd.kind == RemotePidCommand::CAL;
         dirty |= applyRemotePidCommand(cmd, true);
         ran = isRun;
       }
