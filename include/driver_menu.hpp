@@ -44,3 +44,32 @@ void driverMenuControl();
 // True while this menu (or one of its Path Planner screens) owns the brain
 // screen; the HUD task in main.cpp must not draw while this is set.
 extern bool driverMenuActive;
+
+// ─── Remote bridge hooks shared with the PID tuner ──────────────────────
+// The stdin listener started by driverMenuControl() keeps running while
+// pidTunerControl() owns the screen, so the tuner reads the laptop's
+// input through these instead of the menu loop. See the "Remote touch
+// bridge" section in driver_menu.cpp for the wire format.
+
+// Controller buttons the laptop can press by name ("KEY <name>").
+enum RemoteKey {
+  RK_LEFT, RK_RIGHT, RK_UP, RK_DOWN, RK_A, RK_B, RK_X, RK_L1, RK_L2, RK_Y, RK_R1, RK_R2,
+  RK_COUNT
+};
+// One-shot reads: true once per line received, then cleared.
+bool takeRemoteKey(RemoteKey k);
+bool takeRemoteTouch(int &x, int &y);
+// How often the laptop asked for state lines (ms) -- 150 on a cable, 300
+// over the controller's radio. Used to pace anything else streamed to it.
+int remoteSendIntervalMs();
+
+// "PID <verb> ..." lines from tools/pid_tuner.py, queued in arrival order.
+struct RemotePidCommand {
+  enum Kind { SET, MODE, SEL, DIGIT, TEST, SWEEP } kind;
+  int mode = 0;   // 0 = angular, 1 = lateral   (SET / MODE / TEST / SWEEP)
+  int index = 0;  // gain 0..2, test 0..2, or digit exponent
+  float value = 0;
+};
+bool takeRemotePidCommand(RemotePidCommand &out);
+// "PID STOP": true once per request. Checked mid-motion by the tuner.
+bool takeRemotePidStop();

@@ -39,6 +39,15 @@ PATH PLANNER
     movement blocks, run buttons and code export. The mirror keeps
     showing what the brain screen shows meanwhile.
 
+PID TUNING
+    Likewise, tapping PID TUNING opens the PID tuner window -- see
+    tools/pid_tuner.py -- where kP / kI / kD of both controllers can be
+    typed in directly, the tests and sweeps run and stopped, and the
+    target-vs-actual trace of each run watched live, bigger than on the
+    brain. The tuner's own state comes as RUI|PID_TUNER lines (mirrored
+    here like any other screen); the run traces come as "PID|..." and
+    "CSV,..." lines which are handed to that window.
+
 DRIVING (LAPTOP DRIVE screen)
     HOME -> LAPTOP DRIVE puts the brain on a screen that hands the
     drivetrain to this window's keyboard:
@@ -246,7 +255,7 @@ class PacketStream:
 
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
-                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF")
+                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -289,7 +298,7 @@ def parse_rui_line(line):
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
                                 "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
-                                "PATH")}
+                                "PATH", "PID", "RES")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -358,6 +367,27 @@ def parse_rui_line(line):
             except ValueError:
                 pass
 
+    # PID tuner screen (sendTunerState() in pid_tuner.cpp):
+    #   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>
+    #   RES:<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
+    pid = None
+    if segments["PID"]:
+        try:
+            v = [float(x) for x in segments["PID"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 10:
+            pid = {"mode": int(v[0]), "sel": int(v[1]), "digitExp": int(v[2]),
+                   "angular": v[3:6], "lateral": v[6:9], "busy": v[9] == 1}
+    result = None
+    if segments["RES"]:
+        f = segments["RES"].split(",")
+        if len(f) == 5:
+            try:
+                result = (f[0], float(f[1]), int(f[2]), float(f[3]), int(f[4]))
+            except ValueError:
+                pass
+
     return {
         "screen": screen,
         "breadcrumb": breadcrumb,
@@ -377,7 +407,17 @@ def parse_rui_line(line):
         "activeIdx": active[1],
         "plan": plan,
         "path": path,
+        "pid": pid,
+        "result": result,
     }
+
+
+def is_pid_run_line(line):
+    """The PID tuner's per-run stream (see runTest() in pid_tuner.cpp):
+    "PID|RUN|...", "PID|LEG|...", "PID|END|...", "PID|DONE|..." and the
+    "CSV,ms,target,actual,error" samples in between. These bypass the
+    screen-state parser and go to the tuner window as-is."""
+    return line.startswith("PID|") or line.startswith("CSV,")
 
 
 class SerialLink:
@@ -389,6 +429,7 @@ class SerialLink:
     def __init__(self, port, baud, debug=False):
         self.ser = serial.Serial(port, baud, timeout=0.2)
         self.states = queue.Queue()
+        self.pidLines = queue.Queue()   # PID tuner run stream, see is_pid_run_line()
         self.debug = debug
         self.bytesReceived = 0   # anything at all from the port
         self.linesReceived = 0   # decoded text lines (RUI or not)
@@ -413,6 +454,8 @@ class SerialLink:
                 state = parse_rui_line(line)
                 if state:
                     self.states.put(state)
+                elif is_pid_run_line(line):
+                    self.pidLines.put(line.rstrip("\r\n"))
 
     def sendTouch(self, x, y):
         self._send(f"TOUCH {x} {y}")
@@ -489,6 +532,7 @@ class VexcomLink:
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.states = queue.Queue()
+        self.pidLines = queue.Queue()   # PID tuner run stream, see is_pid_run_line()
         self.debug = debug
         self.bytesReceived = 0
         self.linesReceived = 0
@@ -517,6 +561,8 @@ class VexcomLink:
                 state = parse_rui_line(line)
                 if state:
                     self.states.put(state)
+                elif is_pid_run_line(line):
+                    self.pidLines.put(line.rstrip("\r\n"))
         if not self._stop:
             # vexcom exited by itself. When the port is already open
             # elsewhere it just says "COMx: No error" and quits with a
@@ -604,6 +650,7 @@ SEL_BG = "#1c2838"
 FOOTER_BG = "#18181F"
 TARGET_LINE = "#FF6B81"
 PATH_LINE = "#2EFF8C"
+RED = "#FF3131"
 WHITE = "#FFFFFF"
 BLACK = "#000000"
 HEADER_SUB = "#1a1a1a"
@@ -1018,6 +1065,69 @@ class BrainScreen:
             self.drawHeadingIndicator(plot["poseX"], plot["poseY"], plot["poseTheta"])
         self.drawFooter(st["footer"], False)
 
+    # -- PID TUNER (drawTunerUI in pid_tuner.cpp) --
+    # Header band, BACK, the three gain cards, the hint text and the footer
+    # are drawn as the brain draws them. The graph area shows only its frame
+    # and hints: the live trace is in the PID Tuner window, which has the
+    # room for it.
+    def drawPidTunerScreen(self, st):
+        pid = st["pid"]
+        angular = st["breadcrumb"] == "ANGULAR"
+        self.clearScreen()
+        self.set_pen(CYAN if angular else ORANGE)
+        self.fill_rect(0, 0, 480, 30)
+        self.set_pen(BLACK)
+        self.print(FONT_MEDIUM, 10, 7, "PID TUNER // " + ("ANGULAR (turns)" if angular
+                                                          else "LATERAL (drive)"))
+        self.set_pen(BLACK)
+        self.fill_rect(410, 3, 476, 27)
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 416, 9, "BACK")
+
+        gains = (pid["angular"] if angular else pid["lateral"]) if pid else [0, 0, 0]
+        sel = pid["sel"] if pid else st["selected"]
+        for i, name in enumerate(("kP", "kI", "kD")):
+            y = 40 + i * 45
+            on = i == sel
+            self.set_pen(SEL_BG if on else CARD)
+            self.fill_rect(10, y, 150, y + 38)
+            self.set_pen(ORANGE if on else AXIS)
+            self.draw_rect(10, y, 150, y + 38)
+            if on:
+                self.set_pen(ORANGE)
+                self.fill_rect(10, y, 14, y + 38)
+            self.set_pen(WHITE if on else GRAY)
+            self.print(FONT_SMALL, 22, y + 4, name)
+            self.set_pen(CYAN if on else GRAY)
+            self.print(FONT_MEDIUM, 22, y + 17, f"{gains[i]:.3f}")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 10, 178, "Y:mode </>:gain")
+        self.print(FONT_SMALL, 10, 192, "^/v:adj L1/L2:digit")
+
+        GX, GY, GW, GH = 160, 40, 310, 160
+        self.set_pen(CARD)
+        self.fill_rect(GX, GY, GX + GW, GY + GH)
+        self.set_pen(GRID)
+        for x in range(GX, GX + GW, 40):
+            self.draw_line(x, GY, x, GY + GH)
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, GX + GW - 160, GY + 2, "A:90 X:180 B:back")
+        self.print(FONT_SMALL, GX + GW - 160, GY + 16, "R1:sweepANG R2:sweepLAT")
+        self.print(FONT_SMALL, GX + GW - 160, GY + 30, f"digit step: {st['step']:.3f}")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, GX + 8, GY + GH - 16,
+                   "running -- graph in the PID Tuner window" if pid and pid["busy"]
+                   else "live graph: see the PID Tuner window")
+
+        self.set_pen(FOOTER_BG)
+        self.fill_rect(0, 215, 480, 240)
+        r = st["result"]
+        if r:
+            label, overshoot, settle, final, dur = r
+            self.set_pen(CYAN if settle >= 0 else RED)
+            self.print(FONT_SMALL, 10, 222, f"{label} // OVERSHOOT {overshoot:.2f} // SETTLE "
+                                             f"{settle}ms // FINAL {final:.2f} // {dur}ms")
+
     # -- handoff notice (the brain screen belongs to something we don't mirror) --
     def drawHandoff(self, what):
         self.clearScreen()
@@ -1042,6 +1152,8 @@ class BrainScreen:
             self.drawRemoteDriveScreen(st)
         elif tag == "TEMPS":
             self.drawTempsScreen(st)
+        elif tag == "PID_TUNER":
+            self.drawPidTunerScreen(st)
         elif tag == "HANDOFF":
             self.drawHandoff(st["breadcrumb"])
         elif tag in SCREEN_HEADER:
@@ -1138,6 +1250,7 @@ class RemoteTouchApp:
         self.startedAt = time.time()
         self.gotState = False
         self.planner = None
+        self.pidTuner = None
         self.pollQueue()
 
     def pollQueue(self):
@@ -1159,8 +1272,10 @@ class RemoteTouchApp:
             self.render(state)
             self.updateValueLabel(state)
             self.updatePlanner(state)
+            self.updatePidTuner(state)
         elif not self.gotState and time.time() - self.startedAt > 5:
             self.showWaitingHint()
+        self.pumpPidLines()
         self.root.after(50, self.pollQueue)
 
     def showWaitingHint(self):
@@ -1203,6 +1318,38 @@ class RemoteTouchApp:
             if state["screen"] == "PLANNER" and self.planner.state() == "withdrawn":
                 self.planner.deiconify()
             self.planner.applyState(state)
+
+    # -- laptop PID tuner window --
+    def updatePidTuner(self, state):
+        """Same idea as the planner: the brain's PID TUNER screen gets its
+        own window (tools/pid_tuner.py), opened the first time the brain
+        lands there and fed every state after that."""
+        if state["screen"] == "PID_TUNER" and self.pidTuner is None:
+            try:
+                from pid_tuner import PidTunerWindow
+            except ImportError as e:
+                self.status.config(text=f"pid_tuner.py failed to load: {e}")
+                return
+            self.pidTuner = PidTunerWindow(self.root, self.link)
+        if self.pidTuner is not None:
+            if state["screen"] == "PID_TUNER" and self.pidTuner.state() == "withdrawn":
+                self.pidTuner.deiconify()
+            self.pidTuner.applyState(state)
+
+    def pumpPidLines(self):
+        """The tuner's run stream (PID|... / CSV,...) goes straight to its
+        window; until it exists (or if nothing's running) the lines are
+        just dropped."""
+        lines = getattr(self.link, "pidLines", None)
+        if lines is None:
+            return
+        try:
+            while True:
+                line = lines.get_nowait()
+                if self.pidTuner is not None:
+                    self.pidTuner.feedLine(line)
+        except queue.Empty:
+            pass
 
     # -- keyboard / value entry --
     def sendKey(self, name):
@@ -1373,7 +1520,7 @@ def claim_single_instance():
 
 
 def main():
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner / pid_tuner
     if not claim_single_instance():
         print("remote_touch.py is already running -- use that window (only one can hold the port).")
         try:

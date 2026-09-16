@@ -23,6 +23,11 @@
 // of each run; the controller screen shows gains and the last run's
 // overshoot / settle time / final error. Full CSV telemetry streams over
 // `pros terminal`.
+//
+// All of it can also be driven from a laptop: tools/remote_touch.py opens
+// tools/pid_tuner.py when the brain enters this screen -- type P/I/D
+// values in directly, run/stop tests, and watch the graph big. See "FROM
+// A LAPTOP" at the top of src/pid_tuner.cpp for how the two talk.
 void pidTunerControl();
 
 // True while the tuner owns the brain screen; the HUD task in main.cpp must

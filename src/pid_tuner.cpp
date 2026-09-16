@@ -57,9 +57,28 @@
 //      instead of reaching it.
 //   4. Verify with X (big test) and B (return test), then copy the final
 //      values into lateral_controller / angular_controller in main.cpp.
+//
+// FROM A LAPTOP (tools/pid_tuner.py, opened by tools/remote_touch.py)
+//   Everything above can also be done from a laptop window over the same
+//   USB cable `pros terminal` uses: type P / I / D values straight in, run
+//   the tests and sweeps, stop a run, and watch the same target-vs-actual
+//   graph, bigger. The bridge is the driver menu's stdin listener (see the
+//   "Remote touch bridge" section in driver_menu.cpp):
+//     laptop -> robot   PID SET/MODE/SEL/DIGIT/TEST/SWEEP/STOP, KEY, TOUCH
+//     robot -> laptop   RUI|PID_TUNER|...   gains / selection / last result
+//                                           (a few times a second)
+//                       PID|RUN / LEG / END / DONE   one run's schedule,
+//                                           each leg's start and result
+//                       CSV,ms,target,actual,error   the live trace
+//   Remote controller keys (KEY ...) act like the physical ones for
+//   editing (LEFT/RIGHT/UP/DOWN/L1/L2/Y) and the sweeps (R1/R2). The
+//   mirror's "Run (A)" / "Reset pose (B)" buttons are ignored here rather
+//   than setting the robot off -- the tuner window has its own test
+//   buttons (PID TEST) -- and its "Cancel (X)" stops the run.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "pid_tuner.hpp"
+#include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -67,21 +86,37 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <new>
 
 bool pidTunerActive = false;
 
 // ─── Gain state ──────────────────────────────────────────────────────────────
-// gains = {kP, kI, kD}. Starting values mirror lateral_controller /
-// angular_controller in main.cpp. Edits live only in RAM -- once a set
-// feels good, copy it back into main.cpp.
+// gains = {kP, kI, kD}. Starting values are copied from lateral_controller /
+// angular_controller in main.cpp the first time the tuner opens, so the
+// tuner always starts from whatever the robot actually drives with. Edits
+// live only in RAM -- once a set feels good, copy it back into main.cpp.
 struct GainSet {
   float gains[3];
   float windup;
 };
 
-static GainSet angularGains{{1.5f, 0.0f, 10.0f}, 0.0f};
-static GainSet lateralGains{{10.0f, 0.0f, 28.0f}, 3.0f};
+extern lemlib::ControllerSettings lateral_controller;
+extern lemlib::ControllerSettings angular_controller;
+
+static GainSet angularGains{{0.0f, 0.0f, 0.0f}, 0.0f};
+static GainSet lateralGains{{0.0f, 0.0f, 0.0f}, 0.0f};
+
+static void loadGainsFromChassisConfig() {
+  static bool loaded = false;
+  if (loaded)
+    return;
+  loaded = true;
+  angularGains = {{angular_controller.kP, angular_controller.kI, angular_controller.kD},
+                  angular_controller.windupRange};
+  lateralGains = {{lateral_controller.kP, lateral_controller.kI, lateral_controller.kD},
+                  lateral_controller.windupRange};
+}
 
 static bool tuningAngular = true;
 static int selectedGain = 0; // index into GainSet::gains: 0=kP, 1=kI, 2=kD
@@ -177,6 +212,76 @@ struct TestResult {
 
 static TestResult lastResult;
 static const char *lastLabel = "none";
+
+// True from the moment a test/sweep starts until it finishes. Only ever
+// read by the laptop (it's what greys its run buttons out), since the
+// tuner loop itself is blocked inside the run meanwhile.
+static bool runBusy = false;
+
+// ─── Laptop mirror (tools/pid_tuner.py via tools/remote_touch.py) ────────────
+// The tuner's twin of driver_menu.cpp's sendRemoteUiState(): one line
+// describing the screen, sent whenever something changed (throttled to the
+// rate the laptop asked for) and as a 1 s heartbeat otherwise. The common
+// segments keep the same shape as the driver menu's so the laptop parses
+// both with one function; BTN carries the BACK button so the mirror can
+// tap it, and PID / RES carry everything the tuner window shows:
+//   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>
+//   RES:<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
+static void sendTunerState(bool force = false) {
+  static uint32_t lastSend = 0, lastActualSend = 0;
+  static char lastLine[400] = "";
+  const uint32_t kHeartbeatMs = 1000;
+  uint32_t interval = remoteSendIntervalMs();
+  if (!force && pros::millis() - lastSend < interval)
+    return;
+  lastSend = pros::millis();
+
+  char line[400];
+  snprintf(line, sizeof(line),
+           "RUI|PID_TUNER|%s|BTN:410,3,476,27,BACK|FIELDS:|FOOTER:|CODE:|MOTORS:|SCROLL:"
+           "|STEP:%.3f|FOOTC:0|PLOT:|TRAIL:|SEL:%d|ACTIVE:-1,-1|PLAN:|PATH:"
+           "|PID:%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d|RES:%s,%.2f,%d,%.2f,%d",
+           tuningAngular ? "ANGULAR" : "LATERAL", digitStep(), selectedGain,
+           tuningAngular ? 0 : 1, selectedGain, digitExp, angularGains.gains[0],
+           angularGains.gains[1], angularGains.gains[2], lateralGains.gains[0],
+           lateralGains.gains[1], lateralGains.gains[2], runBusy ? 1 : 0, lastLabel,
+           lastResult.overshoot, lastResult.settleMs, lastResult.finalError,
+           lastResult.durationMs);
+  bool changed = strcmp(line, lastLine) != 0;
+  if (!force && !changed && pros::millis() - lastActualSend < kHeartbeatMs)
+    return;
+  strcpy(lastLine, line);
+  lastActualSend = pros::millis();
+  printf("%s\n", line);
+}
+
+// How often to print a CSV sample while a run is in progress. Every sample
+// on a cable (the default 150 ms state rate), but only 10/s when the
+// laptop said it's on the controller's radio (300 ms) -- that link can't
+// carry 50 lines/s, and a backed-up radio delays the STOP coming back in.
+static int csvPeriodMs() { return remoteSendIntervalMs() > 150 ? 100 : 20; }
+
+// Cancel request from the laptop (PID STOP, or the mirror's Cancel (X)
+// button) -- checked inside every sampling loop.
+static bool remoteStopRequested() {
+  bool a = takeRemotePidStop();
+  bool b = takeRemoteKey(RK_X);
+  return a || b;
+}
+
+// One run's setpoint schedule, sent up front so the laptop can draw the
+// whole pink step line (and lay out the legs' time slots) before the
+// first sample arrives -- exactly what the brain graph does.
+//   PID|RUN|<angular>|<nLegs>|<label>,<idealLevel>,<timeoutMs>;...
+static void sendRunSchedule(bool angular, const TestSpec *tests, const float *levels,
+                            int n) {
+  char buf[200];
+  int len = snprintf(buf, sizeof(buf), "PID|RUN|%d|%d|", angular ? 1 : 0, n);
+  for (int i = 0; i < n && len < (int)sizeof(buf); i++)
+    len += snprintf(buf + len, sizeof(buf) - len, "%s%s,%.2f,%d", i ? ";" : "",
+                    tests[i].label, levels[i], tests[i].timeoutMs);
+  printf("%s\n", buf);
+}
 
 // ─── Brain screen UI (matches the cyber-HUD palette in main.cpp) ─────────────
 namespace ui {
@@ -409,6 +514,14 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
   const float target = spec.target;
   const int timeoutMs = spec.timeoutMs;
 
+  runBusy = true;
+  remoteStopRequested(); // drop a stale STOP so it can't cancel this run
+  sendTunerState(true);
+  {
+    float level[1] = {target};
+    sendRunSchedule(angular, &spec, level, 1);
+  }
+
   applyGains(angular);
   float startVal;
   if (angular) {
@@ -444,11 +557,20 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
   float initialError = 0;
   bool crossedTarget = false;
   bool first = true;
+  bool cancelled = false;
   int inBandMs = 0;
   int prevX = ui::GX, prevY = sc.toY(startVal);
+  const int csvEvery = csvPeriodMs();
+  uint32_t lastCsv = 0;
+  bool firstSample = true;
 
+  printf("PID|LEG|0|%s|%.2f|%.2f|%d\n", spec.label, target, startVal, timeoutMs);
   printf("CSV,ms,target,actual,error\n");
   while (chassis.isInMotion()) {
+    if (remoteStopRequested()) {
+      chassis.cancelMotion();
+      cancelled = true;
+    }
     lemlib::Pose pose = chassis.getPose();
     float actual = angular ? pose.theta : pose.y;
     float error = angular ? wrap180(target - actual) : (target - actual);
@@ -486,8 +608,13 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
     prevX = x;
     prevY = y;
 
-    printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, target, actual,
-           error);
+    if (firstSample || t - lastCsv >= (uint32_t)csvEvery) {
+      firstSample = false;
+      lastCsv = t;
+      printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, target, actual,
+             error);
+    }
+    sendTunerState(); // heartbeat for the laptop while the loop is busy
     pros::delay(kSampleDelayMs);
   }
   // Belt-and-suspenders: make sure the motion task is fully finished (and
@@ -502,8 +629,13 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
   printf("RESULT %s: overshoot=%.2f settle=%dms final=%.2f dur=%dms\n",
          spec.label, res.overshoot, res.settleMs, res.finalError,
          res.durationMs);
+  printf("PID|END|0|%s|%.2f|%d|%.2f|%d\n", spec.label, res.overshoot, res.settleMs,
+         res.finalError, res.durationMs);
+  printf("PID|DONE|%d\n", cancelled ? 1 : 0);
   controller.rumble(".");
   drawFooter(spec.label, res);
+  runBusy = false;
+  sendTunerState(true);
   return res;
 }
 
@@ -523,6 +655,10 @@ static TestResult runTest(bool angular, const TestSpec &spec) {
 static void runSweep(bool angular) {
   const TestSpec *tests = angular ? angularSweep : lateralSweep;
   const float settleBand = angular ? kAngularSettleBand : kLateralSettleBand;
+
+  runBusy = true;
+  remoteStopRequested(); // drop a stale STOP so it can't cancel this run
+  sendTunerState(true);
 
   // Known, repeatable starting point so "45/90/135/180" (or
   // "12/24/36/48") land where labeled instead of drifting from whatever
@@ -556,6 +692,8 @@ static void runSweep(bool angular) {
     idealLevel[i] = cum;
   }
 
+  sendRunSchedule(angular, tests, idealLevel, kSweepLegs);
+
   float hiVal = *std::max_element(idealLevel, idealLevel + kSweepLegs);
   GraphScale sc = computeScale(0.0f, hiVal);
   drawValueGraphFrame(sc);
@@ -574,8 +712,10 @@ static void runSweep(bool angular) {
   // physically doesn't jump between them, even though the target does), so
   // prevX/prevY live outside the leg loop instead of resetting per leg.
   int prevX = ui::GX, prevY = sc.toY(0.0f);
+  bool cancelled = false;
+  const int csvEvery = csvPeriodMs();
 
-  for (int i = 0; i < kSweepLegs; i++) {
+  for (int i = 0; i < kSweepLegs && !cancelled; i++) {
     const TestSpec &spec = tests[i];
     int x0 = slotX0[i], slotW_i = slotW[i];
 
@@ -620,9 +760,16 @@ static void runSweep(bool angular) {
         angular ? wrap180(target - startVal) : (target - startVal);
     bool crossedTarget = false;
     int inBandMs = 0;
+    uint32_t lastCsv = 0;
+    bool firstSample = true;
 
+    printf("PID|LEG|%d|%s|%.2f|%.2f|%d\n", i, spec.label, target, startVal, spec.timeoutMs);
     printf("CSV,ms,target,actual,error\n");
     while (chassis.isInMotion()) {
+      if (remoteStopRequested()) {
+        chassis.cancelMotion();
+        cancelled = true;
+      }
       lemlib::Pose pose = chassis.getPose();
       float actual = angular ? pose.theta : pose.y;
       float error = angular ? wrap180(target - actual) : (target - actual);
@@ -656,8 +803,13 @@ static void runSweep(bool angular) {
       prevX = x;
       prevY = y;
 
-      printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, target, actual,
-             error);
+      if (firstSample || t - lastCsv >= (uint32_t)csvEvery) {
+        firstSample = false;
+        lastCsv = t;
+        printf("CSV,%lu,%.2f,%.2f,%.2f\n", (unsigned long)t, target, actual,
+               error);
+      }
+      sendTunerState(); // heartbeat for the laptop while the loop is busy
       pros::delay(kSampleDelayMs);
     }
     // Make sure this leg's motion task is fully done (and its hold on the
@@ -671,12 +823,17 @@ static void runSweep(bool angular) {
     printf("RESULT %s: overshoot=%.2f settle=%dms final=%.2f dur=%dms\n",
            spec.label, res.overshoot, res.settleMs, res.finalError,
            res.durationMs);
+    printf("PID|END|%d|%s|%.2f|%d|%.2f|%d\n", i, spec.label, res.overshoot, res.settleMs,
+           res.finalError, res.durationMs);
     controller.rumble(".");
     drawFooter(spec.label, res);
   }
 
-  printf("SWEEP DONE\n");
+  printf("SWEEP %s\n", cancelled ? "CANCELLED" : "DONE");
+  printf("PID|DONE|%d\n", cancelled ? 1 : 0);
   controller.rumble("---");
+  runBusy = false;
+  sendTunerState(true);
 }
 
 // ─── Button edge detection ───────────────────────────────────────────────────
@@ -697,12 +854,68 @@ struct EdgeButton {
 };
 
 // ─── Main tuner loop ─────────────────────────────────────────────────────────
+// Applies one "PID ..." line from the laptop. Returns true if the screen
+// needs redrawing. TEST / SWEEP are run right here (they block, like the
+// button-driven ones) -- except when `allowRuns` is false, which is how
+// commands that piled up while a run was already in progress are drained:
+// their gain edits still apply, but a queued-up test doesn't suddenly set
+// the robot off again the moment the previous one ends.
+static bool applyRemotePidCommand(const RemotePidCommand &c, bool allowRuns) {
+  bool angular = c.mode == 0;
+  switch (c.kind) {
+  case RemotePidCommand::SET: {
+    if (c.index < 0 || c.index > 2)
+      return false;
+    GainSet &g = angular ? angularGains : lateralGains;
+    g.gains[c.index] = std::max(0.0f, c.value);
+    printf("PID SET %s %s = %.4f\n", angular ? "angular" : "lateral", kGainNames[c.index],
+           g.gains[c.index]);
+    return true;
+  }
+  case RemotePidCommand::MODE:
+    tuningAngular = angular;
+    return true;
+  case RemotePidCommand::SEL:
+    if (c.index < 0 || c.index > 2)
+      return false;
+    selectedGain = c.index;
+    return true;
+  case RemotePidCommand::DIGIT:
+    digitExp = std::clamp(c.index, kDigitExpMin, kDigitExpMax);
+    return true;
+  case RemotePidCommand::TEST:
+    if (!allowRuns || c.index < 0 || c.index > 2)
+      return false;
+    runTest(angular, (angular ? angularTests : lateralTests)[c.index]);
+    return false;
+  case RemotePidCommand::SWEEP:
+    if (!allowRuns)
+      return false;
+    runSweep(angular);
+    return false;
+  }
+  return false;
+}
+
+// Anything the laptop sent while a run was blocking the loop: keep the
+// gain edits, drop the runs (see applyRemotePidCommand).
+static bool drainQueuedRemotePidCommands() {
+  bool dirty = false;
+  RemotePidCommand c;
+  while (takeRemotePidCommand(c))
+    dirty |= applyRemotePidCommand(c, false);
+  return dirty;
+}
+
+// ─── Main tuner loop ─────────────────────────────────────────────────────────
 void pidTunerControl() {
   pidTunerActive = true;
+  loadGainsFromChassisConfig();
   pros::delay(100); // let the HUD task finish its current frame
   controller.rumble("--");
   printf("PID TUNER ACTIVE\n");
   drawTunerUI();
+  sendTunerState(true);
 
   EdgeButton up{pros::E_CONTROLLER_DIGITAL_UP};
   EdgeButton down{pros::E_CONTROLLER_DIGITAL_DOWN};
@@ -719,26 +932,47 @@ void pidTunerControl() {
 
   bool wasTouched = false;
   while (true) {
+    sendTunerState(); // throttled internally; keeps the laptop window live
+
     pros::screen_touch_status_s_t status = pros::screen::touch_status();
     bool touchPress = status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched;
+    int touchX = status.x, touchY = status.y;
     if (status.touch_status == pros::E_TOUCH_PRESSED)
       wasTouched = true;
     else if (status.touch_status == pros::E_TOUCH_RELEASED)
       wasTouched = false;
-    if (touchPress && status.x >= kBackX0 && status.x <= kBackX1 &&
-        status.y >= kBackY0 && status.y <= kBackY1) {
+    // A tap from the laptop mirror counts like a real one (see
+    // driver_menu.cpp) -- BACK is the only thing here to tap.
+    if (!touchPress && takeRemoteTouch(touchX, touchY))
+      touchPress = true;
+    if (touchPress && touchX >= kBackX0 && touchX <= kBackX1 && touchY >= kBackY0 &&
+        touchY <= kBackY1) {
       pidTunerActive = false;
       controller.rumble(".");
       printf("PID TUNER EXIT\n");
       return; // back to the driver menu
     }
 
-    bool upEdge = up.pressed(), downEdge = down.pressed();
-    bool leftEdge = left.pressed(), rightEdge = right.pressed();
-    bool aEdge = btnA.pressed(), bEdge = btnB.pressed(), xEdge = btnX.pressed();
-    bool yEdge = btnY.pressed();
-    bool r1Edge = btnR1.pressed(), r2Edge = btnR2.pressed();
-    bool l1Edge = btnL1.pressed(), l2Edge = btnL2.pressed();
+    // Physical buttons or the laptop's KEY lines -- same edges either way,
+    // except A / B / X: the laptop starts tests with PID TEST instead, and
+    // its X is a stop (see the header comment), so those three are only
+    // ever physical here.
+    bool upEdge = up.pressed() || takeRemoteKey(RK_UP);
+    bool downEdge = down.pressed() || takeRemoteKey(RK_DOWN);
+    bool leftEdge = left.pressed() || takeRemoteKey(RK_LEFT);
+    bool rightEdge = right.pressed() || takeRemoteKey(RK_RIGHT);
+    bool aEdge = btnA.pressed();
+    bool bEdge = btnB.pressed();
+    bool xEdge = btnX.pressed();
+    bool yEdge = btnY.pressed() || takeRemoteKey(RK_Y);
+    bool r1Edge = btnR1.pressed() || takeRemoteKey(RK_R1);
+    bool r2Edge = btnR2.pressed() || takeRemoteKey(RK_R2);
+    bool l1Edge = btnL1.pressed() || takeRemoteKey(RK_L1);
+    bool l2Edge = btnL2.pressed() || takeRemoteKey(RK_L2);
+    takeRemoteKey(RK_A); // ignored (see above); drop so they don't pile up
+    takeRemoteKey(RK_B);
+    takeRemoteKey(RK_X); // only meaningful mid-run; drop stale ones
+    takeRemotePidStop();
 
     bool dirty = yEdge || leftEdge || rightEdge || l1Edge || l2Edge;
     if (yEdge)
@@ -760,6 +994,7 @@ void pidTunerControl() {
     }
 
     const TestSpec *tests = tuningAngular ? angularTests : lateralTests;
+    bool ran = true;
     if (aEdge) {
       runTest(tuningAngular, tests[0]);
     } else if (xEdge) {
@@ -770,8 +1005,27 @@ void pidTunerControl() {
       runSweep(true); // R1 always runs the ANGULAR sweep, regardless of Y mode
     } else if (r2Edge) {
       runSweep(false); // R2 always runs the LATERAL sweep, regardless of Y mode
+    } else {
+      ran = false;
+      // One laptop command per tick, so a SET that arrives just before a
+      // TEST is applied before the test starts.
+      RemotePidCommand cmd;
+      if (takeRemotePidCommand(cmd)) {
+        bool isRun = cmd.kind == RemotePidCommand::TEST || cmd.kind == RemotePidCommand::SWEEP;
+        dirty |= applyRemotePidCommand(cmd, true);
+        ran = isRun;
+      }
+    }
+    if (ran) {
+      // The run blocked this loop; whatever queued up meanwhile gets its
+      // gain edits applied but its runs dropped. Only redraw if one of
+      // those edits landed -- a redraw wipes the run's graph.
+      if (drainQueuedRemotePidCommands())
+        drawTunerUI();
+      sendTunerState(true);
     } else if (dirty) {
       drawTunerUI();
+      sendTunerState(true);
     }
 
     drawControllerUI();

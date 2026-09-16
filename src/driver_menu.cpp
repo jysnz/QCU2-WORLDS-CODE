@@ -17,6 +17,7 @@
 
 #include "driver_menu.hpp"
 #include "pid_tuner.hpp"
+#include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -622,7 +623,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[5] = {
+static const GridItem kHomeItems[6] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -869,8 +870,6 @@ static void drawEditControllerUI() {
 // Defined in the "Remote touch bridge" section below; `force` skips the
 // send-rate throttle for one-off pushes right after the screen changed.
 static void sendRemoteUiState(bool force = false);
-enum RemoteKey { RK_LEFT, RK_RIGHT, RK_UP, RK_DOWN, RK_A, RK_B, RK_X, RK_L1, RK_L2, RK_COUNT };
-static bool takeRemoteKey(RemoteKey k);
 
 // ─── Running a motion ────────────────────────────────────────────────────────
 static bool waitForCancel() {
@@ -1310,6 +1309,132 @@ static void runPlan(int only) {
   printf("PLAN DONE\n");
 }
 
+// ─── Motor temperatures ──────────────────────────────────────────────────────
+// HOME -> MOTOR TEMPS. The same tiles the driving HUD in main.cpp shows
+// (card, status dot, temperature, heat gauge, coloured by how hot), for
+// every motor on the robot, laid out in the same sections. The HUD only
+// draws while the driver menu is closed, so this is how you see the
+// temperatures without leaving the menu.
+static const int kTempRowH = 66;   // one section: its label plus a row of tiles
+static const int kTempTileH = 46;
+static const int kTempSections = 5;
+static int tempsScroll = 0;        // pixels, <= 0 (content scrolled up)
+
+struct TempSection {
+  const char *label;
+  uint32_t color;
+  const char *prefix;
+  int tilesPerRow;
+};
+
+// The five groups, in the order the HUD lists them.
+static void collectTemps(std::vector<double> temps[kTempSections],
+                         std::vector<std::int8_t> ports[kTempSections]) {
+  temps[0] = left_motor_group.get_temperature_all();
+  ports[0] = left_motor_group.get_port_all();
+  temps[1] = right_motor_group.get_temperature_all();
+  ports[1] = right_motor_group.get_port_all();
+  temps[2] = {intake1.get_temperature(), intake2.get_temperature()};
+  ports[2] = {intake1.get_port(), intake2.get_port()};
+  temps[3] = {lift1.get_temperature(), lift2.get_temperature()};
+  ports[3] = {lift1.get_port(), lift2.get_port()};
+  temps[4] = {bunchy.get_temperature(), bunchArm.get_temperature()};
+  ports[4] = {bunchy.get_port(), bunchArm.get_port()};
+}
+
+static const TempSection kTempSectionInfo[kTempSections] = {
+    {"LEFT DRIVETRAIN", ui::CYAN, "L", 5},
+    {"RIGHT DRIVETRAIN", ui::ORANGE, "R", 5},
+    {"INTAKE", ui::GREEN, "Intake", 2},
+    {"LIFT", ui::CYAN, "Lift", 2},
+    {"BUNCH", ui::ORANGE, "Bunch", 2},
+};
+
+// Cyan up to 45C, orange to 55C, red past it -- the HUD's thresholds.
+static uint32_t tempColor(double t) {
+  return t < 45 ? ui::CYAN : (t < 55 ? ui::ORANGE : 0xFF4D4D);
+}
+
+static void drawTempTile(int x, int y, int tileW, const char *label, double temp) {
+  using namespace ui;
+  if (y + kTempTileH < 55 || y > 215) // outside the scrolling content area
+    return;
+  uint32_t col = tempColor(temp);
+  fillRoundedRect(x, y, x + tileW, y + kTempTileH, 5, CARD);
+  pros::screen::set_pen(col);
+  pros::screen::fill_circle(x + tileW - 9, y + 9, 4);
+  pros::screen::set_eraser(CARD);
+  pros::screen::set_pen(GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 5, "%s", label);
+  pros::screen::set_pen(col);
+  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 20, "%.1fC", temp);
+
+  int barX = x + 8, barY = y + kTempTileH - 9, barW = tileW - 16, barH = 4;
+  double frac = (temp - 20.0) / 50.0; // 20C..70C
+  frac = std::clamp(frac, 0.0, 1.0);
+  fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, AXIS);
+  int fillW = (int)(barW * frac);
+  if (fillW >= 4)
+    fillRoundedRect(barX, barY, barX + fillW, barY + barH, 2, col);
+}
+
+static int tempsMinScroll() {
+  int content = kTempSections * kTempRowH;
+  return content > 160 ? -(content - 160) : 0;
+}
+
+static void drawTempsScreen() {
+  using namespace ui;
+  clearScreen();
+  drawHeader("MOTOR TEMPS", nullptr, CYAN);
+  drawBackButton();
+
+  std::vector<double> temps[kTempSections];
+  std::vector<std::int8_t> ports[kTempSections];
+  collectTemps(temps, ports);
+
+  const int rowLeft = 15, rowRight = 428, labelH = 14, gap = 6;
+  double hottest = 0;
+  for (int sIdx = 0; sIdx < kTempSections; sIdx++) {
+    const TempSection &info = kTempSectionInfo[sIdx];
+    int labelY = 55 + tempsScroll + sIdx * kTempRowH;
+    int tileY = labelY + labelH;
+    for (double t : temps[sIdx])
+      hottest = std::max(hottest, t);
+    if (tileY + kTempTileH < 55 || labelY > 215)
+      continue;
+    if (labelY >= 50 && labelY + labelH <= 215) {
+      pros::screen::set_eraser(BG);
+      pros::screen::set_pen(info.color);
+      pros::screen::print(pros::E_TEXT_SMALL, rowLeft, labelY, "%s", info.label);
+    }
+    int tileW = (rowRight - rowLeft - (info.tilesPerRow - 1) * gap) / info.tilesPerRow;
+    for (int i = 0; i < (int)temps[sIdx].size() && i < info.tilesPerRow; i++) {
+      char label[24];
+      snprintf(label, sizeof(label), "%s %d P%d", info.prefix, i + 1, (int)std::abs(ports[sIdx][i]));
+      drawTempTile(rowLeft + i * (tileW + gap), tileY, tileW, label, temps[sIdx][i]);
+    }
+  }
+
+  // Scroll arrows in the same rects (and the same look) the grid screens use.
+  if (tempsMinScroll() < 0) {
+    bool canUp = tempsScroll < 0, canDown = tempsScroll > tempsMinScroll();
+    fillRoundedRect(kScrollUp.x0, kScrollUp.y0, kScrollUp.x1, kScrollUp.y1, 8, CARD);
+    fillRoundedRect(kScrollDown.x0, kScrollDown.y0, kScrollDown.x1, kScrollDown.y1, 8, CARD);
+    pros::screen::set_eraser(CARD);
+    pros::screen::set_pen(canUp ? CYAN : AXIS);
+    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollUp.x0 + 28, kScrollUp.y0 + 28, "^");
+    pros::screen::set_pen(canDown ? CYAN : AXIS);
+    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollDown.x0 + 28, kScrollDown.y0 + 28, "v");
+  }
+
+  pros::screen::set_pen(FOOTER_BG);
+  pros::screen::fill_rect(0, 215, 480, 240);
+  pros::screen::set_eraser(FOOTER_BG);
+  pros::screen::set_pen(tempColor(hottest));
+  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "hottest %.1fC", hottest);
+}
+
 // ─── Remote touch bridge ──────────────────────────────────────────────────
 // Lets a laptop mirror this menu over the same USB cable already used by
 // `pros terminal` and "tap" it remotely -- see tools/remote_touch.py for
@@ -1344,12 +1469,23 @@ static void runPlan(int only) {
 //   PLAN RUN [i]         run the whole plan, or just step i
 //   PLAN STOP            cancel a running plan (same as controller X)
 //   POSE x y th          chassis.setPose(x, y, th) right now
+//   PID SET m g v        PID tuner: set gain g (0 kP, 1 kI, 2 kD) of
+//                        controller m (0 angular, 1 lateral) to v
+//   PID MODE m           PID tuner: which controller UP/DOWN edit
+//   PID SEL g            PID tuner: which gain UP/DOWN edit
+//   PID DIGIT e          PID tuner: digit cursor, as a power of ten (-3..2)
+//   PID TEST m i         PID tuner: run single test i (0 small, 1 big,
+//                        2 return) on controller m
+//   PID SWEEP m          PID tuner: run the 4-leg sweep on controller m
+//   PID STOP             PID tuner: cancel the motion in progress
+//   The PID ones are consumed by pidTunerControl() (see pid_tuner.cpp)
+//   through the take*() hooks declared in driver_menu.hpp.
 struct RemoteTouch {
   bool pending = false;
   int x = 0, y = 0;
 };
-static const char *const kRemoteKeyNames[RK_COUNT] = {"LEFT", "RIGHT", "UP", "DOWN", "A",
-                                                       "B",    "X",     "L1", "L2"};
+static const char *const kRemoteKeyNames[RK_COUNT] = {"LEFT", "RIGHT", "UP", "DOWN", "A",  "B",
+                                                       "X",    "L1",    "L2", "Y",    "R1", "R2"};
 struct RemoteInput {
   RemoteTouch touch;
   bool key[RK_COUNT] = {};
@@ -1365,6 +1501,8 @@ struct RemoteInput {
   int driveL = 0, driveR = 0;     // laptop WASD driving, see applyRemoteDrive()
   uint32_t driveAt = 0;           // when that command arrived (pros::millis)
   bool driveActive = false;
+  std::vector<RemotePidCommand> pidCmds;   // PID tuner commands, oldest first
+  bool pidStop = false;
 };
 static RemoteInput remoteInput;
 static pros::Mutex remoteTouchMutex;
@@ -1404,6 +1542,36 @@ static void remoteTouchListenerTask(void *) {
       } else if (strncmp(rest, "STOP", 4) == 0) {
         remoteTouchMutex.take();
         remoteInput.key[RK_X] = true;
+        remoteTouchMutex.give();
+      }
+    } else if (strncmp(line, "PID ", 4) == 0) {
+      const char *rest = line + 4;
+      RemotePidCommand c;
+      bool ok = true;
+      if (strncmp(rest, "STOP", 4) == 0) {
+        remoteTouchMutex.take();
+        remoteInput.pidStop = true;
+        remoteTouchMutex.give();
+        continue;
+      } else if (sscanf(rest, "SET %d %d %f", &c.mode, &c.index, &c.value) == 3) {
+        c.kind = RemotePidCommand::SET;
+      } else if (sscanf(rest, "MODE %d", &c.mode) == 1) {
+        c.kind = RemotePidCommand::MODE;
+      } else if (sscanf(rest, "SEL %d", &c.index) == 1) {
+        c.kind = RemotePidCommand::SEL;
+      } else if (sscanf(rest, "DIGIT %d", &c.index) == 1) {
+        c.kind = RemotePidCommand::DIGIT;
+      } else if (sscanf(rest, "TEST %d %d", &c.mode, &c.index) == 2) {
+        c.kind = RemotePidCommand::TEST;
+      } else if (sscanf(rest, "SWEEP %d", &c.mode) == 1) {
+        c.kind = RemotePidCommand::SWEEP;
+      } else {
+        ok = false;
+      }
+      if (ok) {
+        remoteTouchMutex.take();
+        if (remoteInput.pidCmds.size() < 32)
+          remoteInput.pidCmds.push_back(c);
         remoteTouchMutex.give();
       }
     } else if (sscanf(line, "POSE %f %f %f", &fx, &fy, &ft) == 3) {
@@ -1462,7 +1630,7 @@ static void ensureRemoteTouchListener() {
 // Pulls the latest pending remote touch (if any), clearing it -- shaped
 // like a physical touch-down edge so the caller can treat the two
 // identically.
-static bool takeRemoteTouch(int &x, int &y) {
+bool takeRemoteTouch(int &x, int &y) {
   bool got = false;
   remoteTouchMutex.take();
   if (remoteInput.touch.pending) {
@@ -1477,10 +1645,38 @@ static bool takeRemoteTouch(int &x, int &y) {
 
 // One-shot read of a remote key press -- true once per KEY line received,
 // so it composes with EdgeButton::pressed() as `edge || takeRemoteKey(k)`.
-static bool takeRemoteKey(RemoteKey k) {
+bool takeRemoteKey(RemoteKey k) {
   remoteTouchMutex.take();
   bool got = remoteInput.key[k];
   remoteInput.key[k] = false;
+  remoteTouchMutex.give();
+  return got;
+}
+
+int remoteSendIntervalMs() {
+  remoteTouchMutex.take();
+  int ms = remoteInput.sendIntervalMs;
+  remoteTouchMutex.give();
+  return ms;
+}
+
+// Oldest queued "PID ..." command, if any (see pid_tuner.cpp).
+bool takeRemotePidCommand(RemotePidCommand &out) {
+  bool got = false;
+  remoteTouchMutex.take();
+  if (!remoteInput.pidCmds.empty()) {
+    out = remoteInput.pidCmds.front();
+    remoteInput.pidCmds.erase(remoteInput.pidCmds.begin());
+    got = true;
+  }
+  remoteTouchMutex.give();
+  return got;
+}
+
+bool takeRemotePidStop() {
+  remoteTouchMutex.take();
+  bool got = remoteInput.pidStop;
+  remoteInput.pidStop = false;
   remoteTouchMutex.give();
   return got;
 }
@@ -1954,137 +2150,12 @@ static void sendRemoteUiState(bool force) {
   printf("%s\n", line);
 }
 
-// The two places the menu hands the screen to something it doesn't mirror
-// -- tell the laptop so it can say so instead of showing a stale HOME.
+// Where the menu hands the screen to something the laptop doesn't mirror
+// (normal driving) -- tell it so it can say so instead of showing a stale
+// HOME. (The PID tuner mirrors itself: see sendTunerState in pid_tuner.cpp.)
 static void sendRemoteHandoff(const char *what) {
   printf("RUI|HANDOFF|%s|BTN:|FIELDS:|FOOTER:|CODE:|MOTORS:|SCROLL:|STEP:0|FOOTC:0|PLOT:|TRAIL:"
          "|SEL:0|ACTIVE:-1,-1|PLAN:|PATH:\n", what);
-}
-
-// ─── Motor temperatures ──────────────────────────────────────────────────────
-// HOME -> MOTOR TEMPS. The same tiles the driving HUD in main.cpp shows
-// (card, status dot, temperature, heat gauge, coloured by how hot), for
-// every motor on the robot, laid out in the same sections. The HUD only
-// draws while the driver menu is closed, so this is how you see the
-// temperatures without leaving the menu.
-static const int kTempRowH = 66;   // one section: its label plus a row of tiles
-static const int kTempTileH = 46;
-static const int kTempSections = 5;
-static int tempsScroll = 0;        // pixels, <= 0 (content scrolled up)
-
-struct TempSection {
-  const char *label;
-  uint32_t color;
-  const char *prefix;
-  int tilesPerRow;
-};
-
-// The five groups, in the order the HUD lists them.
-static void collectTemps(std::vector<double> temps[kTempSections],
-                         std::vector<std::int8_t> ports[kTempSections]) {
-  temps[0] = left_motor_group.get_temperature_all();
-  ports[0] = left_motor_group.get_port_all();
-  temps[1] = right_motor_group.get_temperature_all();
-  ports[1] = right_motor_group.get_port_all();
-  temps[2] = {intake1.get_temperature(), intake2.get_temperature()};
-  ports[2] = {intake1.get_port(), intake2.get_port()};
-  temps[3] = {lift1.get_temperature(), lift2.get_temperature()};
-  ports[3] = {lift1.get_port(), lift2.get_port()};
-  temps[4] = {bunchy.get_temperature(), bunchArm.get_temperature()};
-  ports[4] = {bunchy.get_port(), bunchArm.get_port()};
-}
-
-static const TempSection kTempSectionInfo[kTempSections] = {
-    {"LEFT DRIVETRAIN", ui::CYAN, "L", 5},
-    {"RIGHT DRIVETRAIN", ui::ORANGE, "R", 5},
-    {"INTAKE", ui::GREEN, "Intake", 2},
-    {"LIFT", ui::CYAN, "Lift", 2},
-    {"BUNCH", ui::ORANGE, "Bunch", 2},
-};
-
-// Cyan up to 45C, orange to 55C, red past it -- the HUD's thresholds.
-static uint32_t tempColor(double t) {
-  return t < 45 ? ui::CYAN : (t < 55 ? ui::ORANGE : 0xFF4D4D);
-}
-
-static void drawTempTile(int x, int y, int tileW, const char *label, double temp) {
-  using namespace ui;
-  if (y + kTempTileH < 55 || y > 215) // outside the scrolling content area
-    return;
-  uint32_t col = tempColor(temp);
-  fillRoundedRect(x, y, x + tileW, y + kTempTileH, 5, CARD);
-  pros::screen::set_pen(col);
-  pros::screen::fill_circle(x + tileW - 9, y + 9, 4);
-  pros::screen::set_eraser(CARD);
-  pros::screen::set_pen(GRAY);
-  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 5, "%s", label);
-  pros::screen::set_pen(col);
-  pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 20, "%.1fC", temp);
-
-  int barX = x + 8, barY = y + kTempTileH - 9, barW = tileW - 16, barH = 4;
-  double frac = (temp - 20.0) / 50.0; // 20C..70C
-  frac = std::clamp(frac, 0.0, 1.0);
-  fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, AXIS);
-  int fillW = (int)(barW * frac);
-  if (fillW >= 4)
-    fillRoundedRect(barX, barY, barX + fillW, barY + barH, 2, col);
-}
-
-static int tempsMinScroll() {
-  int content = kTempSections * kTempRowH;
-  return content > 160 ? -(content - 160) : 0;
-}
-
-static void drawTempsScreen() {
-  using namespace ui;
-  clearScreen();
-  drawHeader("MOTOR TEMPS", nullptr, CYAN);
-  drawBackButton();
-
-  std::vector<double> temps[kTempSections];
-  std::vector<std::int8_t> ports[kTempSections];
-  collectTemps(temps, ports);
-
-  const int rowLeft = 15, rowRight = 428, labelH = 14, gap = 6;
-  double hottest = 0;
-  for (int sIdx = 0; sIdx < kTempSections; sIdx++) {
-    const TempSection &info = kTempSectionInfo[sIdx];
-    int labelY = 55 + tempsScroll + sIdx * kTempRowH;
-    int tileY = labelY + labelH;
-    for (double t : temps[sIdx])
-      hottest = std::max(hottest, t);
-    if (tileY + kTempTileH < 55 || labelY > 215)
-      continue;
-    if (labelY >= 50 && labelY + labelH <= 215) {
-      pros::screen::set_eraser(BG);
-      pros::screen::set_pen(info.color);
-      pros::screen::print(pros::E_TEXT_SMALL, rowLeft, labelY, "%s", info.label);
-    }
-    int tileW = (rowRight - rowLeft - (info.tilesPerRow - 1) * gap) / info.tilesPerRow;
-    for (int i = 0; i < (int)temps[sIdx].size() && i < info.tilesPerRow; i++) {
-      char label[24];
-      snprintf(label, sizeof(label), "%s %d P%d", info.prefix, i + 1, (int)std::abs(ports[sIdx][i]));
-      drawTempTile(rowLeft + i * (tileW + gap), tileY, tileW, label, temps[sIdx][i]);
-    }
-  }
-
-  // Scroll arrows in the same rects (and the same look) the grid screens use.
-  if (tempsMinScroll() < 0) {
-    bool canUp = tempsScroll < 0, canDown = tempsScroll > tempsMinScroll();
-    fillRoundedRect(kScrollUp.x0, kScrollUp.y0, kScrollUp.x1, kScrollUp.y1, 8, CARD);
-    fillRoundedRect(kScrollDown.x0, kScrollDown.y0, kScrollDown.x1, kScrollDown.y1, 8, CARD);
-    pros::screen::set_eraser(CARD);
-    pros::screen::set_pen(canUp ? CYAN : AXIS);
-    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollUp.x0 + 28, kScrollUp.y0 + 28, "^");
-    pros::screen::set_pen(canDown ? CYAN : AXIS);
-    pros::screen::print(pros::E_TEXT_MEDIUM, kScrollDown.x0 + 28, kScrollDown.y0 + 28, "v");
-  }
-
-  pros::screen::set_pen(FOOTER_BG);
-  pros::screen::fill_rect(0, 215, 480, 240);
-  pros::screen::set_eraser(FOOTER_BG);
-  pros::screen::set_pen(tempColor(hottest));
-  pros::screen::print(pros::E_TEXT_SMALL, 10, 222, "hottest %.1fC", hottest);
 }
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
@@ -2204,8 +2275,8 @@ void driverMenuControl() {
       case Screen::HOME: {
         int hit = gridHitTest(kHomeItemCount, x, y);
         if (hit == 0) {
-          sendRemoteHandoff("PID TUNER");
-          pidTunerControl(); // returns once its own BACK button is tapped
+          pidTunerControl(); // returns once its own BACK button is tapped;
+                             // sends its own RUI|PID_TUNER lines meanwhile
           goHome();
         } else if (hit == 1) {
           goPlanner();
