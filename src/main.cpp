@@ -2,6 +2,7 @@
 #include "autonomous.hpp"
 #include "functions.hpp"
 #include "pid_tuner.hpp"
+#include "auto_tuner.hpp"
 #include "driver_menu.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
@@ -129,7 +130,7 @@ void initialize() {
 
         while (true) {
             // The PID tuner / driver menu own the brain screen while active
-            if (pidTunerActive || driverMenuActive) {
+            if (pidTunerActive || autoTunerActive || driverMenuActive) {
                 pros::delay(100);
                 forceRedraw = true; // repaint fully once we get control back
                 continue;

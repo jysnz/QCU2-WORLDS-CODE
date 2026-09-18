@@ -2,7 +2,7 @@
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
-//           | MOTOR TEMPS | ROBOT POSE   (scroll down for the last one)
+//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for the last two)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -17,6 +17,7 @@
 
 #include "driver_menu.hpp"
 #include "pid_tuner.hpp"
+#include "auto_tuner.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -624,7 +625,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[7] = {
+static const GridItem kHomeItems[8] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -632,8 +633,9 @@ static const GridItem kHomeItems[7] = {
     {"LAPTOP DRIVE"},
     {"MOTOR TEMPS"},
     {"ROBOT POSE"},
+    {"AUTO PID TUNE"},
 };
-static const int kHomeItemCount = 7;
+static const int kHomeItemCount = 8;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -1480,8 +1482,12 @@ static void drawTempsScreen() {
 //                        2 return) on controller m
 //   PID SWEEP m          PID tuner: run the 4-leg sweep on controller m
 //   PID CAL              PID tuner: re-calibrate the IMU and zero the pose
-//   PID STOP             PID tuner: cancel the motion in progress
-//   The PID ones are consumed by pidTunerControl() (see pid_tuner.cpp)
+//   PID STOP             PID tuner: cancel the motion in progress (also
+//                        aborts an automatic tune)
+//   PID AUTOSTART m      auto tuner: start tuning controller m
+//   PID AUTOMODE m       auto tuner: select controller m (while idle)
+//   The PID ones are consumed by pidTunerControl() (see pid_tuner.cpp) or
+//   autoTunerControl() (see auto_tuner.cpp) -- whichever owns the screen --
 //   through the take*() hooks declared in driver_menu.hpp.
 struct RemoteTouch {
   bool pending = false;
@@ -1570,6 +1576,10 @@ static void remoteTouchListenerTask(void *) {
         c.kind = RemotePidCommand::SWEEP;
       } else if (strncmp(rest, "CAL", 3) == 0) {
         c.kind = RemotePidCommand::CAL;
+      } else if (sscanf(rest, "AUTOSTART %d", &c.mode) == 1) {
+        c.kind = RemotePidCommand::AUTO_START;
+      } else if (sscanf(rest, "AUTOMODE %d", &c.mode) == 1) {
+        c.kind = RemotePidCommand::AUTO_MODE;
       } else {
         ok = false;
       }
@@ -2053,7 +2063,7 @@ static void sendRemoteUiState(bool force) {
   case Screen::HOME:
     screenTag = "HOME";
     appendGridElements(btnBuf, btnN, sizeof(btnBuf), kHomeItems, kHomeItemCount);
-    formatScrollState(scrollBuf, sizeof(scrollBuf), 4);
+    formatScrollState(scrollBuf, sizeof(scrollBuf), kHomeItemCount);
     break;
   case Screen::PATH_TYPE:
     screenTag = "PATH_TYPE";
@@ -2410,6 +2420,10 @@ void driverMenuControl() {
           goTemps();
         } else if (hit == 6) {
           goPose();
+        } else if (hit == 7) {
+          autoTunerControl(); // like PID TUNING: returns on its own BACK;
+                              // sends RUI|AUTO_TUNER lines meanwhile
+          goHome();
         }
         break;
       }

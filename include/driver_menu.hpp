@@ -5,9 +5,13 @@
 // opcontrol() starts, replacing the old "hold DPAD-LEFT/UP" scheme:
 //
 //   HOME              [ PID TUNING ] [ PATH PLANNER ] [ TEST MOTORS ] [ DRIVE ]
-//                     [ LAPTOP DRIVE ] [ MOTOR TEMPS ] [ ROBOT POSE ]  (scrolls)
+//                     [ LAPTOP DRIVE ] [ MOTOR TEMPS ] [ ROBOT POSE ]
+//                     [ AUTO PID TUNE ]                              (scrolls)
 //     - PID TUNING      hands off to pidTunerControl() (see pid_tuner.hpp);
 //                       its own BACK button returns here to the home menu.
+//     - AUTO PID TUNE   hands off to autoTunerControl() (see auto_tuner.hpp):
+//                       finds kP / kD / kI for one controller by itself,
+//                       with a dedicated laptop window (tools/auto_pid_tuner.py).
 //     - TEST MOTORS     spins every drivetrain motor one at a time and
 //                       reports, per port, whether it's configured as
 //                       reversed ("Negative") or not ("Positive").
@@ -66,13 +70,14 @@ bool takeRemoteTouch(int &x, int &y);
 // over the controller's radio. Used to pace anything else streamed to it.
 int remoteSendIntervalMs();
 
-// "PID <verb> ..." lines from tools/pid_tuner.py, queued in arrival order.
+// "PID <verb> ..." lines from tools/pid_tuner.py (and the AUTO* ones from
+// tools/auto_pid_tuner.py), queued in arrival order.
 struct RemotePidCommand {
-  enum Kind { SET, MODE, SEL, DIGIT, TEST, SWEEP, CAL } kind;
-  int mode = 0;   // 0 = angular, 1 = lateral   (SET / MODE / TEST / SWEEP)
+  enum Kind { SET, MODE, SEL, DIGIT, TEST, SWEEP, CAL, AUTO_START, AUTO_MODE } kind;
+  int mode = 0;   // 0 = angular, 1 = lateral   (SET / MODE / TEST / SWEEP / AUTO_*)
   int index = 0;  // gain 0..2, test 0..2, or digit exponent
   float value = 0;
 };
 bool takeRemotePidCommand(RemotePidCommand &out);
-// "PID STOP": true once per request. Checked mid-motion by the tuner.
+// "PID STOP": true once per request. Checked mid-motion by both tuners.
 bool takeRemotePidStop();

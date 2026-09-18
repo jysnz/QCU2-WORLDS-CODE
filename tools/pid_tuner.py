@@ -163,6 +163,26 @@ def controller_code(gains):
     return "\n".join(lines) + "\n"
 
 
+def write_controller_lines(code):
+    """Replaces the two lemlib::ControllerSettings lines in src/main.cpp
+    with the ones in `code` (as controller_code() makes it). Returns None
+    on success, else the reason it couldn't. Shared with auto_pid_tuner.py."""
+    try:
+        src = open(MAIN_CPP, encoding="utf-8").read()
+    except OSError as e:
+        return str(e)
+    new = src
+    for line in code.strip().split("\n"):
+        name = line.split()[1].split("(")[0]
+        new, n = re.subn(r"lemlib::ControllerSettings\s+" + name + r"\s*\([^)]*\)\s*;",
+                         line, new, count=1)
+        if n == 0:
+            return f"couldn't find the {name} line in main.cpp"
+    with open(MAIN_CPP, "w", encoding="utf-8", newline="") as f:
+        f.write(new)
+    return None
+
+
 class Run:
     """One test or sweep as the brain streams it: the schedule up front,
     then each leg's samples and result."""
@@ -700,22 +720,10 @@ class PidTunerWindow(tk.Toplevel):
                                    f"{os.path.normpath(MAIN_CPP)}\nwith:\n\n{code}",
                                    parent=self):
             return
-        try:
-            src = open(MAIN_CPP, encoding="utf-8").read()
-        except OSError as e:
-            messagebox.showerror("Write to main.cpp", str(e), parent=self)
+        err = write_controller_lines(code)
+        if err:
+            messagebox.showerror("Write to main.cpp", err, parent=self)
             return
-        new = src
-        for line in code.strip().split("\n"):
-            name = line.split()[1].split("(")[0]
-            new, n = re.subn(r"lemlib::ControllerSettings\s+" + name + r"\s*\([^)]*\)\s*;",
-                             line, new, count=1)
-            if n == 0:
-                messagebox.showerror("Write to main.cpp",
-                                     f"couldn't find the {name} line in main.cpp", parent=self)
-                return
-        with open(MAIN_CPP, "w", encoding="utf-8", newline="") as f:
-            f.write(new)
         self.runStatus.config(text="main.cpp updated -- rebuild and upload to make it stick",
                               fg=GREEN)
 

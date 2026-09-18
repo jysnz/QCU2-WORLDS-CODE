@@ -81,6 +81,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "pid_tuner.hpp"
+#include "pid_tuner_shared.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -99,18 +100,13 @@ bool pidTunerActive = false;
 // angular_controller in main.cpp the first time the tuner opens, so the
 // tuner always starts from whatever the robot actually drives with. Edits
 // live only in RAM -- once a set feels good, copy it back into main.cpp.
-struct GainSet {
-  float gains[3];
-  float windup;
-};
-
 extern lemlib::ControllerSettings lateral_controller;
 extern lemlib::ControllerSettings angular_controller;
 
-static GainSet angularGains{{0.0f, 0.0f, 0.0f}, 0.0f};
-static GainSet lateralGains{{0.0f, 0.0f, 0.0f}, 0.0f};
+GainSet angularGains{{0.0f, 0.0f, 0.0f}, 0.0f};
+GainSet lateralGains{{0.0f, 0.0f, 0.0f}, 0.0f};
 
-static void loadGainsFromChassisConfig() {
+void loadGainsFromChassisConfig() {
   static bool loaded = false;
   if (loaded)
     return;
@@ -152,7 +148,7 @@ static GainSet &activeGains() {
 // current, a no-op), leaving the actual PID driving the test unchanged no
 // matter what you edited -- exactly why the graph looked identical
 // regardless of gain changes.
-static void applyGains(bool angular) {
+void applyGains(bool angular) {
   const GainSet &g = angular ? angularGains : lateralGains;
   lemlib::PID fresh(g.gains[0], g.gains[1], g.gains[2], g.windup);
   if (angular)
@@ -161,7 +157,7 @@ static void applyGains(bool angular) {
     new (&chassis.lateralPID) lemlib::PID(fresh);
 }
 
-static float wrap180(float deg) {
+float wrap180(float deg) {
   while (deg > 180.0f)
     deg -= 360.0f;
   while (deg < -180.0f)
@@ -266,7 +262,7 @@ static void sendTunerState(bool force = false) {
 // on a cable (the default 150 ms state rate), but only 10/s when the
 // laptop said it's on the controller's radio (300 ms) -- that link can't
 // carry 50 lines/s, and a backed-up radio delays the STOP coming back in.
-static int csvPeriodMs() { return remoteSendIntervalMs() > 150 ? 100 : 20; }
+int csvPeriodMs() { return remoteSendIntervalMs() > 150 ? 100 : 20; }
 
 // Cancel request from the laptop (PID STOP, or the mirror's Cancel (X)
 // button) -- checked inside every sampling loop.
@@ -290,23 +286,7 @@ static void sendRunSchedule(bool angular, const TestSpec *tests, const float *le
   printf("%s\n", buf);
 }
 
-// ─── Brain screen UI (matches the cyber-HUD palette in main.cpp) ─────────────
-namespace ui {
-static const int BG = 0x0A0A0F;
-static const int CARD = 0x161B22;
-static const int CYAN = 0x00F0FF;
-static const int ORANGE = 0xFF8C00;
-static const int RED = 0xFF3131;
-static const int GRAY = 0x777777;
-static const int GRID = 0x121217;
-static const int SETTLE_BAND_BG = 0x1c2838;
-static const int FOOTER_BG = 0x18181F;
-static const int TARGET_LINE = 0xFF6B81; // pink/salmon step (setpoint)
-static const int ACTUAL_LINE = 0x2EFF8C; // green trace (measured value)
-
-// Graph rectangle (value-vs-time plot)
-static const int GX = 160, GY = 40, GW = 310, GH = 160;
-} // namespace ui
+// Palette / graph rectangle: ui:: in pid_tuner_shared.hpp.
 
 static const char *kGainNames[3] = {"kP", "kI", "kD"};
 
@@ -314,8 +294,7 @@ static const char *kGainNames[3] = {"kP", "kI", "kD"};
 // Tapping this (top-right of the header) exits back to the driver menu --
 // otherwise there'd be no way out of the tuner short of restarting the
 // program.
-static const int kBackX0 = 410, kBackY0 = 3, kBackX1 = 476, kBackY1 = 27;
-static void drawBackButton() {
+void drawBackButton() {
   pros::screen::set_pen(0x000000);
   pros::screen::fill_rect(kBackX0, kBackY0, kBackX1, kBackY1);
   pros::screen::set_eraser(0x000000);
@@ -339,19 +318,9 @@ static float niceStep(float roughStep) {
   return niceNorm * mag;
 }
 
-// Value <-> pixel mapping for the graph, plus the grid step used to label
-// it. minVal/maxVal are always "nice" multiples of step.
-struct GraphScale {
-  float minVal, maxVal, step;
-  int toY(float v) const {
-    float t = (v - minVal) / (maxVal - minVal);
-    return ui::GY + ui::GH - (int)(std::clamp(t, 0.0f, 1.0f) * ui::GH);
-  }
-};
-
 // Builds a scale covering [loVal, hiVal] with headroom, snapped to nice
 // grid lines (so the labeled values look like 50/30/10/-10, not 47.3).
-static GraphScale computeScale(float loVal, float hiVal) {
+GraphScale computeScale(float loVal, float hiVal) {
   if (hiVal < loVal)
     std::swap(loVal, hiVal);
   float span = std::max(1.0f, hiVal - loVal);
@@ -366,7 +335,7 @@ static GraphScale computeScale(float loVal, float hiVal) {
 
 // Clears the graph area and draws its frame + labeled horizontal grid
 // lines for the given value scale.
-static void drawValueGraphFrame(const GraphScale &sc) {
+void drawValueGraphFrame(const GraphScale &sc) {
   using namespace ui;
   pros::screen::set_pen(CARD);
   pros::screen::fill_rect(GX, GY, GX + GW, GY + GH);
@@ -390,8 +359,8 @@ static void drawValueGraphFrame(const GraphScale &sc) {
 // each level held flat across its slot with a vertical jump connecting it
 // to the previous slot's level. Call once, before sampling starts, since
 // the setpoint schedule is known up front.
-static void drawTargetSteps(const GraphScale &sc, const int *slotX0,
-                            const int *slotW, const float *levels, int n) {
+void drawTargetSteps(const GraphScale &sc, const int *slotX0, const int *slotW,
+                     const float *levels, int n) {
   using namespace ui;
   pros::screen::set_pen(TARGET_LINE);
   int prevY = sc.toY(levels[0]);
@@ -511,16 +480,16 @@ static void drawControllerUI() {
 // ─── Test runner ─────────────────────────────────────────────────────────────
 // Runs one motion, samples error every 20ms, plots it live on the brain
 // graph, streams CSV to the terminal and records overshoot / settle / final.
-static const float kAngularSettleBand = 1.5f; // degrees
-static const float kLateralSettleBand = 1.0f; // inches
-static const int kSettleHoldMs = 250;
-static const int kSampleDelayMs = 20;
+const float kAngularSettleBand = 1.5f; // degrees
+const float kLateralSettleBand = 1.0f; // inches
+const int kSettleHoldMs = 250;
+const int kSampleDelayMs = 20;
 
 // Zeroes the pose before a run: x, y and heading all start at 0. This is
 // the sensor reset lemlib supports -- taring the rotation sensors / IMU
 // directly would make odometry (which tracks each sensor's previous
 // reading) see one giant bogus step.
-static void zeroPoseForRun() {
+void zeroPoseForRun() {
   chassis.setPose(0, 0, 0);
   pros::delay(20); // let the odometry task pick the new pose up
   printf("POSE ZEROED\n");
@@ -879,19 +848,14 @@ static void calibrateForTuning() {
 // ─── Button edge detection ───────────────────────────────────────────────────
 // Wraps a digital button so callers can ask "was this just pressed?" without
 // hand-rolling a `wasX` bool per button.
-struct EdgeButton {
-  pros::controller_digital_e_t id;
-  bool prevHeld = false;
+bool EdgeButton::held() const { return controller.get_digital(id); }
 
-  bool held() const { return controller.get_digital(id); }
-
-  bool pressed() {
-    bool now = held();
-    bool edge = now && !prevHeld;
-    prevHeld = now;
-    return edge;
-  }
-};
+bool EdgeButton::pressed() {
+  bool now = held();
+  bool edge = now && !prevHeld;
+  prevHeld = now;
+  return edge;
+}
 
 // ─── Main tuner loop ─────────────────────────────────────────────────────────
 // Applies one "PID ..." line from the laptop. Returns true if the screen
@@ -938,6 +902,9 @@ static bool applyRemotePidCommand(const RemotePidCommand &c, bool allowRuns) {
       return false;
     calibrateForTuning();
     return false;
+  case RemotePidCommand::AUTO_START:
+  case RemotePidCommand::AUTO_MODE:
+    return false; // the auto tuner's, not ours (see auto_tuner.cpp)
   }
   return false;
 }

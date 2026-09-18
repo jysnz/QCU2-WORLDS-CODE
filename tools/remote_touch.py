@@ -48,6 +48,12 @@ PID TUNING
     here like any other screen); the run traces come as "PID|..." and
     "CSV,..." lines which are handed to that window.
 
+AUTO PID TUNE
+    Tapping AUTO PID TUNE opens the automatic tuner's window -- see
+    tools/auto_pid_tuner.py -- with START / STOP, the live graph of every
+    run the tuner makes, a run history and "Write to main.cpp". Its state
+    comes as RUI|AUTO_TUNER lines; the run stream as "AT|..." lines.
+
 DRIVING (LAPTOP DRIVE screen)
     HOME -> LAPTOP DRIVE puts the brain on a screen that hands the
     drivetrain to this window's keyboard:
@@ -255,7 +261,8 @@ class PacketStream:
 
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
-                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE")
+                 "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE",
+                 "AUTO_TUNER")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -298,7 +305,7 @@ def parse_rui_line(line):
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
                                 "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
-                                "PATH", "PID", "RES")}
+                                "PATH", "PID", "RES", "AUTO", "MSG")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -389,6 +396,20 @@ def parse_rui_line(line):
             except ValueError:
                 pass
 
+    # Auto tuner screen (sendAutoState() in auto_tuner.cpp):
+    #   AUTO:<mode>,<phase>,<run>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<Pu>,<bestD>,<bestI>,<running>
+    #   MSG:<status text>
+    auto = None
+    if segments["AUTO"]:
+        try:
+            v = [float(x) for x in segments["AUTO"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 13:
+            auto = {"mode": int(v[0]), "phase": int(v[1]), "run": int(v[2]),
+                    "angular": v[3:6], "lateral": v[6:9], "pu": v[9], "bestD": v[10],
+                    "bestI": v[11], "running": v[12] == 1, "msg": segments["MSG"]}
+
     return {
         "screen": screen,
         "breadcrumb": breadcrumb,
@@ -410,15 +431,17 @@ def parse_rui_line(line):
         "path": path,
         "pid": pid,
         "result": result,
+        "auto": auto,
     }
 
 
 def is_pid_run_line(line):
     """The PID tuner's per-run stream (see runTest() in pid_tuner.cpp):
     "PID|RUN|...", "PID|LEG|...", "PID|END|...", "PID|DONE|..." and the
-    "CSV,ms,target,actual,error" samples in between. These bypass the
-    screen-state parser and go to the tuner window as-is."""
-    return line.startswith("PID|") or line.startswith("CSV,")
+    "CSV,ms,target,actual,error" samples in between -- and the auto
+    tuner's "AT|RUN / S / END / DONE" stream (auto_tuner.cpp). These
+    bypass the screen-state parser and go to their window as-is."""
+    return line.startswith("PID|") or line.startswith("CSV,") or line.startswith("AT|")
 
 
 class SerialLink:
@@ -1156,6 +1179,80 @@ class BrainScreen:
             self.print(FONT_SMALL, 10, 222, f"{label} // OVERSHOOT {overshoot:.2f} // SETTLE "
                                              f"{settle}ms // FINAL {final:.2f} // {dur}ms")
 
+    # -- AUTO PID TUNER (drawAutoUI in auto_tuner.cpp) --
+    # Header, BACK, the ANGULAR / LATERAL / START-STOP buttons, the info
+    # panel and the footer message as the brain draws them; the graph area
+    # only shows its frame, the live trace is in the auto tuner window.
+    def drawAutoTunerScreen(self, st):
+        auto = st["auto"]
+        angular = st["breadcrumb"] == "ANGULAR"
+        self.clearScreen()
+        self.set_pen(CYAN if angular else ORANGE)
+        self.fill_rect(0, 0, 480, 30)
+        self.set_pen(BLACK)
+        self.print(FONT_MEDIUM, 10, 7, "AUTO PID // " + ("ANGULAR (turns)" if angular
+                                                        else "LATERAL (drive)"))
+        self.set_pen(BLACK)
+        self.fill_rect(410, 3, 476, 27)
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 416, 9, "BACK")
+
+        running = bool(auto and auto["running"])
+
+        def button(x0, y0, x1, y1, label, fill, fg):
+            self.set_pen(fill)
+            self.fill_rect(x0, y0, x1, y1)
+            self.set_pen(AXIS)
+            self.draw_rect(x0, y0, x1, y1)
+            self.set_pen(fg)
+            self.print(FONT_SMALL, x0 + 8, y0 + (y1 - y0) // 2 - 6, label)
+
+        button(10, 38, 78, 66, "ANGULAR", SEL_BG if angular else CARD, CYAN if angular else GRAY)
+        button(82, 38, 150, 66, "LATERAL", CARD if angular else SEL_BG,
+               GRAY if angular else ORANGE)
+        if running:
+            button(10, 72, 150, 104, "STOP  (X)", "#3a1414", WHITE)
+        else:
+            button(10, 72, 150, 104, "START  (A)", "#143a1e", WHITE)
+
+        phases = ("IDLE", "P-search", "D-search", "I-search", "VERIFY", "DONE", "ABORTED",
+                  "FAILED")
+        phase = auto["phase"] if auto else 0
+        gains = (auto["angular"] if angular else auto["lateral"]) if auto else [0, 0, 0]
+        hi = CYAN if angular else ORANGE
+        self.set_pen(GREEN if running else GRAY)
+        self.print(FONT_SMALL, 10, 110, f"{phases[phase] if 0 <= phase < 8 else '?'}  run "
+                                        f"{auto['run'] if auto else 0}")
+        self.set_pen(hi if phase == 1 else "#CCCCCC")
+        self.print(FONT_SMALL, 10, 126, f"kP {gains[0]:.3f}")
+        self.set_pen(hi if phase == 3 else "#CCCCCC")
+        self.print(FONT_SMALL, 10, 140, f"kI {gains[1]:.4f}")
+        self.set_pen(hi if phase == 2 else "#CCCCCC")
+        self.print(FONT_SMALL, 10, 154, f"kD {gains[2]:.3f}")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 10, 172, f"Pu {auto['pu'] if auto else 0:.3f}")
+        self.print(FONT_SMALL, 10, 186, f"best D {auto['bestD'] if auto else 0:.3f}")
+        self.print(FONT_SMALL, 10, 200, f"best I {auto['bestI'] if auto else 0:.4f}")
+
+        GX, GY, GW, GH = 160, 40, 310, 160
+        self.set_pen(CARD)
+        self.fill_rect(GX, GY, GX + GW, GY + GH)
+        self.set_pen(GRID)
+        for x in range(GX, GX + GW, 40):
+            self.draw_line(x, GY, x, GY + GH)
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, GX + GW - 200, GY + 2, "P -> D -> I -> verify")
+        self.print(FONT_SMALL, GX + GW - 200, GY + 16, "graph: auto tuner window")
+        self.print(FONT_SMALL, GX + 8, GY + GH - 16,
+                   "running -- graph in the Auto PID Tuner window" if running
+                   else "live graph: see the Auto PID Tuner window")
+
+        self.set_pen(FOOTER_BG)
+        self.fill_rect(0, 215, 480, 240)
+        if auto:
+            self.set_pen(RED if phase in (6, 7) else GREEN if phase == 5 else CYAN)
+            self.print(FONT_SMALL, 10, 222, auto["msg"])
+
     # -- handoff notice (the brain screen belongs to something we don't mirror) --
     def drawHandoff(self, what):
         self.clearScreen()
@@ -1182,6 +1279,8 @@ class BrainScreen:
             self.drawTempsScreen(st)
         elif tag == "PID_TUNER":
             self.drawPidTunerScreen(st)
+        elif tag == "AUTO_TUNER":
+            self.drawAutoTunerScreen(st)
         elif tag == "POSE":
             self.drawPoseScreen(st)
         elif tag == "HANDOFF":
@@ -1281,6 +1380,7 @@ class RemoteTouchApp:
         self.gotState = False
         self.planner = None
         self.pidTuner = None
+        self.autoTuner = None
         self.pollQueue()
 
     def pollQueue(self):
@@ -1303,6 +1403,7 @@ class RemoteTouchApp:
             self.updateValueLabel(state)
             self.updatePlanner(state)
             self.updatePidTuner(state)
+            self.updateAutoTuner(state)
         elif not self.gotState and time.time() - self.startedAt > 5:
             self.showWaitingHint()
         self.pumpPidLines()
@@ -1366,17 +1467,36 @@ class RemoteTouchApp:
                 self.pidTuner.deiconify()
             self.pidTuner.applyState(state)
 
+    # -- laptop auto PID tuner window --
+    def updateAutoTuner(self, state):
+        """And the AUTO PID TUNE screen gets tools/auto_pid_tuner.py, opened
+        the first time the brain lands there and fed every state after."""
+        if state["screen"] == "AUTO_TUNER" and self.autoTuner is None:
+            try:
+                from auto_pid_tuner import AutoPidTunerWindow
+            except ImportError as e:
+                self.status.config(text=f"auto_pid_tuner.py failed to load: {e}")
+                return
+            self.autoTuner = AutoPidTunerWindow(self.root, self.link)
+        if self.autoTuner is not None:
+            if state["screen"] == "AUTO_TUNER" and self.autoTuner.state() == "withdrawn":
+                self.autoTuner.deiconify()
+            self.autoTuner.applyState(state)
+
     def pumpPidLines(self):
-        """The tuner's run stream (PID|... / CSV,...) goes straight to its
-        window; until it exists (or if nothing's running) the lines are
-        just dropped."""
+        """The tuners' run streams (PID|... / CSV,... for the manual one,
+        AT|... for the automatic one) go straight to their window; until
+        it exists (or if nothing's running) the lines are just dropped."""
         lines = getattr(self.link, "pidLines", None)
         if lines is None:
             return
         try:
             while True:
                 line = lines.get_nowait()
-                if self.pidTuner is not None:
+                if line.startswith("AT|"):
+                    if self.autoTuner is not None:
+                        self.autoTuner.feedLine(line)
+                elif self.pidTuner is not None:
                     self.pidTuner.feedLine(line)
         except queue.Empty:
             pass
@@ -1550,7 +1670,7 @@ def claim_single_instance():
 
 
 def main():
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner / pid_tuner
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for path_planner / pid_tuner / auto_pid_tuner
     if not claim_single_instance():
         print("remote_touch.py is already running -- use that window (only one can hold the port).")
         try:
