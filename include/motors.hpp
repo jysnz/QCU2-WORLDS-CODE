@@ -21,8 +21,6 @@ extern pros::adi::Pneumatics clamp;
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;
-extern pros::Rotation horizontal_encoder;
-extern pros::Rotation vertical_encoder;
 extern pros::Controller controller;
 
 // ─── LemLib chassis ──────────────────────────────────────────────────────────
