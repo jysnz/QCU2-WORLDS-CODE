@@ -6,7 +6,9 @@ Opened automatically by tools/remote_touch.py when the brain enters that
 screen (HOME -> AUTO PID TUNE), like the manual tuner's window. The robot
 does the tuning itself (src/auto_tuner.cpp): kP up until it oscillates,
 kD up until it's smooth, kI up until any leftover overshoot fades, one
-big verification run. This window is where you watch it happen.
+more sweep to verify. Every run is the manual tuner's 4-leg sweep (45 /
+90 / 180 deg then back to the start, or 12 / 24 / 48 in then back), so
+each run ends where it began. This window is where you watch it happen.
 
 WHAT'S ON IT
     Left      which controller to tune (ANGULAR turns / LATERAL drive),
@@ -14,8 +16,9 @@ WHAT'S ON IT
               the gains as they change run by run, the values the tuner
               has recorded so far (Pu, best kD, best kI) and its status
               line -- the same words the brain's footer shows.
-    Right     the graph of one run: the target (pink) and the robot's
-              heading or position chasing it (green), against time, with
+    Right     the graph of one run: the sweep's four legs side by side
+              (like the manual tuner's sweep graph), the target (pink) and
+              the robot's heading or position chasing it (green), with
               that run's gains and verdict above it. It follows the run in
               progress; click any run in the history underneath (or a bar
               in the overshoot strip) to look at an earlier one, and tick
@@ -38,9 +41,11 @@ RUN ON ITS OWN
 
 WIRE FORMAT (see include/auto_tuner.hpp)
     robot -> laptop  RUI|AUTO_TUNER|...|AUTO:...|MSG:...   state, a few /s
-                     AT|RUN|run|angular|phase|P|I|D|label|target|start|timeoutMs
+                     AT|RUN|run|angular|phase|P|I|D|label|nLegs|label,level,timeoutMs;...
+                     AT|LEG|i|label|target|start|timeoutMs
                      AT|S|ms|target|actual|error
-                     AT|END|run|overshoot|settleMs|final|durMs|crossings|reversals|verdict
+                     AT|END|i|overshoot|settleMs|final|durMs|crossings|reversals|verdict
+                     AT|VERDICT|run|verdict|overshoot|crossings|settleMs|final|reversals|durMs
                      AT|DONE|phase|P|I|D
     laptop -> robot  PID AUTOSTART <mode>   PID AUTOMODE <mode>   PID STOP
 """
@@ -73,23 +78,31 @@ SETTLE_BAND = (1.5, 1.0)   # kAngularSettleBand / kLateralSettleBand, per mode
 
 
 class AutoRun:
-    """One of the tuner's runs as the brain streams it: gains and target
-    up front (AT|RUN), samples (AT|S), then the metrics + verdict (AT|END)."""
+    """One of the tuner's runs (a 4-leg sweep) as the brain streams it: the
+    gains and schedule up front (AT|RUN), each leg's samples and numbers
+    (AT|LEG / AT|S / AT|END), then the run's verdict (AT|VERDICT)."""
 
-    def __init__(self, idx, angular, phase, gains, label, target, start, timeout):
+    def __init__(self, idx, angular, phase, gains, label, legs):
         self.idx = idx
         self.angular = angular
         self.phase = phase
         self.gains = gains               # [kP, kI, kD] this run drove with
         self.label = label
-        self.target = target
-        self.start = start
-        self.timeout = max(1, timeout)
-        self.samples = []                # (ms, target, actual, error)
-        self.result = None               # dict once AT|END arrives
+        self.legs = legs                 # [{"label", "level", "timeout"}] from AT|RUN
+        for leg in self.legs:
+            leg.update({"target": leg["level"], "start": None, "samples": [], "result": None})
+        self.current = -1
+        self.verdict = None              # dict once AT|VERDICT arrives
 
     def unit(self):
         return UNITS[0 if self.angular else 1]
+
+    def total_timeout(self):
+        return sum(max(1, leg["timeout"]) for leg in self.legs) or 1
+
+    def samples(self):
+        for leg in self.legs:
+            yield from leg["samples"]
 
 
 class AutoPidTunerWindow(tk.Toplevel):
@@ -212,8 +225,8 @@ class AutoPidTunerWindow(tk.Toplevel):
         self._btn(files2, "Save gains", self.saveGains, width=10)
         self._btn(files2, "Save log CSV", self.saveLogCsv, width=12)
 
-        tk.Label(left, text="The robot turns / drives 20-40 times, alternating\n"
-                            "direction. Keep ~4 ft clear all round it.\n"
+        tk.Label(left, text="Every run is the 4-leg sweep, 20-40 times; each run\n"
+                            "ends back at the start. Keep ~4 ft clear all round.\n"
                             "Gains live in the brain's RAM until written to main.cpp.",
                  justify="left", anchor="w", bg=BG, fg=DIM, font=("Segoe UI", 8)).pack(
             fill="x", pady=(10, 0))
@@ -365,20 +378,27 @@ class AutoPidTunerWindow(tk.Toplevel):
         if len(parts) < 2 or parts[0] != "AT":
             return
         kind = parts[1]
+        run = self.runs[-1] if self.runs else None
         try:
             if kind == "S" and len(parts) >= 6:
-                if not self.runs or self.runs[-1].result is not None:
+                if run is None or run.current < 0 or run.verdict is not None:
                     return
                 t, target, actual, error = (float(x) for x in parts[2:6])
-                run = self.runs[-1]
-                run.target = target
+                leg = run.legs[run.current]
+                leg["target"] = target
                 # target - error rather than the raw pose: wrap-corrected on
                 # angular runs, so the trace doesn't jump across +-180.
-                run.samples.append((t, target, target - error, error))
-            elif kind == "RUN" and len(parts) >= 12:
+                leg["samples"].append((t, target, target - error, error))
+            elif kind == "RUN" and len(parts) >= 11:
+                legs = []
+                for chunk in parts[10].split(";"):
+                    f = chunk.split(",")
+                    if len(f) == 3:
+                        legs.append({"label": f[0], "level": float(f[1]), "timeout": int(f[2])})
+                if not legs:
+                    return
                 run = AutoRun(int(parts[2]), parts[3] == "1", int(parts[4]),
-                              [float(parts[5]), float(parts[6]), float(parts[7])], parts[8],
-                              float(parts[9]), float(parts[10]), int(parts[11]))
+                              [float(parts[5]), float(parts[6]), float(parts[7])], parts[8], legs)
                 self.runs.append(run)
                 self.history.insert("", "end", iid=str(run.idx), tags=("pending",), values=(
                     run.idx, PHASES[run.phase] if 0 <= run.phase < len(PHASES) else "?",
@@ -388,16 +408,34 @@ class AutoPidTunerWindow(tk.Toplevel):
                 if self.follow.get():
                     self.selected = len(self.runs) - 1
                     self.history.selection_set(str(run.idx))
-            elif kind == "END" and len(parts) >= 10 and self.runs:
+            elif kind == "LEG" and len(parts) >= 7 and run is not None:
+                i = int(parts[2])
+                if 0 <= i < len(run.legs):
+                    run.current = i
+                    leg = run.legs[i]
+                    leg["label"] = parts[3]
+                    leg["target"] = float(parts[4])
+                    leg["start"] = float(parts[5])
+                    leg["timeout"] = max(1, int(parts[6]))
+            elif kind == "END" and len(parts) >= 10 and run is not None:
+                i = int(parts[2])
+                if 0 <= i < len(run.legs):
+                    run.legs[i]["result"] = {
+                        "overshoot": float(parts[3]), "settle": int(parts[4]),
+                        "final": float(parts[5]), "dur": int(parts[6]),
+                        "crossings": int(parts[7]), "reversals": int(parts[8]),
+                        "verdict": parts[9]}
+            elif kind == "VERDICT" and len(parts) >= 10 and self.runs:
                 idx = int(parts[2])
                 run = next((r for r in self.runs if r.idx == idx), None)
                 if run is None:
                     return
-                run.result = {"overshoot": float(parts[3]), "settle": int(parts[4]),
-                              "final": float(parts[5]), "dur": int(parts[6]),
-                              "crossings": int(parts[7]), "reversals": int(parts[8]),
-                              "verdict": parts[9]}
-                r = run.result
+                run.verdict = {"verdict": parts[3], "overshoot": float(parts[4]),
+                               "crossings": int(parts[5]), "settle": int(parts[6]),
+                               "final": float(parts[7]), "reversals": int(parts[8]),
+                               "dur": int(parts[9])}
+                run.current = -1
+                r = run.verdict
                 tag = {1: "p", 2: "d", 3: "i", 4: "v"}.get(run.phase, "pending")
                 self.history.item(str(idx), tags=(tag,), values=(
                     run.idx, PHASES[run.phase] if 0 <= run.phase < len(PHASES) else "?",
@@ -467,9 +505,14 @@ class AutoPidTunerWindow(tk.Toplevel):
         run = self.runs[self.selected] if self.runs and self.selected is not None and \
             0 <= self.selected < len(self.runs) else None
 
+        # Value scale: everything the run touches (setpoints and trace), so
+        # an overshoot past the biggest target is still on the plot.
         lo, hi = 0.0, 90.0
         if run is not None:
-            vals = [run.target, run.start, 0.0] + [s[2] for s in run.samples]
+            vals = [leg["level"] for leg in run.legs] + [leg["target"] for leg in run.legs]
+            vals += [leg["start"] for leg in run.legs if leg["start"] is not None]
+            vals += [s[2] for s in run.samples()]
+            vals.append(0.0)
             lo, hi = min(vals), max(vals)
         minVal, maxVal, step = compute_scale(lo, hi)
 
@@ -488,46 +531,79 @@ class AutoPidTunerWindow(tk.Toplevel):
 
         if run is None:
             c.create_text((x0 + x1) / 2, (y0 + y1) / 2, fill=DIM, font=("Segoe UI", 11),
-                          text="START a tune -- each run's target (pink) and the robot's "
-                               "response (green) plot here")
+                          text="START a tune -- each run's 4-leg sweep (pink target, green "
+                               "response) plots here")
             return
 
         unit = run.unit()
         phase = PHASES[run.phase] if 0 <= run.phase < len(PHASES) else "?"
         title = (f"run {run.idx}  {phase}  {run.label}  kP {run.gains[0]:.3f}  "
-                 f"kI {run.gains[1]:.4f}  kD {run.gains[2]:.3f}")
+                 f"kI {run.gains[1]:.4f}  kD {run.gains[2]:.3f}   -- "
+                 f"{'heading (deg)' if run.angular else 'position (in)'} vs time")
         c.create_text(x0 + 4, y0 - 28, anchor="w", fill=PHASE_COLORS.get(run.phase, GRAY),
                       font=("Consolas", 9), text=title)
-        if run.result:
-            r = run.result
+        if run.verdict:
+            r = run.verdict
             c.create_text(x0 + 4, y0 - 12, anchor="w", fill=VERDICT_COLORS.get(r["verdict"], GRAY),
                           font=("Consolas", 9),
-                          text=f"{r['verdict'].upper()}  overshoot {r['overshoot']:.2f}{unit}  "
-                               f"crossings {r['crossings']}  reversals {r['reversals']}  "
-                               f"settle {str(r['settle']) + 'ms' if r['settle'] >= 0 else 'never'}"
+                          text=f"{r['verdict'].upper()}  worst overshoot {r['overshoot']:.2f}{unit}"
+                               f"  crossings {r['crossings']}  reversals {r['reversals']}  "
+                               f"return settle "
+                               f"{str(r['settle']) + 'ms' if r['settle'] >= 0 else 'never'}"
                                f"  final {r['final']:.2f}{unit}  {r['dur']}ms")
         else:
             c.create_text(x0 + 4, y0 - 12, anchor="w", fill=GREEN, font=("Consolas", 9),
                           text="running...")
 
-        # setpoint (pink), settle band (dotted), heading/position vs time
-        y = toY(run.target)
-        c.create_line(x0, y, x1, y, fill=TARGET_LINE, width=2)
+        # Time slots per leg, sized by timeout (like the brain's sweep graph).
+        total = run.total_timeout()
+        slots = []
+        x = x0
+        for leg in run.legs:
+            w = max(1.0, (x1 - x0) * max(1, leg["timeout"]) / total)
+            slots.append((x, w))
+            x += w
+
+        # Setpoint schedule (pink): the actual target once the leg has
+        # started (relative to where the last leg really stopped), the ideal
+        # level until then.
         band = SETTLE_BAND[0 if run.angular else 1]
-        c.create_rectangle(x0, toY(run.target + band), x1, toY(run.target - band), fill="",
-                           outline=AXIS, dash=(1, 4))
-        c.create_text(x0 + 4, y0 + 4, anchor="nw", fill=GRAY, font=("Consolas", 9),
-                      text=f"{'heading (deg)' if run.angular else 'position (in)'} vs time  "
-                           f"-- target {run.target:g}{unit}, {run.timeout} ms window")
+        prevY = None
+        for i, leg in enumerate(run.legs):
+            sx, sw = slots[i]
+            y = toY(leg["target"])
+            if prevY is not None:
+                c.create_line(sx, prevY, sx, y, fill=TARGET_LINE, width=2)
+            c.create_line(sx, y, sx + sw, y, fill=TARGET_LINE, width=2)
+            prevY = y
+            if i > 0:
+                c.create_line(sx, y0, sx, y1, fill=AXIS, dash=(3, 3))
+            c.create_text(sx + 4, y0 + 4, anchor="nw", fill=GRAY, font=("Consolas", 9),
+                          text=f"{leg['label']} {leg['target']:g}{unit}")
+            c.create_rectangle(sx, toY(leg["target"] + band), sx + sw, toY(leg["target"] - band),
+                               fill="", outline=AXIS, dash=(1, 4))
+
+        # Actual trace (green), continuous across legs.
         pts = []
-        for (t, _target, actual, _err) in run.samples:
-            px = x0 + min(1.0, t / run.timeout) * (x1 - x0 - 1)
-            pts.extend((px, toY(actual)))
+        for i, leg in enumerate(run.legs):
+            sx, sw = slots[i]
+            tmo = max(1, leg["timeout"])
+            for (t, _target, actual, _err) in leg["samples"]:
+                pts.extend((sx + min(1.0, t / tmo) * (sw - 1), toY(actual)))
         if len(pts) >= 4:
             c.create_line(*pts, fill=ACTUAL_LINE, width=2)
         elif len(pts) == 2:
             c.create_oval(pts[0] - 2, pts[1] - 2, pts[0] + 2, pts[1] + 2, fill=ACTUAL_LINE,
                           outline="")
+
+        # per-leg verdict stamp
+        for i, leg in enumerate(run.legs):
+            r = leg["result"]
+            if r:
+                sx, sw = slots[i]
+                c.create_text(sx + sw - 4, y1 - 4, anchor="se",
+                              fill=VERDICT_COLORS.get(r["verdict"], GRAY), font=("Consolas", 9),
+                              text=f"os {r['overshoot']:.1f} x{r['crossings']}")
 
     def redrawStrip(self):
         c = self.strip
@@ -537,10 +613,10 @@ class AutoPidTunerWindow(tk.Toplevel):
         x0, x1, y0, y1 = 8, W - 8, 8, H - 14
         if not self.runs:
             c.create_text(W / 2, H / 2, fill=DIM, font=("Segoe UI", 9),
-                          text="every run's overshoot lands here, coloured by phase")
+                          text="every run's worst overshoot lands here, coloured by phase")
             return
         band = SETTLE_BAND[0 if self.runs[0].angular else 1]
-        top = max([band * 2] + [r.result["overshoot"] for r in self.runs if r.result])
+        top = max([band * 2] + [r.verdict["overshoot"] for r in self.runs if r.verdict])
         slot = (x1 - x0) / len(self.runs)
 
         def toY(v):
@@ -554,8 +630,8 @@ class AutoPidTunerWindow(tk.Toplevel):
             bx0 = x0 + i * slot + 1
             bx1 = bx0 + max(2.0, slot - 2)
             color = PHASE_COLORS.get(run.phase, GRAY)
-            if run.result:
-                c.create_rectangle(bx0, toY(run.result["overshoot"]), bx1, y1, fill=color,
+            if run.verdict:
+                c.create_rectangle(bx0, toY(run.verdict["overshoot"]), bx1, y1, fill=color,
                                    outline="")
             else:
                 c.create_rectangle(bx0, y0, bx1, y1, fill="", outline=color, dash=(2, 2))
@@ -617,17 +693,20 @@ class AutoPidTunerWindow(tk.Toplevel):
         if not path:
             return
         with open(path, "w", encoding="utf-8") as f:
-            f.write("run,phase,kP,kI,kD,label,overshoot,settleMs,final,durMs,crossings,"
-                    "reversals,verdict,ms,target,actual,error\n")
+            f.write("run,phase,kP,kI,kD,verdict,leg,legOvershoot,legSettleMs,legFinal,"
+                    "legCrossings,legReversals,legVerdict,ms,target,actual,error\n")
             for run in self.runs:
-                r = run.result or {}
+                v = run.verdict or {}
                 head = (f"{run.idx},{PHASES[run.phase] if 0 <= run.phase < len(PHASES) else '?'},"
-                        f"{run.gains[0]:.4f},{run.gains[1]:.4f},{run.gains[2]:.4f},{run.label},"
-                        f"{r.get('overshoot', '')},{r.get('settle', '')},{r.get('final', '')},"
-                        f"{r.get('dur', '')},{r.get('crossings', '')},{r.get('reversals', '')},"
-                        f"{r.get('verdict', '')}")
-                for (t, target, actual, error) in run.samples:
-                    f.write(f"{head},{t:.0f},{target:.2f},{actual:.2f},{error:.2f}\n")
+                        f"{run.gains[0]:.4f},{run.gains[1]:.4f},{run.gains[2]:.4f},"
+                        f"{v.get('verdict', '')}")
+                for leg in run.legs:
+                    r = leg["result"] or {}
+                    lh = (f"{leg['label']},{r.get('overshoot', '')},{r.get('settle', '')},"
+                          f"{r.get('final', '')},{r.get('crossings', '')},"
+                          f"{r.get('reversals', '')},{r.get('verdict', '')}")
+                    for (t, target, actual, error) in leg["samples"]:
+                        f.write(f"{head},{lh},{t:.0f},{target:.2f},{actual:.2f},{error:.2f}\n")
 
 
 # ─── Stand-alone demo ──────────────────────────────────────────────────────
@@ -667,60 +746,79 @@ class _FakeLink:
 
     def startFakeTune(self):
         angular = self.mode == 0
-        size, tmo = (90.0, 2500) if angular else (24.0, 3500)
+        legs = ([("turn45", 45, 1200), ("turn90", 90, 1500), ("turn180", 180, 2000),
+                 ("return0", 0, 1800)] if angular else
+                [("drive12", 12, 1500), ("drive24", 24, 2000), ("drive48", 48, 3000),
+                 ("return0", 0, 3500)])
         band = SETTLE_BAND[0 if angular else 1]
         g = [0.0, 0.0, 0.0]
         self.gains[MODES[self.mode]] = g
         self.running = True
         self.run = 0
         self.lines = []
-        # (phase, gains, damping zeta, natural freq): what each run "drives" with
+        # (phase, gains, damping zeta): what each run "drives" with
         script = []
         p = 1.0
         for k in range(6):
-            script.append((1, [p, 0, 0], 1.2 - k * 0.19, 3 + k * 0.8))
+            script.append((1, [p, 0, 0], 1.2 - k * 0.19))
             p *= 1.3
         pu = p / 1.3
         d = 0
         for k in range(4):
             d += pu * 0.5
-            script.append((2, [pu, 0, d], 0.35 + k * 0.2, 6.0))
-        script.append((3, [pu, 0.0005, d], 0.9, 6.0))
-        script.append((4, [pu, 0.0005, d], 0.9, 6.0))
-        for i, (phase, gains, zeta, wn) in enumerate(script):
+            script.append((2, [pu, 0, d], 0.35 + k * 0.2))
+        script.append((3, [pu, 0.0005, d], 0.9))
+        script.append((4, [pu, 0.0005, d], 0.9))
+        for phase, gains, zeta in script:
             self.run += 1
-            target = size if i % 2 == 0 else -size
-            if phase == 4:
-                target *= 2
             label = {1: "P", 2: "D", 3: "I", 4: "verify"}[phase]
+            levels, cum = [], 0.0
+            for i, (_l, size, _t) in enumerate(legs):
+                cum = size if i == len(legs) - 1 else cum + size
+                levels.append(cum)
             self.lines.append(("PHASE", phase, list(gains)))
             self.lines.append(f"AT|RUN|{self.run}|{int(angular)}|{phase}|{gains[0]:.4f}|"
-                              f"{gains[1]:.4f}|{gains[2]:.4f}|{label}|{target:.2f}|0.00|{tmo}")
-            pos, t, crossings, overshoot = 0.0, 0, 0, 0.0
-            prevSign = 1 if target >= 0 else -1
-            while t < tmo * 0.8:
-                tt = t / 1000.0
-                if zeta < 1:
-                    wd = wn * math.sqrt(1 - zeta ** 2)
-                    resp = 1 - math.exp(-zeta * wn * tt) * (
-                        math.cos(wd * tt) + zeta / math.sqrt(1 - zeta ** 2) * math.sin(wd * tt))
-                else:
-                    resp = 1 - math.exp(-wn * tt / zeta) * (1 + wn * tt / zeta)
-                pos = target * resp
-                err = target - pos
-                sign = 1 if err >= 0 else -1
-                if abs(err) > band / 2 and sign != prevSign:
-                    crossings += 1
-                    prevSign = sign
-                if crossings:
-                    overshoot = max(overshoot, abs(err))
-                self.lines.append(f"AT|S|{t}|{target:.2f}|{pos:.2f}|{err:.2f}")
-                t += 20
-            verdict = ("oscillating" if crossings >= 2 and overshoot >= 0.08 * abs(target) else
-                       "bounce" if overshoot > band else "under" if crossings == 0 else "smooth")
-            self.lines.append(f"AT|END|{self.run}|{overshoot:.2f}|{int(tmo * 0.5)}|"
-                              f"{target - pos:.2f}|{int(tmo * 0.8)}|{crossings}|{crossings}|"
-                              f"{verdict}")
+                              f"{gains[1]:.4f}|{gains[2]:.4f}|{label}|{len(legs)}|" +
+                              ";".join(f"{l},{lv:.2f},{t}" for (l, _s, t), lv in zip(legs, levels)))
+            pos = 0.0
+            worstOs, worstX = 0.0, 0
+            wn = 6.0
+            for i, (lname, _size, tmo) in enumerate(legs):
+                target, start = levels[i], pos
+                self.lines.append(f"AT|LEG|{i}|{lname}|{target:.2f}|{start:.2f}|{tmo}")
+                t, crossings, overshoot = 0, 0, 0.0
+                prevSign = 1 if target - start >= 0 else -1
+                while t < tmo * 0.8:
+                    tt = t / 1000.0
+                    if zeta < 1:
+                        wd = wn * math.sqrt(1 - zeta ** 2)
+                        resp = 1 - math.exp(-zeta * wn * tt) * (
+                            math.cos(wd * tt) + zeta / math.sqrt(1 - zeta ** 2) * math.sin(wd * tt))
+                    else:
+                        resp = 1 - math.exp(-wn * tt / zeta) * (1 + wn * tt / zeta)
+                    pos = start + (target - start) * resp
+                    err = target - pos
+                    sign = 1 if err >= 0 else -1
+                    if abs(err) > band / 2 and sign != prevSign:
+                        crossings += 1
+                        prevSign = sign
+                    if crossings:
+                        overshoot = max(overshoot, abs(err))
+                    self.lines.append(f"AT|S|{t}|{target:.2f}|{pos:.2f}|{err:.2f}")
+                    t += 20
+                move = abs(target - start) or 1
+                verdict = ("oscillating" if crossings >= 2 and overshoot >= 0.08 * move else
+                           "bounce" if overshoot > band else "under" if crossings == 0 else
+                           "smooth")
+                self.lines.append(f"AT|END|{i}|{overshoot:.2f}|{int(tmo * 0.5)}|"
+                                  f"{target - pos:.2f}|{int(tmo * 0.8)}|{crossings}|{crossings}|"
+                                  f"{verdict}")
+                worstOs, worstX = max(worstOs, overshoot), max(worstX, crossings)
+            verdict = ("oscillating" if worstX >= 2 and worstOs >= 0.08 * 45 else
+                       "bounce" if worstOs > band else "under" if worstX == 0 else "smooth")
+            self.lines.append(f"AT|VERDICT|{self.run}|{verdict}|{worstOs:.2f}|{worstX}|"
+                              f"{int(legs[-1][2] * 0.5)}|{target - pos:.2f}|{worstX}|"
+                              f"{sum(l[2] for l in legs)}")
             if phase == 1 and verdict == "oscillating":
                 self.pu = gains[0]
             if phase == 2:
