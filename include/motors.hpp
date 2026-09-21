@@ -5,16 +5,12 @@
 #include "pros/imu.hpp"
 #include "pros/motors.hpp"
 
-// ─── Motors ──────────────────────────────────────────────────────────────────
+// ─── Drivetrain ──────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
-extern pros::Motor intake1;
-extern pros::Motor intake2;
-extern pros::Motor lift1;
-extern pros::Motor lift2;
-extern pros::Motor lift;
-extern pros::Motor bunchy;
-extern pros::Motor bunchArm;
+
+// ─── Subsystem motors ────────────────────────────────────────────────────────
+extern pros::MotorGroup lift; // ports 5 / 6
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics clamp;

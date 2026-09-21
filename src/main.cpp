@@ -17,17 +17,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({11, 12}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-2, -3}, pros::MotorGears::green);
-pros::Motor intake1(16, pros::MotorGears::green);
-pros::Motor intake2(17, pros::MotorGears::green);
-pros::Motor lift1(18, pros::MotorGears::green);
-pros::Motor lift2(19, pros::MotorGears::green);
-pros::Motor bunchy(14, pros::MotorGears::green);
-pros::Motor bunchArm(1, pros::MotorGears::red);
-pros::Motor lift(13, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
-pros::adi::Pneumatics clamp('A', false);
+pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
+
+pros::adi::Pneumatics clamp('B', false);
 
 pros::Imu imu(15);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -46,13 +41,6 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-    lift1.set_current_limit(2000);
-    lift2.set_current_limit(2000);
-    bunchArm.set_current_limit(1500); 
-
     chassis.calibrate();
 
     static pros::Task screen_task([]() {
@@ -79,14 +67,6 @@ void initialize() {
 
         int tempsScroll = 0;
 
-        // ── Motor stress modal state ──
-        // Pops up over the dashboard whenever any motor reports itself over
-        // temperature or over its current limit. Tapping the X dismisses it,
-        // but the dismissal only lasts STRESS_MODAL_COOLDOWN_MS -- if the
-        // motor is still stressed once that expires, the modal comes back.
-        // Clearing the stress condition entirely resets the dismissal so the
-        // next stress event alerts immediately instead of waiting out a
-        // stale cooldown.
         const uint32_t STRESS_MODAL_COOLDOWN_MS = 60000; // 1 minute
         bool stressModalOpen = false;
         bool stressModalDismissed = false;
@@ -98,10 +78,6 @@ void initialize() {
         const int CLOSE_X1 = CLOSE_X0 + CLOSE_SIZE;
         const int CLOSE_Y1 = CLOSE_Y0 + CLOSE_SIZE;
 
-        // ── Dirty-state tracking to eliminate unnecessary full-screen redraws (flicker fix) ──
-        // The old loop cleared and redrew the ENTIRE screen every 35ms even when nothing
-        // on screen had actually changed, which is what caused the visible flicker. Now we
-        // only repaint when something the user can see has actually changed.
         bool forceRedraw = true;
         int lastTempsScroll = INT32_MIN;
         int lastImu = INT32_MIN;
@@ -149,7 +125,7 @@ void initialize() {
             // Each section = a label line + a row of tiles.
             // Drivetrain sections show 5 tiles/row; the rest show 2 tiles/row.
             const int tempRowHeight = 66;
-            const int numTempRows = 5; // LEFT drivetrain, RIGHT drivetrain, INTAKE, LIFT, BUNCH
+            const int numTempRows = 3; // LEFT drivetrain, RIGHT drivetrain, LIFT
             int tempsContentHeight = numTempRows * tempRowHeight;
             int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
@@ -158,14 +134,10 @@ void initialize() {
             // ── Gather live data once per frame ──
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
-            std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
-            std::vector<double> liftTemps = {lift1.get_temperature(), lift2.get_temperature()};
-            std::vector<double> bunchTemps = {bunchy.get_temperature(), bunchArm.get_temperature()};
+            std::vector<double> liftTemps = lift.get_temperature_all();
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
-            std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
-            std::vector<std::int8_t> liftPorts = {lift1.get_port(), lift2.get_port()};
-            std::vector<std::int8_t> bunchPorts = {bunchy.get_port(), bunchArm.get_port()};
+            std::vector<std::int8_t> liftPorts = lift.get_port_all();
 
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
@@ -187,27 +159,16 @@ void initialize() {
                     stressedMotors.push_back(buf);
                 }
             };
-            auto checkSingleStress = [&](const char *name, pros::Motor &m) {
-                bool hot = m.is_over_temp() > 0;
-                bool overC = m.is_over_current() > 0;
-                if (!hot && !overC) return;
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%s %s", name, hot && overC ? "HOT+OC" : (hot ? "HOT" : "OC"));
-                stressedMotors.push_back(buf);
-            };
 
             std::vector<std::int32_t> leftOverTemp = left_motor_group.is_over_temp_all();
             std::vector<std::int32_t> leftOverCurrent = left_motor_group.is_over_current_all();
             std::vector<std::int32_t> rightOverTemp = right_motor_group.is_over_temp_all();
             std::vector<std::int32_t> rightOverCurrent = right_motor_group.is_over_current_all();
+            std::vector<std::int32_t> liftOverTemp = lift.is_over_temp_all();
+            std::vector<std::int32_t> liftOverCurrent = lift.is_over_current_all();
             checkGroupStress("L", leftOverTemp, leftOverCurrent, leftPorts);
             checkGroupStress("R", rightOverTemp, rightOverCurrent, rightPorts);
-            checkSingleStress("Intake1", intake1);
-            checkSingleStress("Intake2", intake2);
-            checkSingleStress("Lift1", lift1);
-            checkSingleStress("Lift2", lift2);
-            checkSingleStress("Bunch", bunchy);
-            checkSingleStress("BunchArm", bunchArm);
+            checkGroupStress("Lift", liftOverTemp, liftOverCurrent, liftPorts);
 
             bool isStressed = !stressedMotors.empty();
 
@@ -228,15 +189,8 @@ void initialize() {
             std::vector<int> tempsNow;
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
             for (double t : liftTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : bunchTemps) tempsNow.push_back((int)(t * 2));
 
-            // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
-            // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
-            // while a motor is spinning its temperature (and the IMU heading, while driving)
-            // changes almost every loop, which was forcing a full-screen clear+redraw ~28x/sec
-            // and is what caused the visible flicker as soon as a motor was connected and running.
             bool interactiveChanged = forceRedraw || tempsScroll != lastTempsScroll ||
                                        stressModalOpen != lastStressModalOpen;
             bool telemetryChanged = imuNow != lastImu ||
@@ -335,14 +289,8 @@ void initialize() {
                 // Section 2: RIGHT drivetrain motors (5 tiles/row)
                 drawSection(yBase + tempRowHeight, "RIGHT DRIVETRAIN", ACCENT_ORANGE, rightTemps, rightPorts, "R", 5);
 
-                // Section 3: INTAKE motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
-
-                // Section 4: LIFT motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 2);
-
-                // Section 5: BUNCH motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 4, "BUNCH", ACCENT_ORANGE, bunchTemps, bunchPorts, "Bunch", 2);
+                // Section 3: LIFT motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 2, "LIFT", ACCENT_GREEN, liftTemps, liftPorts, "Lift", 2);
             }
 
             // ── Static Overlays (Drawn last to prevent overlap) ──
