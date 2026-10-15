@@ -48,6 +48,11 @@
 // tools/remote_touch.py for the companion app.
 void driverMenuControl();
 
+// Starts the laptop-command listener (stdin). Called from initialize() so the
+// field-control relay can reach the program as soon as it starts, whatever
+// state opcontrol()/autonomous() are in. Safe to call more than once.
+void remoteBridgeStart();
+
 // True while this menu (or one of its Path Planner screens) owns the brain
 // screen; the HUD task in main.cpp must not draw while this is set.
 extern bool driverMenuActive;

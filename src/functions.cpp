@@ -1,4 +1,5 @@
 #include "functions.hpp"
+#include "field_control.hpp"
 #include "motors.hpp"
 #include "pros/rtos.hpp"
 #include "pros/screen.hpp"
@@ -138,7 +139,29 @@ void jawheadControl() {
   static uint32_t lastClampToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
 
+  bool wasAllowed = true;
+
   while (true) {
+    // Disabled by the scrimmage gamemaster (or it's their autonomous):
+    // stop once, then leave the motors alone. See field_control.hpp.
+    bool allowed = fieldControlDriverAllowed();
+    if (!allowed) {
+      if (wasAllowed) {
+        left_motor_group.move(0);
+        right_motor_group.move(0);
+        intake1.move_velocity(0);
+        intake2.move_velocity(0);
+        bunchy.move_velocity(0);
+        bunchArm.move_velocity(0);
+        lift1.move_velocity(0);
+        lift2.move_velocity(0);
+      }
+      wasAllowed = false;
+      pros::delay(10);
+      continue;
+    }
+    wasAllowed = true;
+
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     uint32_t nowMs = pros::millis();

@@ -37,6 +37,7 @@
 
 #include "auto_tuner.hpp"
 #include "driver_menu.hpp"
+#include "field_control.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
 #include "pid_tuner_shared.hpp"
@@ -382,7 +383,7 @@ static bool takeTap(int &x, int &y) {
 // other laptop command that arrives mid-tune is dropped so a queued START
 // can't set the robot off again the moment this tune ends.
 static void pollAbort() {
-  if (takeRemotePidStop() || takeRemoteKey(RK_X) || btnX.pressed())
+  if (takeRemotePidStop() || takeRemoteKey(RK_X) || btnX.pressed() || fieldControlEngaged())
     stopRequested = true;
   int x, y;
   if (takeTap(x, y)) {
@@ -904,7 +905,8 @@ void autoTunerControl() {
       // Everything else (the manual tuner's SET / TEST / ...) is ignored.
     }
 
-    if (exitRequested) {
+    // Field control taking over counts as BACK (see field_control.hpp).
+    if (exitRequested || fieldControlEngaged()) {
       autoTunerActive = false;
       controller.rumble(".");
       printf("AUTO TUNER EXIT\n");

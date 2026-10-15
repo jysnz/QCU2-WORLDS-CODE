@@ -83,6 +83,7 @@
 #include "pid_tuner.hpp"
 #include "pid_tuner_shared.hpp"
 #include "driver_menu.hpp"
+#include "field_control.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -269,7 +270,7 @@ int csvPeriodMs() { return remoteSendIntervalMs() > 150 ? 100 : 20; }
 static bool remoteStopRequested() {
   bool a = takeRemotePidStop();
   bool b = takeRemoteKey(RK_X);
-  return a || b;
+  return a || b || fieldControlEngaged();
 }
 
 // One run's setpoint schedule, sent up front so the laptop can draw the
@@ -958,8 +959,9 @@ void pidTunerControl() {
     // driver_menu.cpp) -- BACK is the only thing here to tap.
     if (!touchPress && takeRemoteTouch(touchX, touchY))
       touchPress = true;
-    if (touchPress && touchX >= kBackX0 && touchX <= kBackX1 && touchY >= kBackY0 &&
-        touchY <= kBackY1) {
+    // Field control taking over counts as BACK (see field_control.hpp).
+    if (fieldControlEngaged() || (touchPress && touchX >= kBackX0 && touchX <= kBackX1 &&
+                                  touchY >= kBackY0 && touchY <= kBackY1)) {
       pidTunerActive = false;
       controller.rumble(".");
       printf("PID TUNER EXIT\n");

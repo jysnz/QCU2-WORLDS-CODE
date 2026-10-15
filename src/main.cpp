@@ -4,6 +4,7 @@
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "driver_menu.hpp"
+#include "field_control.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
@@ -49,6 +50,11 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
+    // Reachable by the laptop from the first moment the program runs, not
+    // after the IMU calibration or once the driver menu opens.
+    remoteBridgeStart();
+    fieldControlInit(); // scrimmage gamemaster, see field_control.hpp
+
     lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 

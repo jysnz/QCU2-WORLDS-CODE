@@ -19,6 +19,7 @@
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "driver_menu.hpp"
+#include "field_control.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -877,7 +878,8 @@ static void sendRemoteUiState(bool force = false);
 
 // ─── Running a motion ────────────────────────────────────────────────────────
 static bool waitForCancel() {
-  if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X) || takeRemoteKey(RK_X)) {
+  if (fieldControlEngaged() || controller.get_digital(pros::E_CONTROLLER_DIGITAL_X) ||
+      takeRemoteKey(RK_X)) {
     chassis.cancelMotion();
     return true;
   }
@@ -1521,6 +1523,8 @@ static void remoteTouchListenerTask(void *) {
   while (true) {
     if (!fgets(line, sizeof(line), stdin))
       continue;
+    if (fieldControlHandleLine(line)) // "FC ..." from tools/field_relay.py
+      continue;
     int x, y, idx, dl, dr;
     char name[16], value[24];
     float fx, fy, ft;
@@ -1641,6 +1645,8 @@ static void ensureRemoteTouchListener() {
     pros::Task(remoteTouchListenerTask, nullptr, "remote touch listener");
   }
 }
+
+void remoteBridgeStart() { ensureRemoteTouchListener(); }
 
 // Pulls the latest pending remote touch (if any), clearing it -- shaped
 // like a physical touch-down edge so the caller can treat the two
@@ -2373,6 +2379,15 @@ void driverMenuControl() {
   bool wasTouched = false;
 
   while (true) {
+    // The gamemaster took over (see field_control.hpp): leave the menu the
+    // same way DRIVE does, so jawheadControl() runs under its enable.
+    if (fieldControlEngaged()) {
+      sendRemoteHandoff("DRIVING");
+      stopRemoteDrive();
+      driverMenuActive = false;
+      return;
+    }
+
     sendRemoteUiState(); // throttled internally; keeps the laptop mirror live
 
     pros::screen_touch_status_s_t status = pros::screen::touch_status();
