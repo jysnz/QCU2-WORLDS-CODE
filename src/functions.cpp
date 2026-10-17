@@ -56,7 +56,7 @@ static void testMotorGroupDirections(const char *label,
 }
 
 // Same idea as testMotorGroupDirections(), but for a labeled group of
-// standalone pros::Motor instances (lift1/lift2, intake1/intake2, etc.)
+// standalone pros::Motor instances (intake1/intake2, etc.)
 // rather than a MotorGroup - each entry is {display name, motor}.
 static void
 testMotorsDirections(const char *label,
@@ -86,7 +86,7 @@ void testAllMotorDirections() {
   int y = 10;
   testMotorGroupDirections("LEFT DRIVE", left_motor_group, y);
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
-  testMotorsDirections("LIFT", {{"lift1", &lift1}, {"lift2", &lift2}}, y);
+  testMotorGroupDirections("LIFT", lift, y);
   testMotorsDirections("INTAKE", {{"intake1", &intake1}, {"intake2", &intake2}},
                         y);
   testMotorsDirections("BUNCH", {{"bunchy", &bunchy}, {"bunchArm", &bunchArm}},
@@ -99,22 +99,19 @@ void drivetrainReset(){
 }
 
 void liftControl() {
-  const double LIFT_TOP_TARGET = 1500.0;    // lift1 motor degrees - top hardstop target
-  const double LIFT_BOTTOM_TARGET = 0.0;   // lift1 motor degrees - bottom hardstop target
+  const double LIFT_TOP_TARGET = 1500.0;    // lift motor degrees - top hardstop target
+  const double LIFT_BOTTOM_TARGET = 0.0;   // lift motor degrees - bottom hardstop target
   const int LIFT_SPEED = 200;              // green gearset max velocity (rpm)
 
   bool liftUpHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
   bool liftDownHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
 
   if (liftUpHeld) {
-    lift1.move_absolute(LIFT_TOP_TARGET, LIFT_SPEED);
-    lift2.move_absolute(-LIFT_TOP_TARGET, LIFT_SPEED);
+    lift.move_absolute(LIFT_TOP_TARGET, LIFT_SPEED);
   } else if (liftDownHeld) {
-    lift1.move_absolute(LIFT_BOTTOM_TARGET, LIFT_SPEED);
-    lift2.move_absolute(-LIFT_BOTTOM_TARGET, LIFT_SPEED);
+    lift.move_absolute(LIFT_BOTTOM_TARGET, LIFT_SPEED);
   } else {
-    lift1.move_velocity(0);
-    lift2.move_velocity(0);
+    lift.move_velocity(0);
   }
 }
 
@@ -175,23 +172,6 @@ void jawheadControl() {
 
     liftControl();
 
-    // Holding L1 drives bunchArm one way, holding L2 drives it the other -
-    // letting go of either stops it (and holds, via brake mode) wherever it
-    // is, same hold-to-move/release-to-stop behavior as liftControl() before
-    // it switched to move_absolute(). No target-seeking here.
-    const int BUNCHARM_SPEED = 100; // red gearset max velocity (rpm)
-
-    bool bunchArmExtendHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
-    bool bunchArmRetractHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
-
-    if (bunchArmExtendHeld) {
-      bunchArm.move_velocity(BUNCHARM_SPEED);
-    } else if (bunchArmRetractHeld) {
-      bunchArm.move_velocity(-BUNCHARM_SPEED);
-    } else {
-      bunchArm.move_velocity(0);
-    }
-
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
     if (driveReversed) {
@@ -234,15 +214,12 @@ void jawheadControl() {
     if (intakeForward) {
       intake1.move_velocity(600);
       intake2.move_velocity(-600);
-      bunchy.move_velocity(-200);
     } else if (intakeBackward) {
       intake1.move_velocity(-600);
       intake2.move_velocity(600);
-      bunchy.move_velocity(200);
     } else {
       intake1.move_velocity(0);
       intake2.move_velocity(0);
-      bunchy.move_velocity(0);
     }
 
     pros::delay(10);

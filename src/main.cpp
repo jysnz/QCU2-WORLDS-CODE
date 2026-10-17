@@ -1,5 +1,6 @@
 #include "main.h"
 #include "autonomous.hpp"
+#include "fieldctl/fieldctl.hpp"
 #include "functions.hpp"
 #include "pid_tuner.hpp"
 #include "point_planner.hpp"
@@ -15,17 +16,20 @@
 #include <vector>
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VEXNET field control
+// ─────────────────────────────────────────────────────────────────────────────
+// true:  robot waits disabled until the VEXNET gamemaster starts a match
+// false: field control off - normal driving and autonomous (practice)
+const bool VEXNET_ENABLED = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
 pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
 pros::Motor intake1(16, pros::MotorGears::green);
 pros::Motor intake2(17, pros::MotorGears::green);
-pros::Motor lift1(18, pros::MotorGears::green);
-pros::Motor lift2(19, pros::MotorGears::green);
-pros::Motor bunchy(14, pros::MotorGears::green);
-pros::Motor bunchArm(1, pros::MotorGears::red);
-pros::Motor lift(13, pros::MotorGears::green);
+pros::MotorGroup lift({14, -17, 18}, pros::MotorGears::green);
 
 pros::adi::Pneumatics clamp('A', false);
 
@@ -46,12 +50,11 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    fieldctl::setVexnet(VEXNET_ENABLED);
 
-    lift1.set_current_limit(2000);
-    lift2.set_current_limit(2000);
-    bunchArm.set_current_limit(1500); 
+    lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+
+    lift.set_current_limit_all(2000);
 
     chassis.calibrate();
 
@@ -159,13 +162,11 @@ void initialize() {
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
             std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
-            std::vector<double> liftTemps = {lift1.get_temperature(), lift2.get_temperature()};
-            std::vector<double> bunchTemps = {bunchy.get_temperature(), bunchArm.get_temperature()};
+            std::vector<double> liftTemps = lift.get_temperature_all();
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
             std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
-            std::vector<std::int8_t> liftPorts = {lift1.get_port(), lift2.get_port()};
-            std::vector<std::int8_t> bunchPorts = {bunchy.get_port(), bunchArm.get_port()};
+            std::vector<std::int8_t> liftPorts = lift.get_port_all();
 
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
@@ -202,12 +203,12 @@ void initialize() {
             std::vector<std::int32_t> rightOverCurrent = right_motor_group.is_over_current_all();
             checkGroupStress("L", leftOverTemp, leftOverCurrent, leftPorts);
             checkGroupStress("R", rightOverTemp, rightOverCurrent, rightPorts);
+            std::vector<std::int32_t> liftOverTemp = lift.is_over_temp_all();
+            std::vector<std::int32_t> liftOverCurrent = lift.is_over_current_all();
+            checkGroupStress("Lift", liftOverTemp, liftOverCurrent, liftPorts);
             checkSingleStress("Intake1", intake1);
             checkSingleStress("Intake2", intake2);
-            checkSingleStress("Lift1", lift1);
-            checkSingleStress("Lift2", lift2);
-            checkSingleStress("Bunch", bunchy);
-            checkSingleStress("BunchArm", bunchArm);
+      
 
             bool isStressed = !stressedMotors.empty();
 
@@ -230,7 +231,6 @@ void initialize() {
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
             for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
             for (double t : liftTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : bunchTemps) tempsNow.push_back((int)(t * 2));
 
             // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
             // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
@@ -339,10 +339,8 @@ void initialize() {
                 drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
 
                 // Section 4: LIFT motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 2);
+                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 3);
 
-                // Section 5: BUNCH motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 4, "BUNCH", ACCENT_ORANGE, bunchTemps, bunchPorts, "Bunch", 2);
             }
 
             // ── Static Overlays (Drawn last to prevent overlap) ──
