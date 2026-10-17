@@ -1,7 +1,7 @@
 {
   "py/object": "pros.conductor.project.Project",
   "py/state": {
-    "project_name": "24",
+    "project_name": "debi",
     "target": "v5",
     "templates": {
       "LemLib": {
