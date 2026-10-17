@@ -29,7 +29,7 @@ pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
 pros::Motor intake1(16, pros::MotorGears::green);
 pros::Motor intake2(17, pros::MotorGears::green);
-pros::MotorGroup lift({14, -17, 18}, pros::MotorGears::green);
+pros::MotorGroup lift({14, 19, -18}, pros::MotorGears::green);
 
 pros::adi::Pneumatics clamp('A', false);
 
