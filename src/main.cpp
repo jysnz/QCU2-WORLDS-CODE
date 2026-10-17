@@ -17,11 +17,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
-
-pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
-
+pros::MotorGroup left_motor_group({1, 2}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-4, -5}, pros::MotorGears::green);
+pros::Motor claw(12);
+pros::Motor lift(11);
 pros::adi::Pneumatics clamp('B', false);
 
 pros::Imu imu(15);

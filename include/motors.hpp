@@ -10,7 +10,8 @@ extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
 
 // ─── Subsystem motors ────────────────────────────────────────────────────────
-extern pros::MotorGroup lift; // ports 5 / 6
+extern pros::Motor lift; // port 11
+extern pros::Motor claw; // port 12
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics clamp;

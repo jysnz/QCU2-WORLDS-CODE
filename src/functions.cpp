@@ -35,36 +35,11 @@ void jawheadControl() {
 
     bool armLiftUp = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
     bool armLiftDown = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+
+    bool clawOpen = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
+    bool clawClose = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
   
     uint32_t nowMs = pros::millis();
-
-    // Tap DOWN to reverse which way the drivetrain drives (flips "forward"
-    // on the joystick to drive the robot backward, and vice versa).
-    // Debounced (like the clamp below) so switch bounce on the physical
-    // button can't register as two rapid taps wthat cancel each other out.
-    bool driveReverseToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-    bool driveReverseToggleTapped = driveReverseToggleHeld && !wasDownHeld;
-    wasDownHeld = driveReverseToggleHeld;
-    if (driveReverseToggleTapped && (nowMs - lastReverseToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastReverseToggleMs = nowMs;
-      driveReversed = !driveReversed;
-    }
-
-    // Tap B to switch the clamp cleanly on/off (edge-detected so holding B
-    // doesn't rapid-fire clamp.toggle() every loop and leave it in a
-    // random state).
-    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-    bool clampToggleTapped = clampToggleHeld && !wasBHeld;
-    wasBHeld = clampToggleHeld;
-    if (clampToggleTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastClampToggleMs = nowMs;
-      clampOn = !clampOn;
-      if (clampOn) {
-        clamp.extend();
-      } else {
-        clamp.retract();
-      }
-    }
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
@@ -105,6 +80,14 @@ void jawheadControl() {
       lift.move_velocity(-100);
     } else {
       lift.move_velocity(0);
+    }
+
+    if(clawOpen) {
+      claw.move_velocity(100);
+    } else if(clawClose) {
+      claw.move_velocity(-100);
+    } else {
+      claw.move_velocity(0);
     }
   }
 }
