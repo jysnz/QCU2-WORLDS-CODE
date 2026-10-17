@@ -70,7 +70,7 @@ void jawheadControl() {
     }
 
     // Tap Y to open the claw, tap again to close it.
-    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool clawToggleTapped = clawToggleHeld && !wasYHeld;
     wasYHeld = clawToggleHeld;
     if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {

@@ -44,6 +44,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 void initialize() {
     chassis.calibrate();
     claw.tare_position();
+    lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
     static pros::Task screen_task([]() {
         const int BG_DARK = 0x0A0A0F;
