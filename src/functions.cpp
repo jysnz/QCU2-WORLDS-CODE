@@ -29,6 +29,9 @@ void jawheadControl() {
   static bool wasBHeld = false;
   static bool clampOn = false;
   static uint32_t lastClampToggleMs = 0;
+  static bool wasYHeld = false;
+  static bool clawOpen = false;
+  static uint32_t lastClawToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
 
   while (true) {
@@ -63,6 +66,20 @@ void jawheadControl() {
         clamp.extend();
       } else {
         clamp.retract();
+      }
+    }
+
+    // Tap Y to open the claw, tap again to close it.
+    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+    bool clawToggleTapped = clawToggleHeld && !wasYHeld;
+    wasYHeld = clawToggleHeld;
+    if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {
+      lastClawToggleMs = nowMs;
+      clawOpen = !clawOpen;
+      if (clawOpen) {
+        claw.move_absolute(1500, 100);
+      } else {
+        claw.move_absolute(0, 100);
       }
     }
 

@@ -21,6 +21,7 @@ pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
 pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
+pros::Motor claw(8);
 
 pros::adi::Pneumatics clamp('B', false);
 
@@ -42,6 +43,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
     chassis.calibrate();
+    claw.tare_position();
 
     static pros::Task screen_task([]() {
         const int BG_DARK = 0x0A0A0F;
