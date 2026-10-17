@@ -115,6 +115,56 @@ void liftControl() {
   }
 }
 
+// Tap L1 to spin the claw clockwise until it stalls (e.g. against a hardstop
+// or a gripped object), then hold there. Hold L2 to spin it counter-clockwise
+// continuously; releasing L2 stops it. Pressing L2 also cancels an L1 run.
+void clawControl() {
+  const int CLAW_SPEED = 200;               // green gearset max velocity (rpm)
+  const uint32_t CLAW_STALL_GRACE_MS = 250; // ignore stall while spinning up
+  const double CLAW_STALL_VELOCITY = 5.0;   // rpm - below this counts as stalled
+  const int CLAW_STALL_TICKS = 5;           // consecutive slow ticks to confirm
+
+  static bool wasL1Held = false;
+  static bool clockwiseRunning = false;
+  static uint32_t clockwiseStartMs = 0;
+  static int slowTicks = 0;
+
+  bool clockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
+  bool counterClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+  bool clockwiseTapped = clockwiseHeld && !wasL1Held;
+  wasL1Held = clockwiseHeld;
+  uint32_t nowMs = pros::millis();
+
+  if (counterClockwiseHeld) {
+    clockwiseRunning = false;
+    claw.move_velocity(-CLAW_SPEED);
+    return;
+  }
+
+  if (clockwiseTapped && !clockwiseRunning) {
+    clockwiseRunning = true;
+    clockwiseStartMs = nowMs;
+    slowTicks = 0;
+  }
+
+  if (clockwiseRunning) {
+    claw.move_velocity(CLAW_SPEED);
+    if (nowMs - clockwiseStartMs >= CLAW_STALL_GRACE_MS &&
+        std::abs(claw.get_actual_velocity()) < CLAW_STALL_VELOCITY) {
+      slowTicks++;
+    } else {
+      slowTicks = 0;
+    }
+    if (slowTicks >= CLAW_STALL_TICKS) {
+      clockwiseRunning = false;
+    }
+  }
+
+  if (!clockwiseRunning) {
+    claw.move_velocity(0); // brake mode HOLD keeps it in place
+  }
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
   const int MAX_SPEED = 127;
@@ -171,6 +221,7 @@ void jawheadControl() {
     }
 
     liftControl();
+    clawControl();
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);

@@ -30,6 +30,7 @@ pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::gree
 pros::Motor intake1(16, pros::MotorGears::green);
 pros::Motor intake2(17, pros::MotorGears::green);
 pros::MotorGroup lift({14, 19, -18}, pros::MotorGears::green);
+pros::Motor claw(13);
 
 pros::adi::Pneumatics clamp('A', false);
 
@@ -55,6 +56,8 @@ void initialize() {
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
     lift.set_current_limit_all(2000);
+
+    claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
     chassis.calibrate();
 
