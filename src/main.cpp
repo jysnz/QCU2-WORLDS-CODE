@@ -44,6 +44,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 void initialize() {
     chassis.calibrate();
     claw.tare_position();
+    claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
     static pros::Task screen_task([]() {

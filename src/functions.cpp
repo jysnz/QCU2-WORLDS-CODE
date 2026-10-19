@@ -11,6 +11,56 @@
 #include <vector>
 
 
+// Hold L1 to close the claw (counter-clockwise); releasing L1 stops it and it
+// stays closed. Tap L2 to open the claw (clockwise) until it stalls against the
+// hardstop, then hold there. Pressing L1 also cancels an L2 run.
+void clawControl() {
+  const int CLAW_SPEED = 200;               // green gearset max velocity (rpm)
+  const uint32_t CLAW_STALL_GRACE_MS = 250; // ignore stall while spinning up
+  const double CLAW_STALL_VELOCITY = 5.0;   // rpm - below this counts as stalled
+  const int CLAW_STALL_TICKS = 5;           // consecutive slow ticks to confirm
+
+  static bool wasL2Held = false;
+  static bool openRunning = false;
+  static uint32_t openStartMs = 0;
+  static int slowTicks = 0;
+
+  bool closeHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
+  bool openHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+  bool openTapped = openHeld && !wasL2Held;
+  wasL2Held = openHeld;
+  uint32_t nowMs = pros::millis();
+
+  if (closeHeld) {
+    openRunning = false;
+    claw.move_velocity(-CLAW_SPEED);
+    return;
+  }
+
+  if (openTapped && !openRunning) {
+    openRunning = true;
+    openStartMs = nowMs;
+    slowTicks = 0;
+  }
+
+  if (openRunning) {
+    claw.move_velocity(CLAW_SPEED);
+    if (nowMs - openStartMs >= CLAW_STALL_GRACE_MS &&
+        std::abs(claw.get_actual_velocity()) < CLAW_STALL_VELOCITY) {
+      slowTicks++;
+    } else {
+      slowTicks = 0;
+    }
+    if (slowTicks >= CLAW_STALL_TICKS) {
+      openRunning = false;
+    }
+  }
+
+  if (!openRunning) {
+    claw.move_velocity(0); // brake mode HOLD keeps it in place
+  }
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
   const int MAX_SPEED = 127;
@@ -29,9 +79,6 @@ void jawheadControl() {
   static bool wasBHeld = false;
   static bool clampOn = false;
   static uint32_t lastClampToggleMs = 0;
-  static bool wasYHeld = false;
-  static bool clawOpen = false;
-  static uint32_t lastClawToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
 
   while (true) {
@@ -69,19 +116,7 @@ void jawheadControl() {
       }
     }
 
-    // Tap Y to open the claw, tap again to close it.
-    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-    bool clawToggleTapped = clawToggleHeld && !wasYHeld;
-    wasYHeld = clawToggleHeld;
-    if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastClawToggleMs = nowMs;
-      clawOpen = !clawOpen;
-      if (clawOpen) {
-        claw.move_absolute(1500, 100);
-      } else {
-        claw.move_absolute(0, 100);
-      }
-    }
+    clawControl();
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
