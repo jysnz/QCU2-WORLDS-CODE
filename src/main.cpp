@@ -41,7 +41,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    fieldctl::setVexnet(true);
+    fieldctl::setVexnet(false);
     chassis.calibrate();
 
     static pros::Task screen_task([]() {
