@@ -10,6 +10,7 @@
 #include "pros/rtos.hpp"
 #include <string>
 #include <vector>
+#include "fieldctl/fieldctl.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
@@ -72,6 +73,7 @@ void loadAutonSelection() {
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
+    fieldctl::setVexnet(false);
     loadAutonSelection();
 
     // Ensure legacy LLEMU is NOT active to prevent drawing conflicts
