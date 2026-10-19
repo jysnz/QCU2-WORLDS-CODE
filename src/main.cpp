@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include "fieldctl/fieldctl.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
@@ -42,6 +43,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
+    fieldctl::setVexnet(false);
     chassis.calibrate();
     claw.tare_position();
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
