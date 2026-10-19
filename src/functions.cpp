@@ -56,7 +56,7 @@ static void testMotorGroupDirections(const char *label,
 }
 
 // Same idea as testMotorGroupDirections(), but for a labeled group of
-// standalone pros::Motor instances (intake1/intake2, etc.)
+// standalone pros::Motor instances (intake2, arm, etc.)
 // rather than a MotorGroup - each entry is {display name, motor}.
 static void
 testMotorsDirections(const char *label,
@@ -87,8 +87,8 @@ void testAllMotorDirections() {
   testMotorGroupDirections("LEFT DRIVE", left_motor_group, y);
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
   testMotorGroupDirections("LIFT", lift, y);
-  testMotorsDirections("INTAKE", {{"intake1", &intake1}, {"intake2", &intake2}},
-                        y);
+  testMotorsDirections("INTAKE", {{"intake2", &intake2}}, y);
+  testMotorsDirections("ARM", {{"arm", &arm}}, y);
   testMotorsDirections("BUNCH", {{"bunchy", &bunchy}, {"bunchArm", &bunchArm}},
                         y);
 }
@@ -98,20 +98,20 @@ void drivetrainReset(){
   right_motor_group.tare_position();
 }
 
-void liftControl() {
-  const double LIFT_TOP_TARGET = 1500.0;    // lift motor degrees - top hardstop target
-  const double LIFT_BOTTOM_TARGET = 0.0;   // lift motor degrees - bottom hardstop target
-  const int LIFT_SPEED = 200;              // green gearset max velocity (rpm)
+// Hold UP to spin the arm clockwise, hold DOWN to spin it counter-clockwise.
+// Releasing both stops it (brake mode HOLD keeps it in place).
+void armControl() {
+  const int ARM_SPEED = 200; // green gearset max velocity (rpm)
 
-  bool liftUpHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
-  bool liftDownHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+  bool armClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
+  bool armCounterClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
 
-  if (liftUpHeld) {
-    lift.move_absolute(LIFT_TOP_TARGET, LIFT_SPEED);
-  } else if (liftDownHeld) {
-    lift.move_absolute(LIFT_BOTTOM_TARGET, LIFT_SPEED);
+  if (armClockwiseHeld) {
+    arm.move_velocity(ARM_SPEED);
+  } else if (armCounterClockwiseHeld) {
+    arm.move_velocity(-ARM_SPEED);
   } else {
-    lift.move_velocity(0);
+    arm.move_velocity(0);
   }
 }
 
@@ -177,9 +177,6 @@ void jawheadControl() {
   static bool imu_status = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
-  static bool wasDownHeld = false;
-  static bool driveReversed = false;
-  static uint32_t lastReverseToggleMs = 0;
   static bool wasYHeld = false;
   static bool clampOn = false;
   static uint32_t lastClampToggleMs = 0;
@@ -190,19 +187,8 @@ void jawheadControl() {
     bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     uint32_t nowMs = pros::millis();
 
-    // Tap DOWN to reverse which way the drivetrain drives (flips "forward"
-    // on the joystick to drive the robot backward, and vice versa).
-    // Debounced (like the clamp below) so switch bounce on the physical
-    // button can't register as two rapid taps wthat cancel each other out.
     bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool liftBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-    bool driveReverseToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-    bool driveReverseToggleTapped = driveReverseToggleHeld && !wasDownHeld;
-    wasDownHeld = driveReverseToggleHeld;
-    if (driveReverseToggleTapped && (nowMs - lastReverseToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastReverseToggleMs = nowMs;
-      driveReversed = !driveReversed;
-    }
 
     // Tap Y to switch the clamp cleanly on/off (edge-detected so holding Y
     // doesn't rapid-fire clamp.toggle() every loop and leave it in a
@@ -220,14 +206,11 @@ void jawheadControl() {
       }
     }
 
-    liftControl();
+    armControl();
     clawControl();
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
-    if (driveReversed) {
-      move = -move;
-    }
 
     if (imu_status && std::abs(move) > INU_CORRECTION_MIN_MOVE &&
         std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
@@ -263,13 +246,10 @@ void jawheadControl() {
     }
 
     if (intakeForward) {
-      intake1.move_velocity(600);
       intake2.move_velocity(-600);
     } else if (intakeBackward) {
-      intake1.move_velocity(-600);
       intake2.move_velocity(600);
     } else {
-      intake1.move_velocity(0);
       intake2.move_velocity(0);
     }
 

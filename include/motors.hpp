@@ -8,7 +8,7 @@
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
-extern pros::Motor intake1;
+extern pros::Motor arm;
 extern pros::Motor intake2;
 extern pros::MotorGroup lift;
 extern pros::Motor claw;

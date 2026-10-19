@@ -6,7 +6,7 @@
 
 void drivetrainReset();
 
-void liftControl();
+void armControl();
 
 void jawheadControl();
 

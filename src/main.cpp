@@ -27,7 +27,7 @@ const bool VEXNET_ENABLED = false;
 // ─────────────────────────────────────────────────────────────────────────────
 pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
-pros::Motor intake1(16, pros::MotorGears::green);
+pros::Motor arm(-16, pros::MotorGears::green);
 pros::Motor intake2(17, pros::MotorGears::green);
 pros::MotorGroup lift({14, 19, -18}, pros::MotorGears::green);
 pros::Motor claw(13);
@@ -58,6 +58,7 @@ void initialize() {
     lift.set_current_limit_all(2000);
 
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
     chassis.calibrate();
 
@@ -164,11 +165,11 @@ void initialize() {
             // ── Gather live data once per frame ──
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
-            std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
+            std::vector<double> intakeTemps = {intake2.get_temperature()};
             std::vector<double> liftTemps = lift.get_temperature_all();
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
-            std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
+            std::vector<std::int8_t> intakePorts = {intake2.get_port()};
             std::vector<std::int8_t> liftPorts = lift.get_port_all();
 
             int imuNow = (int)(imu.get_heading() * 10);
@@ -209,7 +210,7 @@ void initialize() {
             std::vector<std::int32_t> liftOverTemp = lift.is_over_temp_all();
             std::vector<std::int32_t> liftOverCurrent = lift.is_over_current_all();
             checkGroupStress("Lift", liftOverTemp, liftOverCurrent, liftPorts);
-            checkSingleStress("Intake1", intake1);
+            checkSingleStress("Arm", arm);
             checkSingleStress("Intake2", intake2);
       
 
