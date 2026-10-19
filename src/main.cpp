@@ -51,7 +51,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    fieldctl::setVexnet(VEXNET_ENABLED);
+    fieldctl::setVexnet(false);
 
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
