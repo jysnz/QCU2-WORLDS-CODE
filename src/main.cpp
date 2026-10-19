@@ -56,6 +56,10 @@ void initialize() {
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
     lift.set_current_limit_all(2000);
+    // Lift position is counted from wherever it sits at startup, so power on
+    // with the lift fully down - that becomes 0.
+    lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
+    lift.tare_position_all();
 
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);

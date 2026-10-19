@@ -172,6 +172,9 @@ void jawheadControl() {
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
+  // How far (motor degrees from the startup position) the lift may spin
+  // clockwise before X stops driving it.
+  const double LIFT_FORWARD_LIMIT = 743.2;
 
   // When true, the IMU corrects drivetrain drift during driver control.
   static bool imu_status = false;
@@ -189,6 +192,15 @@ void jawheadControl() {
 
     bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool liftBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+
+    // Show lift position on the controller while tuning LIFT_FORWARD_LIMIT.
+    // The controller screen only updates about every 50ms, so print every
+    // 100ms. Row 1 keeps clear of fieldctl's status on row 0.
+    static uint32_t lastLiftPrintMs = 0;
+    if (nowMs - lastLiftPrintMs >= 100) {
+      lastLiftPrintMs = nowMs;
+      controller.print(1, 0, "Lift: %7.1f   ", lift.get_position());
+    }
 
     // Tap Y to switch the clamp cleanly on/off (edge-detected so holding Y
     // doesn't rapid-fire clamp.toggle() every loop and leave it in a
@@ -237,7 +249,9 @@ void jawheadControl() {
     left_motor_group.move(std::clamp(move + turn, -MAX_SPEED, MAX_SPEED));
     right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
 
-    if(liftForward) {
+    // Forward (clockwise) stops once the lift reaches LIFT_FORWARD_LIMIT.
+    // Backward is not limited, so the lift can always be brought back down.
+    if (liftForward && lift.get_position() < LIFT_FORWARD_LIMIT) {
       lift.move_velocity(200);
     } else if (liftBackward) {
       lift.move_velocity(-200);
