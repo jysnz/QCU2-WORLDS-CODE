@@ -10,6 +10,9 @@
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
+#include "screen_task.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -20,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // true:  robot waits disabled until the VEXNET gamemaster starts a match
 // false: field control off - normal driving and autonomous (practice)
+// This is only the state at boot -- the VEXNET switch on the brain screen flips it live.
 const bool VEXNET_ENABLED = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +55,7 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    fieldctl::setVexnet(false);
+    fieldctl::setVexnet(VEXNET_ENABLED);
 
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
@@ -64,367 +68,21 @@ void initialize() {
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
 
+    dashboard::showSplash("Calibrating IMU...", "Keep the robot still");
     chassis.calibrate();
 
-    static pros::Task screen_task([]() {
-        const int BG_DARK = 0x0A0A0F;
-        const int CARD_BG = 0x161B22;
-        const int ACCENT_CYAN = 0x00F0FF;
-        const int ACCENT_ORANGE = 0xFF8C00;
-        const int ACCENT_RED = 0xFF3131;
-        const int ACCENT_DARK_GRAY = 0x22222B;
-        const int ACCENT_GREEN = 0x2ECC71;
-        const int TEXT_DIM = 0x6E7681;
-
-        // Fakes a rounded rectangle (a cross of two rects + 4 corner circles) so cards,
-        // tabs and buttons don't look like flat blocky slabs.
-        auto fillRoundedRect = [](int x0, int y0, int x1, int y1, int r, uint32_t color) {
-            pros::screen::set_pen(color);
-            pros::screen::fill_rect(x0 + r, y0, x1 - r, y1);
-            pros::screen::fill_rect(x0, y0 + r, x1, y1 - r);
-            pros::screen::fill_circle(x0 + r, y0 + r, r);
-            pros::screen::fill_circle(x1 - r, y0 + r, r);
-            pros::screen::fill_circle(x0 + r, y1 - r, r);
-            pros::screen::fill_circle(x1 - r, y1 - r, r);
-        };
-
-        int tempsScroll = 0;
-
-        // ── Motor stress modal state ──
-        // Pops up over the dashboard whenever any motor reports itself over
-        // temperature or over its current limit. Tapping the X dismisses it,
-        // but the dismissal only lasts STRESS_MODAL_COOLDOWN_MS -- if the
-        // motor is still stressed once that expires, the modal comes back.
-        // Clearing the stress condition entirely resets the dismissal so the
-        // next stress event alerts immediately instead of waiting out a
-        // stale cooldown.
-        const uint32_t STRESS_MODAL_COOLDOWN_MS = 60000; // 1 minute
-        bool stressModalOpen = false;
-        bool stressModalDismissed = false;
-        uint32_t stressDismissedAtMs = 0;
-        const int MODAL_X0 = 90, MODAL_Y0 = 50, MODAL_X1 = 390, MODAL_Y1 = 190;
-        const int CLOSE_SIZE = 26;
-        const int CLOSE_X0 = MODAL_X1 - CLOSE_SIZE - 8;
-        const int CLOSE_Y0 = MODAL_Y0 + 8;
-        const int CLOSE_X1 = CLOSE_X0 + CLOSE_SIZE;
-        const int CLOSE_Y1 = CLOSE_Y0 + CLOSE_SIZE;
-
-        // ── Dirty-state tracking to eliminate unnecessary full-screen redraws (flicker fix) ──
-        // The old loop cleared and redrew the ENTIRE screen every 35ms even when nothing
-        // on screen had actually changed, which is what caused the visible flicker. Now we
-        // only repaint when something the user can see has actually changed.
-        bool forceRedraw = true;
-        int lastTempsScroll = INT32_MIN;
-        int lastImu = INT32_MIN;
-        int lastBattery = INT32_MIN;
-        bool lastStressModalOpen = false;
-        std::vector<int> lastTemps; // rounded to nearest 0.5C so tiny sensor jitter doesn't trigger redraws
-
-        while (true) {
-            // The PID tuner / point planner own the brain screen while active
-            if (pidTunerActive || pointPlannerActive) {
-                pros::delay(100);
-                forceRedraw = true; // repaint fully once we get control back
-                continue;
-            }
-
-            pros::screen_touch_status_s_t status = pros::screen::touch_status();
-            uint32_t nowMs = pros::millis();
-
-            // ── Input Detection ──
-            static bool wasTouched = false;
-            if (status.touch_status == pros::E_TOUCH_PRESSED && !wasTouched) {
-                if (stressModalOpen) {
-                    // The modal owns all touch input while it's up -- only the
-                    // X button does anything.
-                    if (status.x >= CLOSE_X0 && status.x <= CLOSE_X1 &&
-                        status.y >= CLOSE_Y0 && status.y <= CLOSE_Y1) {
-                        stressModalOpen = false;
-                        stressModalDismissed = true;
-                        stressDismissedAtMs = nowMs;
-                    }
-                } else if (status.x > 430) {
-                    // Scroll Buttons (Far Right Column: 430 to 480)
-                    if (status.y > 60 && status.y < 130) { // UP Arrow
-                        tempsScroll += 60;
-                    }
-                    else if (status.y > 140 && status.y < 210) { // DOWN Arrow
-                        tempsScroll -= 60;
-                    }
-                }
-                wasTouched = true;
-            } else if (status.touch_status == pros::E_TOUCH_RELEASED) {
-                wasTouched = false;
-            }
-
-            // Each section = a label line + a row of tiles.
-            // Drivetrain sections show 5 tiles/row; the rest show 2 tiles/row.
-            const int tempRowHeight = 66;
-            const int numTempRows = 5; // LEFT drivetrain, RIGHT drivetrain, INTAKE, LIFT, BUNCH
-            int tempsContentHeight = numTempRows * tempRowHeight;
-            int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
-            if (tempsScroll > 0) tempsScroll = 0;
-            if (tempsScroll < minTempsScroll) tempsScroll = minTempsScroll;
-
-            // ── Gather live data once per frame ──
-            std::vector<double> leftTemps = left_motor_group.get_temperature_all();
-            std::vector<double> rightTemps = right_motor_group.get_temperature_all();
-            std::vector<double> intakeTemps = {intake2.get_temperature()};
-            std::vector<double> liftTemps = lift.get_temperature_all();
-            std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
-            std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
-            std::vector<std::int8_t> intakePorts = {intake2.get_port()};
-            std::vector<std::int8_t> liftPorts = lift.get_port_all();
-
-            int imuNow = (int)(imu.get_heading() * 10);
-            int batteryNow = (int)pros::battery::get_capacity();
-
-            // ── Motor stress detection ──
-            // "Stressed" = the motor itself is reporting over-temperature or
-            // over-current, straight from the V5 firmware -- not just our
-            // own display thresholds.
-            std::vector<std::string> stressedMotors;
-            auto checkGroupStress = [&](const char *prefix, std::vector<std::int32_t> &overTemp,
-                                        std::vector<std::int32_t> &overCurrent, std::vector<std::int8_t> &ports) {
-                for (size_t i = 0; i < overTemp.size(); i++) {
-                    bool hot = overTemp[i] > 0;
-                    bool overC = i < overCurrent.size() && overCurrent[i] > 0;
-                    if (!hot && !overC) continue;
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%s%d P%d %s", prefix, (int)i + 1, (int)ports[i],
-                             hot && overC ? "HOT+OC" : (hot ? "HOT" : "OC"));
-                    stressedMotors.push_back(buf);
-                }
-            };
-            auto checkSingleStress = [&](const char *name, pros::Motor &m) {
-                bool hot = m.is_over_temp() > 0;
-                bool overC = m.is_over_current() > 0;
-                if (!hot && !overC) return;
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%s %s", name, hot && overC ? "HOT+OC" : (hot ? "HOT" : "OC"));
-                stressedMotors.push_back(buf);
-            };
-
-            std::vector<std::int32_t> leftOverTemp = left_motor_group.is_over_temp_all();
-            std::vector<std::int32_t> leftOverCurrent = left_motor_group.is_over_current_all();
-            std::vector<std::int32_t> rightOverTemp = right_motor_group.is_over_temp_all();
-            std::vector<std::int32_t> rightOverCurrent = right_motor_group.is_over_current_all();
-            checkGroupStress("L", leftOverTemp, leftOverCurrent, leftPorts);
-            checkGroupStress("R", rightOverTemp, rightOverCurrent, rightPorts);
-            std::vector<std::int32_t> liftOverTemp = lift.is_over_temp_all();
-            std::vector<std::int32_t> liftOverCurrent = lift.is_over_current_all();
-            checkGroupStress("Lift", liftOverTemp, liftOverCurrent, liftPorts);
-            checkSingleStress("Arm", arm);
-            checkSingleStress("Intake2", intake2);
-      
-
-            bool isStressed = !stressedMotors.empty();
-
-            // Cooldown elapsed? Make the modal eligible to alert again.
-            if (stressModalDismissed && nowMs - stressDismissedAtMs >= STRESS_MODAL_COOLDOWN_MS) {
-                stressModalDismissed = false;
-            }
-            if (!isStressed) {
-                // Condition cleared -- hide the modal and forget any pending
-                // dismissal so the next stress event alerts right away.
-                stressModalOpen = false;
-                stressModalDismissed = false;
-            } else if (!stressModalDismissed) {
-                stressModalOpen = true;
-            }
-
-            // Build a rounded snapshot of every motor temp for change detection
-            std::vector<int> tempsNow;
-            for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
-            for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : liftTemps) tempsNow.push_back((int)(t * 2));
-
-            // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
-            // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
-            // while a motor is spinning its temperature (and the IMU heading, while driving)
-            // changes almost every loop, which was forcing a full-screen clear+redraw ~28x/sec
-            // and is what caused the visible flicker as soon as a motor was connected and running.
-            bool interactiveChanged = forceRedraw || tempsScroll != lastTempsScroll ||
-                                       stressModalOpen != lastStressModalOpen;
-            bool telemetryChanged = imuNow != lastImu ||
-                                     batteryNow != lastBattery ||
-                                     tempsNow != lastTemps;
-
-            static uint32_t lastTelemetryRedraw = 0;
-            const uint32_t TELEMETRY_REDRAW_INTERVAL_MS = 300;
-            bool telemetryDue = telemetryChanged && (nowMs - lastTelemetryRedraw >= TELEMETRY_REDRAW_INTERVAL_MS);
-
-            bool dataChanged = interactiveChanged || telemetryDue;
-
-            if (!dataChanged) {
-                pros::delay(35);
-                continue;
-            }
-
-            if (telemetryChanged) lastTelemetryRedraw = nowMs;
-
-            // ── RENDERING (only happens when something actually changed) ──
-            pros::screen::set_pen(BG_DARK);
-            pros::screen::fill_rect(0, 0, 480, 240);
-
-            // Subtle Grid
-            pros::screen::set_pen(0x121217);
-            for(int i=0; i<480; i+=40) pros::screen::draw_line(i, 0, i, 240);
-            for(int i=0; i<240; i+=40) pros::screen::draw_line(0, i, 480, i);
-
-            // ── Content Area Rendering (With Clipping Check) ──
-            {
-                const int rowLeft = 15, rowRight = 428;
-                const int labelH = 14;  // space reserved for the section name above its tiles
-                const int tileH = 46;
-
-                auto drawMotorTile = [&](int x, int y, int tileW, const char *label, double temp) {
-                    // Clipping: Only draw if the tile is between the header (50) and footer (215)
-                    if (y + tileH < 55 || y > 215) return;
-
-                    uint32_t col_ = (temp < 45) ? ACCENT_CYAN : (temp < 55 ? ACCENT_ORANGE : ACCENT_RED);
-
-                    fillRoundedRect(x, y, x + tileW, y + tileH, 5, CARD_BG);
-
-                    // Status dot instead of a harsh left bar — sits top-right, glanceable at a distance
-                    pros::screen::set_pen(col_);
-                    pros::screen::fill_circle(x + tileW - 9, y + 9, 4);
-
-                    // print() paints an opaque box behind text using the eraser color (black by
-                    // default) — match it to the tile background so text doesn't get a black halo
-                    pros::screen::set_eraser(CARD_BG);
-                    pros::screen::set_pen(TEXT_DIM);
-                    pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 5, label);
-                    pros::screen::set_pen(col_);
-                    pros::screen::print(pros::E_TEXT_SMALL, x + 8, y + 20, "%.1fC", temp);
-
-                    // Mini heat gauge along the bottom (0-70C range)
-                    int barX = x + 8, barY = y + tileH - 9, barW = tileW - 16, barH = 4;
-                    double frac = (temp - 20.0) / 50.0;
-                    if (frac < 0) frac = 0;
-                    if (frac > 1) frac = 1;
-                    fillRoundedRect(barX, barY, barX + barW, barY + barH, 2, ACCENT_DARK_GRAY);
-                    int fillW = (int)(barW * frac);
-                    if (fillW >= 4) fillRoundedRect(barX, barY, barX + fillW, barY + barH, 2, col_);
-                };
-
-                // Draws a section label followed by a row of evenly-sized tiles, one per motor.
-                auto drawSection = [&](int sectionY, const char *sectionLabel, uint32_t labelColor,
-                                        std::vector<double> &temps, std::vector<std::int8_t> &ports,
-                                        const char *namePrefix, int tilesPerRow) {
-                    int labelY = sectionY;
-                    int tileY = sectionY + labelH;
-
-                    // Skip the whole section if it's fully outside the visible content area
-                    if (tileY + tileH < 55 || labelY > 215) return;
-
-                    if (labelY >= 50 && labelY + labelH <= 215) {
-                        pros::screen::set_eraser(BG_DARK);
-                        pros::screen::set_pen(labelColor);
-                        pros::screen::print(pros::E_TEXT_SMALL, rowLeft, labelY, sectionLabel);
-                    }
-
-                    int gap = 6;
-                    int tileW = (rowRight - rowLeft - (tilesPerRow - 1) * gap) / tilesPerRow;
-                    for (int i = 0; i < (int)temps.size() && i < tilesPerRow; i++) {
-                        int x = rowLeft + i * (tileW + gap);
-                        char label[20];
-                        snprintf(label, sizeof(label), "%s %d P%d", namePrefix, i + 1, (int)ports[i]);
-                        drawMotorTile(x, tileY, tileW, label, temps[i]);
-                    }
-                };
-
-                int yBase = 55 + tempsScroll;
-
-                // Section 1: LEFT drivetrain motors (5 tiles/row)
-                drawSection(yBase, "LEFT DRIVETRAIN", ACCENT_CYAN, leftTemps, leftPorts, "L", 5);
-
-                // Section 2: RIGHT drivetrain motors (5 tiles/row)
-                drawSection(yBase + tempRowHeight, "RIGHT DRIVETRAIN", ACCENT_ORANGE, rightTemps, rightPorts, "R", 5);
-
-                // Section 3: INTAKE motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
-
-                // Section 4: LIFT motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 3);
-
-            }
-
-            // ── Static Overlays (Drawn last to prevent overlap) ──
-
-            // Header — single title bar (auton selector tab removed; only one autonomous routine)
-            fillRoundedRect(5, 5, 475, 50, 8, ACCENT_CYAN);
-
-            pros::screen::set_eraser(ACCENT_CYAN);
-            pros::screen::set_pen(0x001417);
-            pros::screen::print(pros::E_TEXT_SMALL, 60, 20, "SYSTEM_THERMALS");
-
-            // Scroll Buttons Sidebar
-            fillRoundedRect(435, 60, 475, 130, 8, CARD_BG); // Up Button
-            fillRoundedRect(435, 140, 475, 210, 8, CARD_BG); // Down Button
-            pros::screen::set_eraser(CARD_BG);
-            pros::screen::set_pen(ACCENT_CYAN);
-            pros::screen::print(pros::E_TEXT_MEDIUM, 448, 85, "^");
-            pros::screen::print(pros::E_TEXT_MEDIUM, 448, 165, "v");
-
-            // Footer Diagnostics — battery dot color reflects charge level at a glance
-            pros::screen::set_pen(0x18181F);
-            pros::screen::fill_rect(0, 215, 480, 240);
-            pros::screen::set_eraser(0x18181F);
-
-            double batteryPct = pros::battery::get_capacity();
-            uint32_t battCol = (batteryPct > 60) ? ACCENT_GREEN : (batteryPct > 30 ? ACCENT_ORANGE : ACCENT_RED);
-            pros::screen::set_pen(ACCENT_GREEN);
-            pros::screen::fill_circle(20, 227, 4);
-            pros::screen::set_pen(TEXT_DIM);
-            pros::screen::print(pros::E_TEXT_SMALL, 30, 222, "ONLINE  |  IMU %.1f", imu.get_heading());
-
-            pros::screen::set_pen(battCol);
-            pros::screen::fill_circle(230, 227, 4);
-            pros::screen::set_pen(TEXT_DIM);
-            pros::screen::print(pros::E_TEXT_SMALL, 240, 222, "BAT %.0f%%", batteryPct);
-
-            // ── Motor stress modal (drawn last so it sits on top of everything) ──
-            if (stressModalOpen) {
-                fillRoundedRect(MODAL_X0, MODAL_Y0, MODAL_X1, MODAL_Y1, 10, ACCENT_RED);
-                fillRoundedRect(MODAL_X0 + 3, MODAL_Y0 + 3, MODAL_X1 - 3, MODAL_Y1 - 3, 8, CARD_BG);
-
-                pros::screen::set_eraser(CARD_BG);
-                pros::screen::set_pen(ACCENT_RED);
-                pros::screen::print(pros::E_TEXT_MEDIUM, MODAL_X0 + 16, MODAL_Y0 + 16, "MOTOR STRESS WARNING");
-
-                pros::screen::set_pen(TEXT_DIM);
-                int lineY = MODAL_Y0 + 42;
-                const int maxLines = 4;
-                for (int i = 0; i < (int)stressedMotors.size() && i < maxLines; i++) {
-                    pros::screen::print(pros::E_TEXT_SMALL, MODAL_X0 + 16, lineY, "%s",
-                                        stressedMotors[i].c_str());
-                    lineY += 15;
-                }
-                if ((int)stressedMotors.size() > maxLines) {
-                    pros::screen::print(pros::E_TEXT_SMALL, MODAL_X0 + 16, lineY, "+%d more",
-                                        (int)stressedMotors.size() - maxLines);
-                }
-
-                // X close button, top-right corner of the card
-                fillRoundedRect(CLOSE_X0, CLOSE_Y0, CLOSE_X1, CLOSE_Y1, 5, ACCENT_RED);
-                pros::screen::set_eraser(ACCENT_RED);
-                pros::screen::set_pen(CARD_BG);
-                pros::screen::print(pros::E_TEXT_MEDIUM, CLOSE_X0 + 7, CLOSE_Y0 + 3, "X");
-            }
-
-            // Update dirty-tracking snapshot
-            lastTempsScroll = tempsScroll;
-            lastImu = imuNow;
-            lastBattery = batteryNow;
-            lastTemps = tempsNow;
-            lastStressModalOpen = stressModalOpen;
-            forceRedraw = false;
-
-            pros::delay(35);
-        }
-    });
+    dashboard::ScreenConfig screen;
+    screen.readMotors = [](dashboard::State &s) {
+        s.leftDrive.motors = dashboard::readMotors(left_motor_group, "L");
+        s.rightDrive.motors = dashboard::readMotors(right_motor_group, "R");
+        s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
+        s.centerRight = {"MECHANISMS",
+                         {dashboard::readMotor(arm, "ARM", "Arm"), dashboard::readMotor(intake2, "INTAKE", "Intake"),
+                          dashboard::readMotor(claw, "CLAW", "Claw")}};
+    };
+    // The PID tuner / point planner own the brain screen while active
+    screen.screenBusy = [] { return pidTunerActive || pointPlannerActive; };
+    dashboard::startScreenTask(screen);
 }
 
 void opcontrol() {
