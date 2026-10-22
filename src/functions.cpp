@@ -68,6 +68,12 @@ void jawheadControl() {
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
+  // Lift travel limits in motor degrees from the startup position (see the
+  // tare in initialize()). Left wide open while calibrating: move the lift
+  // to each end by hand/R1/R2, read the angle on the controller, then put
+  // those numbers here.
+  const double LIFT_UPPER_LIMIT = 453.6;
+  const double LIFT_LOWER_LIMIT = -6.6;
 
   // When true, the IMU corrects drivetrain drift during driver control.
   static bool imu_status = false;
@@ -151,9 +157,19 @@ void jawheadControl() {
 
     pros::delay(10);
 
-    if(armLiftUp) {
+    // Show the lift angle on the controller while calibrating the limits.
+    // The controller screen only updates about every 50ms, so print every
+    // 100ms. Row 1 keeps clear of fieldctl's status on row 0.
+    static uint32_t lastLiftPrintMs = 0;
+    double liftPos = lift.get_position();
+    if (nowMs - lastLiftPrintMs >= 100) {
+      lastLiftPrintMs = nowMs;
+      controller.print(1, 0, "Lift: %7.1f   ", liftPos);
+    }
+
+    if (armLiftUp && liftPos < LIFT_UPPER_LIMIT) {
       lift.move_velocity(100);
-    } else if(armLiftDown) {
+    } else if (armLiftDown && liftPos > LIFT_LOWER_LIMIT) {
       lift.move_velocity(-100);
     } else {
       lift.move_velocity(0);
