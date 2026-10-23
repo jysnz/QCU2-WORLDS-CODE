@@ -81,6 +81,9 @@ void jawheadControl() {
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
+  // Upper lift travel limit in motor degrees from the bumper home position
+  // (see homeLift()). The lower end is stopped by the bumper itself.
+  const double LIFT_UPPER_LIMIT = 482.3;
 
   // When true, the IMU corrects drivetrain drift during driver control.
   static bool imu_status = false;
@@ -173,7 +176,12 @@ void jawheadControl() {
       controller.print(1, 0, "Lift: %7.1f   ", lift.get_position());
     }
 
-    if (armLiftUp) {
+    // The bumper is the home position: whenever it's pressed the lift angle is 0.
+    if (liftBumper.get_value()) {
+      lift.tare_position_all();
+    }
+
+    if (armLiftUp && lift.get_position() < LIFT_UPPER_LIMIT) {
       lift.move_velocity(100);
     } else if (armLiftDown && !liftBumper.get_value()) {
       lift.move_velocity(-100);
