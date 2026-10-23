@@ -34,6 +34,7 @@ pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
 pros::Motor claw(8);
 
 pros::adi::Pneumatics clamp('B', false);
+pros::adi::DigitalIn liftBumper('A');
 
 pros::Imu imu(15);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -58,10 +59,7 @@ void initialize() {
     claw.tare_position();
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
-    // Lift angle is counted from wherever it sits at startup, so power on
-    // with the lift fully down - that becomes 0.
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
-    lift.tare_position_all();
 
     dashboard::ScreenConfig screen;
     screen.readMotors = [](dashboard::State &s) {
@@ -88,6 +86,8 @@ void opcontrol() {
     // back to `false`, so the tuner ran unconditionally and jawheadControl()
     // (normal driving) never did. Fixed here -- both now default to `false`
     // and only flip on an actual press.
+    homeLift();
+
     bool enterTuner = false;
     bool enterPlanner = false;
     for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
@@ -110,4 +110,7 @@ void opcontrol() {
         jawheadControl();
     }
 }
-void autonomous() { runAutonomous(); }
+void autonomous() {
+    homeLift();
+    runAutonomous();
+}

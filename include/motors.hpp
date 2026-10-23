@@ -15,6 +15,7 @@ extern pros::Motor claw; // port 8
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics clamp;
+extern pros::adi::DigitalIn liftBumper; // port A
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 extern pros::Imu imu;

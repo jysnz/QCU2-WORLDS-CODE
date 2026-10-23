@@ -61,6 +61,19 @@ void clawControl() {
   }
 }
 
+void homeLift() {
+  const int HOME_VELOCITY = -100;       // negative = counter-clockwise (down)
+  const uint32_t HOME_TIMEOUT_MS = 5000; // give up if the bumper is never hit
+
+  uint32_t startMs = pros::millis();
+  lift.move_velocity(HOME_VELOCITY);
+  while (!liftBumper.get_value() && pros::millis() - startMs < HOME_TIMEOUT_MS) {
+    pros::delay(10);
+  }
+  lift.move_velocity(0); // brake mode HOLD keeps it in place
+  lift.tare_position_all();
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
   const int MAX_SPEED = 127;
@@ -68,12 +81,6 @@ void jawheadControl() {
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
-  // Lift travel limits in motor degrees from the startup position (see the
-  // tare in initialize()). Left wide open while calibrating: move the lift
-  // to each end by hand/R1/R2, read the angle on the controller, then put
-  // those numbers here.
-  const double LIFT_UPPER_LIMIT = 453.6;
-  const double LIFT_LOWER_LIMIT = -6.6;
 
   // When true, the IMU corrects drivetrain drift during driver control.
   static bool imu_status = false;
@@ -161,15 +168,14 @@ void jawheadControl() {
     // The controller screen only updates about every 50ms, so print every
     // 100ms. Row 1 keeps clear of fieldctl's status on row 0.
     static uint32_t lastLiftPrintMs = 0;
-    double liftPos = lift.get_position();
     if (nowMs - lastLiftPrintMs >= 100) {
       lastLiftPrintMs = nowMs;
-      controller.print(1, 0, "Lift: %7.1f   ", liftPos);
+      controller.print(1, 0, "Lift: %7.1f   ", lift.get_position());
     }
 
-    if (armLiftUp && liftPos < LIFT_UPPER_LIMIT) {
+    if (armLiftUp) {
       lift.move_velocity(100);
-    } else if (armLiftDown && liftPos > LIFT_LOWER_LIMIT) {
+    } else if (armLiftDown && !liftBumper.get_value()) {
       lift.move_velocity(-100);
     } else {
       lift.move_velocity(0);
