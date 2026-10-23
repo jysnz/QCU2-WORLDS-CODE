@@ -6,8 +6,6 @@
 
 void drivetrainReset();
 
-void armControl();
-
 void jawheadControl();
 
 void testAllMotorDirections();

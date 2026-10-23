@@ -8,12 +8,9 @@
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
-extern pros::Motor arm;
-extern pros::Motor intake2;
+extern pros::MotorGroup intake2;
 extern pros::MotorGroup lift;
 extern pros::Motor claw;
-extern pros::Motor bunchy;
-extern pros::Motor bunchArm;
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics clamp;

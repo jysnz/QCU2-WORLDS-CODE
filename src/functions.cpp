@@ -87,10 +87,7 @@ void testAllMotorDirections() {
   testMotorGroupDirections("LEFT DRIVE", left_motor_group, y);
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
   testMotorGroupDirections("LIFT", lift, y);
-  testMotorsDirections("INTAKE", {{"intake2", &intake2}}, y);
-  testMotorsDirections("ARM", {{"arm", &arm}}, y);
-  testMotorsDirections("BUNCH", {{"bunchy", &bunchy}, {"bunchArm", &bunchArm}},
-                        y);
+  testMotorGroupDirections("INTAKE", intake2, y);
 }
 
 void drivetrainReset(){
@@ -98,22 +95,6 @@ void drivetrainReset(){
   right_motor_group.tare_position();
 }
 
-// Hold UP to spin the arm clockwise, hold DOWN to spin it counter-clockwise.
-// Releasing both stops it (brake mode HOLD keeps it in place).
-void armControl() {
-  const int ARM_SPEED = 200; // green gearset max velocity (rpm)
-
-  bool armClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
-  bool armCounterClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
-
-  if (armClockwiseHeld) {
-    arm.move_velocity(ARM_SPEED);
-  } else if (armCounterClockwiseHeld) {
-    arm.move_velocity(-ARM_SPEED);
-  } else {
-    arm.move_velocity(0);
-  }
-}
 
 // Tap L1 to spin the claw clockwise until it stalls (e.g. against a hardstop
 // or a gripped object), then hold there. Hold L2 to spin it counter-clockwise
@@ -187,7 +168,6 @@ void jawheadControl() {
 
   while (true) {
     bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-    bool intakeBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     uint32_t nowMs = pros::millis();
 
     bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
@@ -218,7 +198,6 @@ void jawheadControl() {
       }
     }
 
-    armControl();
     clawControl();
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
@@ -261,8 +240,6 @@ void jawheadControl() {
 
     if (intakeForward) {
       intake2.move_velocity(-600);
-    } else if (intakeBackward) {
-      intake2.move_velocity(600);
     } else {
       intake2.move_velocity(0);
     }
