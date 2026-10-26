@@ -1,7 +1,7 @@
 {
   "py/object": "pros.conductor.project.Project",
   "py/state": {
-    "project_name": "24Calibration",
+    "project_name": "debicalibration",
     "target": "v5",
     "templates": {
       "LemLib": {
