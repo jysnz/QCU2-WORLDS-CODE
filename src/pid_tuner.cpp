@@ -484,6 +484,8 @@ const float kAngularSettleBand = 1.5f; // degrees
 const float kLateralSettleBand = 1.0f; // inches
 const int kSettleHoldMs = 250;
 const int kSampleDelayMs = 20;
+// Pause between the legs of a sweep so the robot comes to rest before the next move.
+const int kSweepPauseMs = 1000;
 
 // Zeroes the pose before a run: x, y and heading all start at 0. This is
 // the sensor reset lemlib supports -- taring the rotation sensors / IMU
@@ -807,6 +809,17 @@ static void runSweep(bool angular) {
            res.finalError, res.durationMs);
     controller.rumble(".");
     drawFooter(spec.label, res);
+
+    // Hold still between legs (not after the last one); a stop request cuts the pause short.
+    if (i < kSweepLegs - 1 && !cancelled) {
+      for (int waited = 0; waited < kSweepPauseMs; waited += kSampleDelayMs) {
+        if (remoteStopRequested()) {
+          cancelled = true;
+          break;
+        }
+        pros::delay(kSampleDelayMs);
+      }
+    }
   }
 
   printf("SWEEP %s\n", cancelled ? "CANCELLED" : "DONE");
@@ -836,7 +849,10 @@ static void calibrateForTuning() {
   printf("PID TUNER CALIBRATING\n");
 
   chassis.calibrate();
-  chassis.setPose(0, 0, 0);
+  // Wait out an IMU that is still settling (its rotation reads infinite until done).
+  for (int i = 0; i < 250 && imu.is_calibrating(); i++)
+    pros::delay(20);
+  resetPoseAfterCalibration();
 
   calibrating = false;
   printf("PID TUNER CALIBRATED\n");

@@ -18,23 +18,33 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
-pros::Motor intake1(16, pros::MotorGears::green);
-pros::Motor intake2(17, pros::MotorGears::green);
-pros::Motor lift1(18, pros::MotorGears::green);
-pros::Motor lift2(19, pros::MotorGears::green);
-pros::Motor bunchy(14, pros::MotorGears::green);
-pros::Motor bunchArm(13, pros::MotorGears::red);
+pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
-pros::adi::Pneumatics clamp('A', false);
+pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
+pros::Motor claw(8);
 
-pros::Imu imu(15);
+pros::adi::Pneumatics clamp('B', false);
+pros::adi::DigitalIn liftBumper('A');
+
+pros::Imu imu(16);
+pros::Rotation verticalRotation(15);
+pros::Rotation horizontalRotation(14);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
-lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
+// Offsets in inches from the tracking center (vertical: left of center is negative,
+// horizontal: behind center is negative)
+constexpr float VERTICAL_WHEEL_DIAMETER = 2.948f;   // effective diameter in inches, calibrated from 48in pushes
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2.885f; // effective diameter in inches, calibrated from 48in pushes
+lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, -0.04);
+lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, -1.472);
+// Set to false to run odometry on the IMU + drive motors alone (to tell whether a problem is
+// the tracking wheels or something else).
+constexpr bool USE_TRACKING_WHEELS = true;
+lemlib::OdomSensors sensors(USE_TRACKING_WHEELS ? &verticalTracking : nullptr, nullptr,
+                            USE_TRACKING_WHEELS ? &horizontalTracking : nullptr, nullptr, &imu);
 lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
 // Exit conditions (1 deg for 100 ms / 3 deg for 500 ms) end a turn once it
 // has settled -- with them at 0 every turn ran for its whole timeout and
@@ -49,14 +59,17 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // initialize
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
-    lift1.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    lift2.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-
-    lift1.set_current_limit(2000);
-    lift2.set_current_limit(2000);
-    bunchArm.set_current_limit(1500); 
+    claw.tare_position();
+    claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+    lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
 
     chassis.calibrate();
+    // calibrate() can return while the IMU is still settling (its rotation reads infinite until
+    // it's done, which turns the odometry pose into NaN). Wait it out (up to 5 s).
+    for (int i = 0; i < 250 && imu.is_calibrating(); i++)
+        pros::delay(20);
+    resetPoseAfterCalibration();
 
     static pros::Task screen_task([]() {
         const int BG_DARK = 0x0A0A0F;
@@ -152,7 +165,7 @@ void initialize() {
             // Each section = a label line + a row of tiles.
             // Drivetrain sections show 5 tiles/row; the rest show 2 tiles/row.
             const int tempRowHeight = 66;
-            const int numTempRows = 5; // LEFT drivetrain, RIGHT drivetrain, INTAKE, LIFT, BUNCH
+            const int numTempRows = 4; // LEFT drivetrain, RIGHT drivetrain, LIFT, CLAW
             int tempsContentHeight = numTempRows * tempRowHeight;
             int minTempsScroll = (tempsContentHeight > 160) ? -(tempsContentHeight - 160) : 0;
             if (tempsScroll > 0) tempsScroll = 0;
@@ -161,14 +174,12 @@ void initialize() {
             // ── Gather live data once per frame ──
             std::vector<double> leftTemps = left_motor_group.get_temperature_all();
             std::vector<double> rightTemps = right_motor_group.get_temperature_all();
-            std::vector<double> intakeTemps = {intake1.get_temperature(), intake2.get_temperature()};
-            std::vector<double> liftTemps = {lift1.get_temperature(), lift2.get_temperature()};
-            std::vector<double> bunchTemps = {bunchy.get_temperature(), bunchArm.get_temperature()};
+            std::vector<double> liftTemps = lift.get_temperature_all();
+            std::vector<double> clawTemps = {claw.get_temperature()};
             std::vector<std::int8_t> leftPorts = left_motor_group.get_port_all();
             std::vector<std::int8_t> rightPorts = right_motor_group.get_port_all();
-            std::vector<std::int8_t> intakePorts = {intake1.get_port(), intake2.get_port()};
-            std::vector<std::int8_t> liftPorts = {lift1.get_port(), lift2.get_port()};
-            std::vector<std::int8_t> bunchPorts = {bunchy.get_port(), bunchArm.get_port()};
+            std::vector<std::int8_t> liftPorts = lift.get_port_all();
+            std::vector<std::int8_t> clawPorts = {claw.get_port()};
 
             int imuNow = (int)(imu.get_heading() * 10);
             int batteryNow = (int)pros::battery::get_capacity();
@@ -205,12 +216,10 @@ void initialize() {
             std::vector<std::int32_t> rightOverCurrent = right_motor_group.is_over_current_all();
             checkGroupStress("L", leftOverTemp, leftOverCurrent, leftPorts);
             checkGroupStress("R", rightOverTemp, rightOverCurrent, rightPorts);
-            checkSingleStress("Intake1", intake1);
-            checkSingleStress("Intake2", intake2);
-            checkSingleStress("Lift1", lift1);
-            checkSingleStress("Lift2", lift2);
-            checkSingleStress("Bunch", bunchy);
-            checkSingleStress("BunchArm", bunchArm);
+            std::vector<std::int32_t> liftOverTemp = lift.is_over_temp_all();
+            std::vector<std::int32_t> liftOverCurrent = lift.is_over_current_all();
+            checkGroupStress("Lift", liftOverTemp, liftOverCurrent, liftPorts);
+            checkSingleStress("Claw", claw);
 
             bool isStressed = !stressedMotors.empty();
 
@@ -231,9 +240,8 @@ void initialize() {
             std::vector<int> tempsNow;
             for (double t : leftTemps) tempsNow.push_back((int)(t * 2));  // 0.5C resolution
             for (double t : rightTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : intakeTemps) tempsNow.push_back((int)(t * 2));
             for (double t : liftTemps) tempsNow.push_back((int)(t * 2));
-            for (double t : bunchTemps) tempsNow.push_back((int)(t * 2));
+            for (double t : clawTemps) tempsNow.push_back((int)(t * 2));
 
             // Touch-driven changes (tab/scroll/selection) redraw instantly. Live telemetry
             // (motor temps, IMU heading, battery) is throttled to a few times a second instead —
@@ -338,14 +346,11 @@ void initialize() {
                 // Section 2: RIGHT drivetrain motors (5 tiles/row)
                 drawSection(yBase + tempRowHeight, "RIGHT DRIVETRAIN", ACCENT_ORANGE, rightTemps, rightPorts, "R", 5);
 
-                // Section 3: INTAKE motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 2, "INTAKE", ACCENT_GREEN, intakeTemps, intakePorts, "Intake Motor", 2);
+                // Section 3: LIFT motors (2 tiles/row, named)
+                drawSection(yBase + tempRowHeight * 2, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 2);
 
-                // Section 4: LIFT motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 3, "LIFT", ACCENT_CYAN, liftTemps, liftPorts, "Lift", 2);
-
-                // Section 5: BUNCH motors (2 tiles/row, named)
-                drawSection(yBase + tempRowHeight * 4, "BUNCH", ACCENT_ORANGE, bunchTemps, bunchPorts, "Bunch", 2);
+                // Section 4: CLAW motor (single tile, named)
+                drawSection(yBase + tempRowHeight * 3, "CLAW", ACCENT_GREEN, clawTemps, clawPorts, "Claw", 2);
             }
 
             // ── Static Overlays (Drawn last to prevent overlap) ──
@@ -430,6 +435,10 @@ void opcontrol() {
     // to a loop that owns the rest of driver control and never returns.
     // Only tapping DRIVE returns here, falling through to normal driving.
     driverMenuControl();
+    homeLift();
     jawheadControl();
 }
-void autonomous() { runAutonomous(); }
+void autonomous() {
+    homeLift();
+    runAutonomous();
+}

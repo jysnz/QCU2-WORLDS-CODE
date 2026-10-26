@@ -1321,7 +1321,7 @@ static void runPlan(int only) {
 // temperatures without leaving the menu.
 static const int kTempRowH = 66;   // one section: its label plus a row of tiles
 static const int kTempTileH = 46;
-static const int kTempSections = 5;
+static const int kTempSections = 4;
 static int tempsScroll = 0;        // pixels, <= 0 (content scrolled up)
 
 struct TempSection {
@@ -1331,27 +1331,24 @@ struct TempSection {
   int tilesPerRow;
 };
 
-// The five groups, in the order the HUD lists them.
+// The four groups, in the order the HUD lists them.
 static void collectTemps(std::vector<double> temps[kTempSections],
                          std::vector<std::int8_t> ports[kTempSections]) {
   temps[0] = left_motor_group.get_temperature_all();
   ports[0] = left_motor_group.get_port_all();
   temps[1] = right_motor_group.get_temperature_all();
   ports[1] = right_motor_group.get_port_all();
-  temps[2] = {intake1.get_temperature(), intake2.get_temperature()};
-  ports[2] = {intake1.get_port(), intake2.get_port()};
-  temps[3] = {lift1.get_temperature(), lift2.get_temperature()};
-  ports[3] = {lift1.get_port(), lift2.get_port()};
-  temps[4] = {bunchy.get_temperature(), bunchArm.get_temperature()};
-  ports[4] = {bunchy.get_port(), bunchArm.get_port()};
+  temps[2] = lift.get_temperature_all();
+  ports[2] = lift.get_port_all();
+  temps[3] = {claw.get_temperature()};
+  ports[3] = {claw.get_port()};
 }
 
 static const TempSection kTempSectionInfo[kTempSections] = {
     {"LEFT DRIVETRAIN", ui::CYAN, "L", 5},
     {"RIGHT DRIVETRAIN", ui::ORANGE, "R", 5},
-    {"INTAKE", ui::GREEN, "Intake", 2},
     {"LIFT", ui::CYAN, "Lift", 2},
-    {"BUNCH", ui::ORANGE, "Bunch", 2},
+    {"CLAW", ui::GREEN, "Claw", 2},
 };
 
 // Cyan up to 45C, orange to 55C, red past it -- the HUD's thresholds.

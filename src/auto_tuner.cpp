@@ -516,6 +516,8 @@ static void runSweep(const char *label, RunMetrics *legs) {
     bool firstSample = true;
 
     printf("AT|LEG|%d|%s|%.2f|%.2f|%d\n", i, spec.label, target, startVal, spec.timeoutMs);
+    printf("AUTO TUNER: leg %d target %.2f start %.2f inMotion %d kP %.3f\n", i, target, startVal,
+           (int)chassis.isInMotion(), (double)gains().gains[0]);
     while (chassis.isInMotion()) {
       pollAbort();
       if (stopRequested) {
@@ -790,8 +792,26 @@ static void calibrateBeforeTune() {
   setMsg("CALIBRATING -- keep the robot still (~3 s)");
   controller.print(0, 0, "CALIBRATING...  ");
   chassis.calibrate();
-  chassis.setPose(0, 0, 0);
+  // calibrate() can return while the IMU is still settling; its rotation reads infinite until
+  // it's done, which turns the whole pose into NaN. Wait it out (up to 5 s).
+  for (int i = 0; i < 250 && imu.is_calibrating(); i++)
+    pros::delay(20);
+  resetPoseAfterCalibration();
   controller.rumble("-");
+}
+
+// The tuner drives off the chassis pose, so a drivetrain motor, the IMU or a tracking
+// wheel that isn't answering leaves the robot standing still (or the pose invalid).
+// Returns the name of the first one that doesn't answer, or nullptr if all do.
+static const char *findSensorFault() {
+  if (std::isinf(left_motor_group.get_position())) return "LEFT DRIVE (ports 3,4)";
+  if (std::isinf(right_motor_group.get_position())) return "RIGHT DRIVE (ports 1,2)";
+  // Odometry takes its heading from get_rotation(), which is infinite when the IMU is missing or
+  // failed to calibrate -- get_heading() can still read a harmless 0.0 in that case.
+  if (!std::isfinite(imu.get_rotation())) return "IMU (port 16, failed to calibrate or not found)";
+  if (verticalRotation.get_position() == PROS_ERR) return "VERTICAL ROTATION (port 15)";
+  if (horizontalRotation.get_position() == PROS_ERR) return "HORIZONTAL ROTATION (port 14)";
+  return nullptr;
 }
 
 static void runAutoTune() {
@@ -808,6 +828,38 @@ static void runAutoTune() {
   controller.rumble("--");
 
   calibrateBeforeTune();
+
+  if (const char *fault = findSensorFault()) {
+    st.phase = Phase::FAILED;
+    setMsg("FAILED -- %s not responding, check its port and cable", fault);
+    controller.rumble("---");
+    st.running = false;
+    drawButtons();
+    drawInfoPanel();
+    sendAutoState(true);
+    return;
+  }
+
+  // Let the odometry task run a few cycles, then make sure the pose is a real number: a
+  // NaN pose makes every motion output NaN, so the motors never move.
+  pros::delay(200);
+  lemlib::Pose p0 = chassis.getPose();
+  printf("AUTO TUNER: pose after calibrate x=%.3f y=%.3f theta=%.3f | imu %.2f | vert %.1f horiz %.1f\n",
+         p0.x, p0.y, p0.theta, imu.get_heading(), verticalRotation.get_position() / 100.0,
+         horizontalRotation.get_position() / 100.0);
+  if (!std::isfinite(p0.x) || !std::isfinite(p0.y) || !std::isfinite(p0.theta)) {
+    st.phase = Phase::FAILED;
+    setMsg("NaN pose t%.1f; imu rot%.1f hd%.1f st%d cal%d; v%.0f h%.0f", p0.theta,
+           imu.get_rotation(), imu.get_heading(), (int)imu.get_status(),
+           (int)imu.is_calibrating(), verticalRotation.get_position() / 100.0,
+           horizontalRotation.get_position() / 100.0);
+    controller.rumble("---");
+    st.running = false;
+    drawButtons();
+    drawInfoPanel();
+    sendAutoState(true);
+    return;
+  }
 
   RunMetrics afterD;
   bool ok = runPPhase() && runDPhase(afterD) && runIPhase(afterD);
