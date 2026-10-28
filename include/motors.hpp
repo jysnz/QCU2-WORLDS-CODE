@@ -15,11 +15,10 @@ extern pros::MotorGroup right_motor_group;
 
 // ─── Subsystem motors ────────────────────────────────────────────────────────
 extern pros::MotorGroup lift; // ports 5 / 6
-extern pros::Motor claw; // port 8
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
-extern pros::adi::Pneumatics clamp;
-extern pros::adi::Pneumatics clamp2; // port C
+extern pros::adi::Pneumatics claw;  // ADI B, on = extended
+extern pros::adi::Pneumatics claw2; // ADI C, on = extended
 extern pros::adi::DigitalIn liftBumper; // port A
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────

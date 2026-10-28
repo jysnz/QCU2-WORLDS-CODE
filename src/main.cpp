@@ -31,10 +31,9 @@ pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
 pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
-pros::Motor claw(8);
 
-pros::adi::Pneumatics clamp('B', true);
-pros::adi::Pneumatics clamp2('C', true);
+pros::adi::Pneumatics claw('B', true);
+pros::adi::Pneumatics claw2('C', true);
 pros::adi::DigitalIn liftBumper('A');
 
 // What the IMU reads after the robot is turned a true 360 degrees (356.05 measured on the
@@ -77,8 +76,6 @@ void initialize() {
     for (int i = 0; i < 250 && imu.is_calibrating(); i++)
         pros::delay(20);
     resetPoseAfterCalibration();
-    claw.tare_position();
-    claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
 
@@ -87,7 +84,6 @@ void initialize() {
         s.leftDrive.motors = dashboard::readMotors(left_motor_group, "L");
         s.rightDrive.motors = dashboard::readMotors(right_motor_group, "R");
         s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
-        s.centerRight = {"MECHANISMS", {dashboard::readMotor(claw, "CLAW", "Claw")}};
     };
     // The PID tuner / point planner own the brain screen while active
     screen.screenBusy = [] { return pidTunerActive || pointPlannerActive; };

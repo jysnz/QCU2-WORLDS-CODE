@@ -11,56 +11,6 @@
 #include <vector>
 
 
-// Hold L1 to close the claw (counter-clockwise); releasing L1 stops it and it
-// stays closed. Tap L2 to open the claw (clockwise) until it stalls against the
-// hardstop, then hold there. Pressing L1 also cancels an L2 run.
-void clawControl() {
-  const int CLAW_SPEED = 200;               // green gearset max velocity (rpm)
-  const uint32_t CLAW_STALL_GRACE_MS = 250; // ignore stall while spinning up
-  const double CLAW_STALL_VELOCITY = 5.0;   // rpm - below this counts as stalled
-  const int CLAW_STALL_TICKS = 5;           // consecutive slow ticks to confirm
-
-  static bool wasL2Held = false;
-  static bool openRunning = false;
-  static uint32_t openStartMs = 0;
-  static int slowTicks = 0;
-
-  bool closeHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
-  bool openHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
-  bool openTapped = openHeld && !wasL2Held;
-  wasL2Held = openHeld;
-  uint32_t nowMs = pros::millis();
-
-  if (closeHeld) {
-    openRunning = false;
-    claw.move_velocity(-CLAW_SPEED);
-    return;
-  }
-
-  if (openTapped && !openRunning) {
-    openRunning = true;
-    openStartMs = nowMs;
-    slowTicks = 0;
-  }
-
-  if (openRunning) {
-    claw.move_velocity(CLAW_SPEED);
-    if (nowMs - openStartMs >= CLAW_STALL_GRACE_MS &&
-        std::abs(claw.get_actual_velocity()) < CLAW_STALL_VELOCITY) {
-      slowTicks++;
-    } else {
-      slowTicks = 0;
-    }
-    if (slowTicks >= CLAW_STALL_TICKS) {
-      openRunning = false;
-    }
-  }
-
-  if (!openRunning) {
-    claw.move_velocity(0); // brake mode HOLD keeps it in place
-  }
-}
-
 void homeLift() {
   const int HOME_VELOCITY = -100;       // negative = counter-clockwise (down)
   const uint32_t HOME_TIMEOUT_MS = 5000; // give up if the bumper is never hit
@@ -92,12 +42,9 @@ void jawheadControl() {
   static bool wasDownHeld = false;
   static bool driveReversed = false;
   static uint32_t lastReverseToggleMs = 0;
-  static bool wasBHeld = false;
   static bool wasAHeld = false;
-  static bool clampsOpen = false;
-  static uint32_t lastClampsToggleMs = 0;
-  static bool clampOn = false;
-  static uint32_t lastClampToggleMs = 0;
+  static bool clawsOn = true; // both claws are built extended (on) in main.cpp
+  static uint32_t lastClawToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
 
   while (true) {
@@ -109,7 +56,7 @@ void jawheadControl() {
 
     // Tap DOWN to reverse which way the drivetrain drives (flips "forward"
     // on the joystick to drive the robot backward, and vice versa).
-    // Debounced (like the clamp below) so switch bounce on the physical
+    // Debounced (like the claw toggle below) so switch bounce on the physical
     // button can't register as two rapid taps wthat cancel each other out.
     bool driveReverseToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool driveReverseToggleTapped = driveReverseToggleHeld && !wasDownHeld;
@@ -119,41 +66,22 @@ void jawheadControl() {
       driveReversed = !driveReversed;
     }
 
-    // Tap B to switch the clamp cleanly on/off (edge-detected so holding B
-    // doesn't rapid-fire clamp.toggle() every loop and leave it in a
-    // random state).
-    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
-    bool clampToggleTapped = clampToggleHeld && !wasBHeld;
-    wasBHeld = clampToggleHeld;
-    if (clampToggleTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastClampToggleMs = nowMs;
-      clampOn = !clampOn;
-      if (clampOn) {
-        clamp.extend();
+    // Tap A to switch claw and claw2 on (extend) and off (retract) together.
+    // Edge-detected (so holding A doesn't rapid-fire) and debounced like the DOWN button above.
+    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+    bool clawToggleTapped = clawToggleHeld && !wasAHeld;
+    wasAHeld = clawToggleHeld;
+    if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {
+      lastClawToggleMs = nowMs;
+      clawsOn = !clawsOn;
+      if (clawsOn) {
+        claw.extend();
+        claw2.extend();
       } else {
-        clamp.retract();
+        claw.retract();
+        claw2.retract();
       }
     }
-
-    // Tap A: clamp and clamp2 both open (retract). Tap A again: clamp stays open, clamp2
-    // closes (extend). Then it cycles. Edge-detected and debounced like the buttons above.
-    // clampOn follows the clamp (on = extended) so B keeps toggling from the right state.
-    bool clampsToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
-    bool clampsToggleTapped = clampsToggleHeld && !wasAHeld;
-    wasAHeld = clampsToggleHeld;
-    if (clampsToggleTapped && (nowMs - lastClampsToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastClampsToggleMs = nowMs;
-      clampsOpen = !clampsOpen;
-      clamp.extend();
-      clampOn = false;
-      if (clampsOpen) {
-        clamp2.extend();
-      } else {
-        clamp2.retract();
-      }
-    }
-
-    clawControl();
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
