@@ -93,6 +93,9 @@ void jawheadControl() {
   static bool driveReversed = false;
   static uint32_t lastReverseToggleMs = 0;
   static bool wasBHeld = false;
+  static bool wasAHeld = false;
+  static bool clampsOpen = false;
+  static uint32_t lastClampsToggleMs = 0;
   static bool clampOn = false;
   static uint32_t lastClampToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
@@ -129,6 +132,24 @@ void jawheadControl() {
         clamp.extend();
       } else {
         clamp.retract();
+      }
+    }
+
+    // Tap A: clamp and clamp2 both open (retract). Tap A again: clamp stays open, clamp2
+    // closes (extend). Then it cycles. Edge-detected and debounced like the buttons above.
+    // clampOn follows the clamp (on = extended) so B keeps toggling from the right state.
+    bool clampsToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+    bool clampsToggleTapped = clampsToggleHeld && !wasAHeld;
+    wasAHeld = clampsToggleHeld;
+    if (clampsToggleTapped && (nowMs - lastClampsToggleMs >= BUTTON_DEBOUNCE_MS)) {
+      lastClampsToggleMs = nowMs;
+      clampsOpen = !clampsOpen;
+      clamp.extend();
+      clampOn = false;
+      if (clampsOpen) {
+        clamp2.extend();
+      } else {
+        clamp2.retract();
       }
     }
 

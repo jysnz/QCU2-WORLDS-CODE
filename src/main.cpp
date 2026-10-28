@@ -33,15 +33,31 @@ pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
 pros::Motor claw(8);
 
-pros::adi::Pneumatics clamp('B', false);
+pros::adi::Pneumatics clamp('B', true);
+pros::adi::Pneumatics clamp2('C', true);
 pros::adi::DigitalIn liftBumper('A');
 
-pros::Imu imu(15);
+// What the IMU reads after the robot is turned a true 360 degrees (356.05 measured on the
+// 15scrimcalibration robot). 360.0 = no correction.
+constexpr double INERTIAL_SCALE = 356.05;
+ScaledImu imu(16, INERTIAL_SCALE);
+pros::Rotation verticalRotation(15);
+pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing right reads positive
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
-lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
+// Offsets in inches from the tracking center (vertical: left of center is negative,
+// horizontal: behind center is negative)
+constexpr float VERTICAL_WHEEL_DIAMETER = 2;   // effective diameter in inches
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2; // effective diameter in inches
+lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, -0.04);
+lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, -1.472);
+// Set to false to run odometry on the IMU + drive motors alone (to tell whether a problem is
+// the tracking wheels or something else).
+constexpr bool USE_TRACKING_WHEELS = true;
+lemlib::OdomSensors sensors(USE_TRACKING_WHEELS ? &verticalTracking : nullptr, nullptr,
+                            USE_TRACKING_WHEELS ? &horizontalTracking : nullptr, nullptr, &imu);
 lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
 lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
@@ -56,6 +72,11 @@ void initialize() {
     fieldctl::setVexnet(VEXNET_ENABLED);
     dashboard::showSplash("Calibrating IMU...", "Keep the robot still");
     chassis.calibrate();
+    // calibrate() can return while the IMU is still settling (its rotation reads infinite until
+    // it's done, which turns the odometry pose into NaN). Wait it out (up to 5 s).
+    for (int i = 0; i < 250 && imu.is_calibrating(); i++)
+        pros::delay(20);
+    resetPoseAfterCalibration();
     claw.tare_position();
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
