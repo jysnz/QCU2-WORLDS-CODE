@@ -18,6 +18,7 @@
 #include "driver_menu.hpp"
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
+#include "odom_setup.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -625,7 +626,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[8] = {
+static const GridItem kHomeItems[9] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -634,8 +635,9 @@ static const GridItem kHomeItems[8] = {
     {"MOTOR TEMPS"},
     {"ROBOT POSE"},
     {"AUTO PID TUNE"},
+    {"ODOM SETUP"},
 };
-static const int kHomeItemCount = 8;
+static const int kHomeItemCount = 9;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -2420,6 +2422,9 @@ void driverMenuControl() {
         } else if (hit == 7) {
           autoTunerControl(); // like PID TUNING: returns on its own BACK;
                               // sends RUI|AUTO_TUNER lines meanwhile
+          goHome();
+        } else if (hit == 8) {
+          odomSetupControl(); // returns on its own BACK
           goHome();
         }
         break;

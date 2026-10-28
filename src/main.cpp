@@ -27,17 +27,20 @@ pros::Motor claw(8);
 pros::adi::Pneumatics clamp('B', false);
 pros::adi::DigitalIn liftBumper('A');
 
-pros::Imu imu(16);
+// What the IMU reads after the robot is turned a true 360 degrees (SPIN CAL on the ODOM SETUP
+// screen measures it). 360.0 = no correction.
+constexpr double INERTIAL_SCALE = 356.05;
+ScaledImu imu(16, INERTIAL_SCALE);
 pros::Rotation verticalRotation(15);
-pros::Rotation horizontalRotation(14);
+pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing right reads positive
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
-lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
+lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 350, 2);
 // Offsets in inches from the tracking center (vertical: left of center is negative,
 // horizontal: behind center is negative)
-constexpr float VERTICAL_WHEEL_DIAMETER = 2.948f;   // effective diameter in inches, calibrated from 48in pushes
-constexpr float HORIZONTAL_WHEEL_DIAMETER = 2.885f; // effective diameter in inches, calibrated from 48in pushes
+constexpr float VERTICAL_WHEEL_DIAMETER = 2;   // effective diameter in inches, calibrated from 48in pushes
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2; // effective diameter in inches, calibrated from 48in pushes
 lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, -0.04);
 lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, -1.472);
 // Set to false to run odometry on the IMU + drive motors alone (to tell whether a problem is
