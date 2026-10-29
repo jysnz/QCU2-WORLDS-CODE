@@ -198,10 +198,10 @@ static const TestSpec angularSweep[kSweepLegs] = {{"turn45", 45, 1200},
                                                   {"turn90", 90, 1500},
                                                   {"turn180", 180, 2000},
                                                   {"return0", 0, 1800, true}};
-static const TestSpec lateralSweep[kSweepLegs] = {{"drive12", 12, 1500},
-                                                  {"drive24", 24, 2000},
-                                                  {"drive48", 48, 3000},
-                                                  {"return0", 0, 3500, true}};
+static const TestSpec lateralSweep[kSweepLegs] = {{"drive6", 6, 1200},
+                                                  {"drive12", 12, 1500},
+                                                  {"drive18", 18, 1800},
+                                                  {"return0", 0, 2800, true}};
 
 struct TestResult {
   float overshoot = 0;
@@ -714,22 +714,13 @@ static void runSweep(bool angular) {
     if (angular) {
       chassis.turnToHeading(target, spec.timeoutMs, {}, true);
     } else {
-      // Chain lateral legs into one continuous drive instead of fully
-      // stopping at each waypoint: every leg except the final
-      // return-to-start exits early (minSpeed + earlyExitRange) once
-      // within kLateralSettleBand of its target, so the chassis carries
-      // speed straight into the next leg's moveToPoint call rather than
-      // decelerating to a stop first. The return leg still fully settles,
-      // since it needs to land exactly back at the start -- and it drives
-      // there backwards (forwards = false) instead of turning 180 deg to
-      // face the point first, since the point is directly behind it.
+      // Every leg fully settles (no early exit / carried speed) so the pause
+      // between legs is a real stop. The return leg drives backwards
+      // (forwards = false) instead of turning 180 deg to face the point
+      // first, since the point is directly behind it.
       lemlib::MoveToPointParams params;
-      if (i < kSweepLegs - 1) {
-        params.minSpeed = 60;
-        params.earlyExitRange = kLateralSettleBand;
-      } else {
+      if (i == kSweepLegs - 1)
         params.forwards = false;
-      }
       chassis.moveToPoint(0, target, spec.timeoutMs, params, true);
     }
     // See runTest: isInMotion() can briefly read false right after an

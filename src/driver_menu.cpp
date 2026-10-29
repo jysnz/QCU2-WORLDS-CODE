@@ -19,6 +19,7 @@
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "odom_setup.hpp"
+#include "distance_diag.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -626,7 +627,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[9] = {
+static const GridItem kHomeItems[10] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -636,8 +637,9 @@ static const GridItem kHomeItems[9] = {
     {"ROBOT POSE"},
     {"AUTO PID TUNE"},
     {"ODOM SETUP"},
+    {"DISTANCE"},
 };
-static const int kHomeItemCount = 9;
+static const int kHomeItemCount = 10;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -2425,6 +2427,9 @@ void driverMenuControl() {
           goHome();
         } else if (hit == 8) {
           odomSetupControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 9) {
+          distanceDiagControl(); // returns on its own BACK
           goHome();
         }
         break;

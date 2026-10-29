@@ -809,8 +809,8 @@ class _FakeLink:
         if sweep:
             specs = ([("turn45", 45, 1200), ("turn90", 90, 1500), ("turn180", 180, 2000),
                       ("return0", 0, 1800)] if angular else
-                     [("drive12", 12, 1500), ("drive24", 24, 2000), ("drive48", 48, 3000),
-                      ("return0", 0, 3500)])
+                     [("drive6", 6, 1200), ("drive12", 12, 1500), ("drive18", 18, 1800),
+                      ("return0", 0, 2800)])
         else:
             specs = [([("turn90", 90, 2500), ("turn180", 180, 3000), ("turn0", 0, 2500)]
                       if angular else

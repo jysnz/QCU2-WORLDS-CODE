@@ -84,10 +84,10 @@ static const LegSpec kAngularSweep[kSweepLegs] = {{"turn45", 45, 1200},
                                                   {"turn90", 90, 1500},
                                                   {"turn180", 180, 2000},
                                                   {"return0", 0, 1800, true}};
-static const LegSpec kLateralSweep[kSweepLegs] = {{"drive12", 12, 1500},
-                                                  {"drive24", 24, 2000},
-                                                  {"drive48", 48, 3000},
-                                                  {"return0", 0, 3500, true}};
+static const LegSpec kLateralSweep[kSweepLegs] = {{"drive6", 6, 1200},
+                                                  {"drive12", 12, 1500},
+                                                  {"drive18", 18, 1800},
+                                                  {"return0", 0, 2800, true}};
 
 // Per-controller limits and step rules.
 struct ModeParams {
@@ -409,6 +409,10 @@ static void pollAbort() {
 // finished. Each leg is sampled at kSampleDelayMs, plotted in its own time
 // slot on the brain graph and streamed to the laptop (AT|LEG / AT|S /
 // AT|END per leg). Fills `legs` with each leg's metrics.
+// Pause between the legs of a sweep so the robot comes to rest before the next move
+// (same as the manual tuner's kSweepPauseMs).
+static const int kSweepPauseMs = 1000;
+
 static void runSweep(const char *label, RunMetrics *legs) {
   const ModeParams &mp = params();
   const bool angular = st.angular;
@@ -488,16 +492,11 @@ static void runSweep(const char *label, RunMetrics *legs) {
     if (angular) {
       chassis.turnToHeading(target, spec.timeoutMs, {}, true);
     } else {
-      // Chain the lateral legs like the manual sweep: every leg but the
-      // return exits early once within the band so the chassis carries
-      // speed into the next; the return fully settles, driving backwards.
+      // Every leg fully settles (no early exit / carried speed) so the pause
+      // between legs is a real stop; the return drives backwards.
       lemlib::MoveToPointParams params;
-      if (i < kSweepLegs - 1) {
-        params.minSpeed = 60;
-        params.earlyExitRange = kLateralSettleBand;
-      } else {
+      if (i == kSweepLegs - 1)
         params.forwards = false;
-      }
       chassis.moveToPoint(0, target, spec.timeoutMs, params, true);
     }
     // isInMotion() can briefly read false right after an async motion is
@@ -584,6 +583,20 @@ static void runSweep(const char *label, RunMetrics *legs) {
     m.durationMs = (int)(pros::millis() - start);
     printf("AT|END|%d|%.2f|%d|%.2f|%d|%d|%d|%s\n", i, m.overshoot, m.settleMs, m.finalError,
            m.durationMs, m.crossings, m.reversals, kVerdictNames[classifyLeg(m)]);
+
+    // Hold still between legs (not after the last one), like the manual
+    // sweep; a stop request cuts the pause short.
+    if (i < kSweepLegs - 1 && !cancelled) {
+      for (int waited = 0; waited < kSweepPauseMs; waited += kSampleDelayMs) {
+        pollAbort();
+        if (stopRequested) {
+          cancelled = true;
+          break;
+        }
+        sendAutoState();
+        pros::delay(kSampleDelayMs);
+      }
+    }
   }
 }
 
