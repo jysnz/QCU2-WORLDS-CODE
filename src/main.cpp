@@ -58,7 +58,10 @@ constexpr bool USE_TRACKING_WHEELS = true;
 lemlib::OdomSensors sensors(USE_TRACKING_WHEELS ? &verticalTracking : nullptr, nullptr,
                             USE_TRACKING_WHEELS ? &horizontalTracking : nullptr, nullptr, &imu);
 lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
+// Exit conditions (1 deg for 100 ms / 3 deg for 500 ms) end a turn once it
+// has settled -- with them at 0 every turn ran for its whole timeout and
+// kD kept twitching the robot around the target the entire time.
+lemlib::ControllerSettings angular_controller(4, 0.001, 43, 0, 1, 100, 3, 500, 0);
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 
