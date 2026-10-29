@@ -68,7 +68,7 @@ void jawheadControl() {
 
     // Tap A to switch claw and claw2 on (extend) and off (retract) together.
     // Edge-detected (so holding A doesn't rapid-fire) and debounced like the DOWN button above.
-    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+    bool clawToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
     bool clawToggleTapped = clawToggleHeld && !wasAHeld;
     wasAHeld = clawToggleHeld;
     if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {
