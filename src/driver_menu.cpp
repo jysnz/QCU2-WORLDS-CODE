@@ -1136,7 +1136,7 @@ static void runMotorDirectionTest() {
 // here so the two screens agree. The old on-brain editor is still one tap
 // away (BRAIN EDITOR) for when there's no laptop around.
 static std::vector<PlanStep> plan;
-static const size_t kMaxPlanSteps = 48;
+static const size_t kMaxPlanSteps = 128;
 enum class PlanStatus { IDLE, RUNNING, DONE, CANCELLED };
 static PlanStatus planStatus = PlanStatus::IDLE;
 static int planStepIdx = -1;                      // step being run / last run

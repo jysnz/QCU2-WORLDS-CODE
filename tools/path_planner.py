@@ -112,9 +112,11 @@ COORDINATES
     you), heading 0 = +y and increasing clockwise. Same as the brain.
 """
 
+import copy
 import json
 import math
 import os
+import re
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -125,7 +127,17 @@ PLANS_DIR = os.path.join(HERE, "plans")
 EXPORT_PATH = os.path.join(HERE, "exported_path.cpp")
 
 FIELD_IN = 144.0            # field is 12 ft square
-MAP_PX = 500                # map is drawn this many px square
+FIELD_BG = "#2b2b2b"        # map ground and window chrome -- path.jerryio's flat dark grey
+PANEL_BG = "#2b2b2b"        # window background: the same grey as the map ground
+INPUT_BG = "#1f1f1f"        # text entries and the block list, a step darker
+PATH_GREEN = "#8bd13f"     # the route line
+PATH_SEL = "#c6f27a"        # ...the selected block's leg
+PREVIEW = "#4fc3f7"         # the motion being placed, before Apply
+PURPLE = "#7a5cd6"          # path points and the robot footprint
+POINT_FILL = "#4b3d8f"      # the inside of a path point
+END_BOX = "#b9a6ff"         # the robot footprint at the end of a path
+DEFAULT_ROBOT_IN = 15.0    # robot length / width until set in the window
+MAP_PX = 500               # map is drawn this many px square
 # tools/field.png must be MAP_PX square: without Pillow, Tk can only scale
 # an image by whole numbers, so anything else would land skewed on the grid.
 
@@ -153,8 +165,10 @@ KIND_PARAMS = {
     "turnToHeading": ["theta", "timeout", "direction", "maxSpeed", "minSpeed", "earlyExitRange"],
     "turnToPoint": ["x", "y", "timeout", "forwards", "direction", "maxSpeed", "minSpeed",
                     "earlyExitRange"],
-    "swingToHeading": ["theta", "side", "timeout", "direction", "maxSpeed", "minSpeed",
-                       "earlyExitRange"],
+    # swingToHeading has no forwards in lemlib: here it only decides which side
+    # is locked (a backward swing locks the other one) and is not exported
+    "swingToHeading": ["theta", "side", "timeout", "forwards", "direction", "maxSpeed",
+                       "minSpeed", "earlyExitRange"],
     "swingToPoint": ["x", "y", "side", "timeout", "forwards", "direction", "maxSpeed",
                      "minSpeed", "earlyExitRange"],
     "moveToPoint": ["x", "y", "timeout", "forwards", "maxSpeed", "minSpeed", "earlyExitRange"],
@@ -284,7 +298,7 @@ def catmull_rom(points, samples_per_leg=24):
 CURVE, STRAIGHT = "curve", "straight"
 
 
-def path_points(waypoints, spacing, smooth=True):
+def path_points(waypoints, spacing, smooth=True, legs=None):
     """The route through the drawn control points, as (x, y, stop) --
     stop marking the points the robot should actually arrive on rather
     than flow through.
@@ -293,7 +307,11 @@ def path_points(waypoints, spacing, smooth=True):
     Runs of neighbouring curve points are splined together; any leg that
     touches a straight point stays a straight line, and the robot stops
     where a curve meets a straight leg, because the two don't share a
-    tangent there."""
+    tangent there.
+
+    If `legs` is a list, it is filled with one flag per returned point after
+    the first: True when the leg that ends at that point is a straight one
+    (drawn with a right click), False when it is part of a curve."""
     pts = [(w[0], w[1]) for w in waypoints]
     modes = [w[2] if len(w) > 2 else CURVE for w in waypoints]
     if len(pts) < 2:
@@ -301,20 +319,31 @@ def path_points(waypoints, spacing, smooth=True):
     if not smooth:
         modes = [STRAIGHT] * len(pts)
     out = [(pts[0][0], pts[0][1], True)]
+    straight = [] if legs is None else legs
     i, n = 0, len(pts)
     while i < n - 1:
         if modes[i] == CURVE and modes[i + 1] == CURVE:
             j = i + 1                       # end of this run of curve legs
             while j < n - 1 and modes[j + 1] == CURVE:
                 j += 1
+            if j == i + 1:
+                # a "curve" through just two points is a straight line: one
+                # leg, not a line chopped into spacing-sized pieces
+                out.append((pts[j][0], pts[j][1], True))
+                straight.append(True)
+                i = j
+                continue
             curve = resample(catmull_rom(pts[i:j + 1]), spacing)
             for x, y in curve[1:-1]:
                 out.append((x, y, False))
+                straight.append(False)
             # the run's last point: a corner unless the route ends there
             out.append((pts[j][0], pts[j][1], True))
+            straight.append(False)
             i = j
         else:
             out.append((pts[i + 1][0], pts[i + 1][1], True))
+            straight.append(True)
             i += 1
     return out
 
@@ -411,6 +440,90 @@ def export_code(blocks, start=None, calibrate=True):
     for i, b in enumerate(blocks):
         lines.append(f"{block_code(b)}  // {i + 1}: {block_summary(b)}")
     return "\n".join(lines) + "\n"
+
+
+AUTONOMOUS_CPP = os.path.join(HERE, "..", "src", "autonomous.cpp")
+AUTONOMOUS_HPP = os.path.join(HERE, "..", "include", "autonomous.hpp")
+
+
+def auto_function_name(stem):
+    """A C++ function name from a plan's file name: letters, digits and
+    underscores, never starting with a digit."""
+    name = re.sub(r"\W+", "_", stem).strip("_").lower() or "planned_auto"
+    return "auto_" + name if name[0].isdigit() else name
+
+
+def write_auto_function(name, blocks, start, cpp_path=AUTONOMOUS_CPP, hpp_path=AUTONOMOUS_HPP):
+    """Write the plan into autonomous.cpp as `void name()` and declare it in
+    autonomous.hpp. Saving the same plan again replaces its function -- it
+    lives between BEGIN/END planner marker comments, so nothing else in the
+    file is touched. A name already taken by hand-written code is never
+    overwritten: the function gets a `_planned` suffix instead. It goes just
+    above runAutonomous() (or at the end of the file). Returns the name
+    actually used and whether an earlier version of it was replaced."""
+    def read(path):
+        with open(path, encoding="utf-8", newline="") as f:
+            raw = f.read()
+        crlf = "\r\n" in raw
+        return raw.replace("\r\n", "\n"), crlf
+
+    def write(path, text, crlf):
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text.replace("\n", "\r\n") if crlf else text)
+
+    def block_re(n):
+        return re.compile(rf"^// BEGIN planner: {re.escape(n)}\b.*?^// END planner: "
+                          rf"{re.escape(n)}[^\n]*\n?", re.M | re.S)
+
+    cpp, crlf = read(cpp_path)
+    handwritten = re.compile(r"^[ \t]*(?:static\s+)?void\s+(\w+)\s*\(", re.M)
+    others = block_re(name).sub("", cpp)          # the file without this plan's own copy
+    taken = {m.group(1) for m in handwritten.finditer(others)}
+    final = name
+    while final in taken:
+        final += "_planned"
+
+    body = [f"// BEGIN planner: {final}  (tools/path_planner.py -- saving this plan again "
+            "replaces everything up to END)",
+            "// Coordinates: inches, origin at field centre, heading 0 = +y, clockwise +.",
+            f"void {final}() {{",
+            f"    chassis.setPose({start[0]:.2f}, {start[1]:.2f}, {start[2]:.2f});  // start pose"]
+    body += [f"    {block_code(b)}  // {i + 1}: {block_summary(b)}" for i, b in enumerate(blocks)]
+    body += ["}", f"// END planner: {final}", ""]
+    code = "\n".join(body)
+
+    replaced = bool(block_re(final).search(cpp))
+    if replaced:
+        cpp = block_re(final).sub(lambda _m: code, cpp, count=1)
+    else:
+        lines = cpp.split("\n")
+        at = next((i for i, ln in enumerate(lines) if re.match(r"\s*void\s+runAutonomous\s*\(", ln)),
+                  None)
+        if at is None:
+            cpp = cpp.rstrip("\n") + "\n\n" + code
+        else:
+            while at > 0 and lines[at - 1].lstrip().startswith("//"):   # keep its comment with it
+                at -= 1
+            lines[at:at] = code.split("\n")      # code ends in "\n": one blank line after it
+            cpp = "\n".join(lines)
+    write(cpp_path, cpp, crlf)
+
+    try:
+        hpp, hcrlf = read(hpp_path)
+    except OSError:
+        return final, replaced
+    if not re.search(rf"\bvoid\s+{re.escape(final)}\s*\(\s*\)\s*;", hpp):
+        decl = f"void {final}();"
+        lines = hpp.split("\n")
+        at = next((i for i, ln in enumerate(lines)
+                   if re.match(r"\s*void\s+runAutonomous\s*\(", ln)), None)
+        if at is None:
+            hpp = hpp.rstrip("\n") + "\n" + decl + "\n"
+        else:
+            lines.insert(at, decl)
+            hpp = "\n".join(lines)
+        write(hpp_path, hpp, hcrlf)
+    return final, replaced
 
 
 # ─── Simulated route (for drawing the plan) ────────────────────────────────
@@ -517,6 +630,15 @@ def angle_err(target, current, direction="AUTO"):
     if direction == "CCW":
         return e - 360
     return e - 360 if e > 180 else e
+
+
+def swing_side(err, forwards=True):
+    """Which side a swing locks for a turn of `err` degrees (positive =
+    clockwise). Clockwise with the right side locked drives the left side
+    forwards, so the robot swings forwards; locking the left instead drives
+    the right side backwards -- a backward swing."""
+    right = err > 0
+    return "RIGHT" if right == bool(forwards) else "LEFT"
 
 
 def heading_to(x0, y0, x1, y1, forwards=True):
@@ -673,7 +795,7 @@ def sim_move_to_pose(robot, b, trace):
     return t
 
 
-def sim_turn(robot, b, trace, targetHeading, swingSide=None):
+def sim_turn(robot, b, trace, targetHeading, swingSide=None, headings=None):
     """lemlib turnToHeading / swingToHeading. In-place turns drive the
     sides opposite; a swing holds one side still, so the robot pivots
     around that wheel and its centre travels an arc of trackWidth/2."""
@@ -713,6 +835,8 @@ def sim_turn(robot, b, trace, targetHeading, swingSide=None):
             robot.step(out, -out)
         t += LOOP_S * 1000
         trace.append((robot.x, robot.y))
+        if headings is not None:
+            headings.append(robot.th)       # one per trace point: the footprint's rotation
     return t
 
 
@@ -721,7 +845,8 @@ def simulate(blocks, start):
     theta). Returns, per block, (endPose, shape):
         ("trace", [(x, y), ...])          the path the robot centre takes
         ("turn", x, y, fromHdg, toHdg)    an in-place turn (drawn as an arc)
-        ("swing", x, y, fromHdg, toHdg, trace)  a swing: arc + the centre's path
+        ("swing", x, y, fromHdg, toHdg, trace, headings)  a swing: arc + the centre's
+                                          path, and the heading at each point of it
         None                              nothing on the map (wait, ...)
     Each block starts where the previous one ended, so the shapes chain
     into the full route."""
@@ -747,9 +872,10 @@ def simulate(blocks, start):
                 target = heading_to(x0, y0, b["x"], b["y"], b.get("forwards", True)) \
                     if (b["x"], b["y"]) != (x0, y0) else th0
             swingSide = b.get("side") if k.startswith("swing") else None
-            sim_turn(robot, b, trace, target, swingSide)
+            heads = [th0]
+            sim_turn(robot, b, trace, target, swingSide, heads)
             if swingSide:
-                shape = ("swing", x0, y0, th0, robot.th, trace)
+                shape = ("swing", x0, y0, th0, robot.th, trace, heads)
             else:
                 shape = ("turn", x0, y0, th0, robot.th)
         out.append((robot.pose(), shape))
@@ -761,7 +887,9 @@ class PlannerWindow(tk.Toplevel):
     def __init__(self, master, link):
         super().__init__(master)
         self.link = link
-        self.title("Path Planner -- V5")
+        self.planName = None           # file the plan was last saved to / loaded from
+        self._retitle()
+        self._applyTheme()
         self.blocks = []
         self.selected = None
         self.start = [0.0, 0.0, 0.0]   # start pose used to draw the route
@@ -771,7 +899,8 @@ class PlannerWindow(tk.Toplevel):
         self.driveLast = None          # last (l, r) sent, to avoid resending
         self.driveJob = None           # keepalive callback
         self.drawMode = False          # mouse path editor on/off
-        self.waypoints = []            # control points: (x, y, CURVE/STRAIGHT)
+        self.waypoints = []            # control points: (x, y, CURVE/STRAIGHT[, heading])
+        self.selWp = None              # the drawn point the heading buttons act on
         self.drag = None               # ("wp", i) or ("block", i) while dragging
         self.robotPose = None
         self.robotPath = []
@@ -784,7 +913,22 @@ class PlannerWindow(tk.Toplevel):
         self.fieldImage = None
         self._redrawPending = False    # see redrawMap(): draws are coalesced
         self._simCache = (None, None)  # (key, simulate() result)
+        self._frameSim = None          # simulate() result pinned for the length of one paint
         self._lastState = None         # last robot state drawn, to skip no-ops
+        self.startPlaced = False       # True once the robot has been put somewhere on the map
+        self.mapPx, self.mapX0, self.mapY0 = MAP_PX, 0, 0   # the square map inside the canvas
+        self._fieldSrc = None          # field.png at full size (Pillow only)
+        self._relayoutJob = None
+        self.sidebarShown = True
+        self._livePending = False
+        self.pathLegs = []             # per drawn leg: straight (True) or part of a curve
+        self.aimPending = False        # a swing / turn just added in draw mode wants the next click
+        self.pending = None            # (block, insert index): a motion being placed, not applied yet
+        self.hoverSwing = None         # block index of the swing the mouse is over
+        self._chips = []               # clickable shape options drawn beside a selected swing / turn
+        self.undoStack = []            # plan snapshots taken before each applied path
+        self.redoStack = []            # what Ctrl+Z took away: ("wp", point) / ("plan", snapshot)
+        self.replaceOnApply = False    # True while re-shaping a traced route
         # Hiding the window must not leave the robot driving on.
         self.protocol("WM_DELETE_WINDOW", lambda: (self.stopDrive(), self.withdraw()))
 
@@ -792,31 +936,140 @@ class PlannerWindow(tk.Toplevel):
         self._bindKeys()
         self.redrawMap()
         self.refreshList()
-        self._lockMinSize()
+        self._sizeWindow()
 
-    def _lockMinSize(self):
-        """Stop the window being sized smaller than its controls need.
-        Tk's packer hides whatever doesn't fit rather than scrolling or
-        wrapping, and a button you can't see is a button that isn't there
-        as far as anyone using it is concerned. Capped to the screen, so a
-        small display still gets a usable window."""
-        self.update_idletasks()
-        w = min(self.winfo_reqwidth(), self.winfo_screenwidth())
-        h = min(self.winfo_reqheight(), self.winfo_screenheight() - 60)
-        self.minsize(w, h)
+    def _sizeWindow(self):
+        """Open at a size that fits the screen, taskbar and title bar included
+        -- the side panel scrolls, so nothing needs the window to be tall --
+        and let it shrink well below that."""
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w = min(1200, sw - 40)
+        h = max(480, min(720, sh - 110))
+        self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        self.minsize(min(760, w), min(460, h))
+
+    def _retitle(self):
+        self.title("Path Planner -- V5" + (f"  --  {self.planName}" if self.planName else ""))
+
+    def _applyTheme(self):
+        """One dark look for every widget made after this, so the controls
+        match the map instead of being default grey and white. Anything that
+        sets its own colours (the run buttons, the map icons) still wins."""
+        for pattern, value in (
+                ("*Entry.background", INPUT_BG), ("*Entry.foreground", "#e6e6e6"),
+                ("*Entry.insertBackground", "#e6e6e6"), ("*Entry.relief", "flat"),
+                ("*Entry.highlightThickness", 1), ("*Entry.highlightBackground", "#3a3a3a"),
+                ("*Entry.highlightColor", PATH_GREEN),
+                ("*Button.background", "#3a3a3a"), ("*Button.foreground", "#e6e6e6"),
+                ("*Button.activeBackground", "#4a4a4a"), ("*Button.activeForeground", "#ffffff"),
+                ("*Button.relief", "flat"), ("*Button.borderWidth", 0),
+                ("*Button.padX", 8), ("*Button.padY", 3), ("*Button.cursor", "hand2"),
+                ("*Listbox.background", INPUT_BG), ("*Listbox.foreground", "#e6e6e6"),
+                ("*Listbox.relief", "flat"), ("*Listbox.highlightThickness", 0),
+                ("*Scale.background", PANEL_BG), ("*Scale.troughColor", INPUT_BG),
+                ("*Scrollbar.background", "#3a3a3a"), ("*Scrollbar.troughColor", INPUT_BG),
+                ("*Label.background", PANEL_BG), ("*Label.foreground", "#cfcfcf"),
+                ("*LabelFrame.background", PANEL_BG), ("*LabelFrame.foreground", "#cfcfcf"),
+                ("*Frame.background", PANEL_BG)):
+            # scoped to this window's path, so the main remote window keeps its own look
+            self.option_add(f"{self}{pattern}", value)
+
+    # -- map icons --
+    # Drawn as canvas items, not child widgets: a widget placed over a canvas
+    # is repainted along with it, and on Windows that shows up as the buttons
+    # flashing every time the map redraws. Clicks and hovers are matched by
+    # position in onMapPress / onMapMotion.
+    ICON = 40
+    ICON_GAP = 6
+    ICON_MARGIN = 56        # dark margin kept clear each side of the map, for the icons
+    ICON_BG, ICON_HOVER, ICON_ON = "#383838", "#4a4a4a", "#5a5a5a"
+    SIDE_W = 470            # width of the side panel
+
+    def _buildMapButtons(self):
+        self.icons = {}
+        self._hoverIcon = None
+
+        def icon(name, glyph, cmd, tip):
+            rect = self.map.create_rectangle(0, 0, 1, 1, fill=self.ICON_BG, outline="",
+                                             tags=("ui",))
+            text = self.map.create_text(0, 0, text=glyph, fill="#e6e6e6",
+                                        font=("Segoe UI Symbol", 15), tags=("ui",))
+            self.icons[name] = dict(rect=rect, text=text, cmd=cmd, tip=tip, box=None, on=False)
+        icon("panel", "☰", self.toggleSidebar, "Hide / show the side panel  (H)")
+        icon("draw", "✎", self.toggleDraw, "Draw a path  (D)")
+        icon("apply", "✓", self.applyDrawnPath, "Apply the drawn path to the blocks  (Enter)")
+        icon("clear", "✕", self.clearWaypoints, "Clear the points being drawn")
+        icon("redo", "↷", self.redoPath, "Redo  (Ctrl+Y)")
+        icon("undo", "↶", self.undoPath, "Undo  (Ctrl+Z)")
+
+    def _placeIcons(self):
+        """Lay the icons out in the margins either side of the square map:
+        panel toggle top-left, draw tools down the right, undo / redo at the
+        bottom right -- the arrangement path.jerryio uses."""
+        w = self.map.winfo_width() or 600
+        h = self.map.winfo_height() or MAP_PX
+        s, g, m = self.ICON, self.ICON_GAP, 8
+        right = w - m - s
+        spots = {"panel": (m, m), "draw": (right, m), "apply": (right, m + s + g),
+                 "clear": (right, m + 2 * (s + g)), "redo": (right, h - m - 2 * s - g),
+                 "undo": (right, h - m - s)}
+        for name, (x, y) in spots.items():
+            ic = self.icons[name]
+            ic["box"] = (x, y, x + s, y + s)
+            self.map.coords(ic["rect"], x, y, x + s, y + s)
+            self.map.coords(ic["text"], x + s / 2, y + s / 2)
+        self.map.tag_raise("ui")
+
+    def _iconAt(self, ex, ey):
+        for name, ic in self.icons.items():
+            x0, y0, x1, y1 = ic["box"] or (0, 0, -1, -1)
+            if x0 <= ex <= x1 and y0 <= ey <= y1:
+                return name
+        return None
+
+    def _paintIcon(self, name):
+        ic = self.icons[name]
+        fill = self.ICON_ON if ic["on"] else (self.ICON_HOVER if name == self._hoverIcon
+                                              else self.ICON_BG)
+        self.map.itemconfigure(ic["rect"], fill=fill)
+
+    def _setIconActive(self, name, on):
+        self.icons[name]["on"] = on
+        self._paintIcon(name)
+
+    def _hoverOver(self, name):
+        if name == self._hoverIcon:
+            return
+        old, self._hoverIcon = self._hoverIcon, name
+        for n in (old, name):
+            if n:
+                self._paintIcon(n)
 
     # -- layout --
     def _buildUi(self):
-        self.configure(bg="#14141a")
-        top = tk.Frame(self, bg="#14141a")
+        self.configure(bg=PANEL_BG)
+        top = tk.Frame(self, bg=PANEL_BG)
         top.pack(side="top", fill="both", expand=True)
 
-        # Map (left) -----------------------------------------------------
-        mapFrame = tk.Frame(top, bg="#14141a")
-        mapFrame.pack(side="left", padx=8, pady=8)
-        self.map = tk.Canvas(mapFrame, width=MAP_PX, height=MAP_PX, bg="#1b1b22",
-                             highlightthickness=1, highlightbackground="#2d2d38")
-        self.map.pack()
+        # The side panel is packed first, so when the window is tight it is the
+        # map that gives way, never a button; the map then takes what's left.
+        self.side = tk.Frame(top, bg=PANEL_BG, width=self.SIDE_W)
+        self.side.pack(side="right", fill="y", padx=(0, 8), pady=8)
+        self.side.pack_propagate(False)
+        self.mapFrame = tk.Frame(top, bg=PANEL_BG)
+        self.mapFrame.pack(side="left", fill="both", expand=True, padx=8, pady=8)
+
+        self._buildMapArea(self.mapFrame)
+        self._buildSidePanel(self.side)
+        self._loadFieldImage()
+
+    def _buildMapArea(self, mapFrame):
+        # The canvas asks for little and takes whatever the window gives it;
+        # the square map is fitted inside it (see _relayout).
+        self.map = tk.Canvas(mapFrame, width=320, height=320, bg=FIELD_BG, highlightthickness=0)
+        self.map.pack(fill="both", expand=True)
+        self._buildMapButtons()
+        self.map.bind("<Configure>", self._onMapConfigure)
         self.map.bind("<Button-1>", self.onMapPress)
         self.map.bind("<B1-Motion>", self.onMapDrag)
         self.map.bind("<ButtonRelease-1>", self.onMapRelease)
@@ -824,162 +1077,261 @@ class PlannerWindow(tk.Toplevel):
         self.map.bind("<Shift-Button-1>", lambda e: self.removeWaypointAt(e.x, e.y))
         self.map.bind("<Button-2>", lambda e: self.removeWaypointAt(e.x, e.y))
         self.map.bind("<Motion>", self.onMapMotion)
-        self.mapStatus = tk.Label(mapFrame, text="", anchor="w", fg="#999", bg="#14141a",
+        self.map.bind("<Leave>", self._onMapLeave)
+        self.mapStatus = tk.Label(mapFrame, text="", anchor="w", fg="#999", bg=PANEL_BG,
                                   font=("Consolas", 9))
-        self.mapStatus.pack(fill="x")
+        self.mapStatus.pack(fill="x", pady=(4, 0))
 
-        # mouse path editor -- drop control points on the map and turn the
-        # route through them into blocks (path.jerryio style).
-        dp = tk.LabelFrame(mapFrame, text="mouse path", fg="#ccc", bg="#14141a",
-                           font=("Segoe UI", 9))
-        dp.pack(fill="x", pady=(6, 0))
-        row = tk.Frame(dp, bg="#14141a")
-        row.pack(fill="x", padx=4, pady=(4, 0))
-        self.drawBtn = tk.Button(row, text="Draw path  (D)", command=self.toggleDraw)
-        self.drawBtn.pack(side="left")
+        # Mouse-path tools under the map: everything the icons do, with labels,
+        # plus the options that don't have an icon.
+        row = tk.Frame(mapFrame, bg=PANEL_BG)
+        row.pack(fill="x", pady=(6, 0))
+        self.drawBtnRow = tk.Button(row, text="Draw  (D)", command=self.toggleDraw)
+        self.drawBtnRow.pack(side="left")
+        for text, cmd in (("Apply  (Enter)", self.applyAction), ("Undo", self.undoPath),
+                          ("Redo", self.redoPath), ("Clear points", self.clearWaypoints)):
+            tk.Button(row, text=text, command=cmd).pack(side="left", padx=(6, 0))
+        row2 = tk.Frame(mapFrame, bg=PANEL_BG)
+        row2.pack(fill="x", pady=(6, 0))
         self.smoothVar = tk.BooleanVar(value=True)
-        tk.Checkbutton(row, text="smooth", variable=self.smoothVar, bg="#14141a", fg="#ddd",
-                       selectcolor="#161B22", activebackground="#14141a",
-                       activeforeground="#ddd", command=self.redrawMap).pack(side="left", padx=6)
-        tk.Label(row, text="spacing", fg="#888", bg="#14141a").pack(side="left")
+        tk.Checkbutton(row2, text="smooth", variable=self.smoothVar, bg=PANEL_BG, fg="#ddd",
+                       selectcolor=INPUT_BG, activebackground=PANEL_BG,
+                       activeforeground="#ddd", command=self.redrawMap).pack(side="left")
+        tk.Label(row2, text="spacing", fg="#888", bg=PANEL_BG).pack(side="left", padx=(8, 0))
         self.spacingVar = tk.StringVar(value="12")
-        e = tk.Entry(row, textvariable=self.spacingVar, width=5, font=("Consolas", 10))
-        e.pack(side="left", padx=(2, 6))
+        e = tk.Entry(row2, textvariable=self.spacingVar, width=5, font=("Consolas", 10))
+        e.pack(side="left", padx=(2, 8))
         e.bind("<Return>", lambda _e: self.redrawMap())
         e.bind("<FocusOut>", lambda _e: self.redrawMap())
         self.reverseVar = tk.BooleanVar(value=False)
-        tk.Checkbutton(row, text="backwards", variable=self.reverseVar, bg="#14141a", fg="#ddd",
-                       selectcolor="#161B22", activebackground="#14141a",
+        tk.Checkbutton(row2, text="backwards", variable=self.reverseVar, bg=PANEL_BG, fg="#ddd",
+                       selectcolor=INPUT_BG, activebackground=PANEL_BG,
                        activeforeground="#ddd").pack(side="left")
-        tk.Label(dp, text="left-click = curve point    right-click = straight point / flip"
-             "    shift-click = remove", fg="#8a8a96", bg="#14141a",
-             font=("Segoe UI", 8), anchor="w").pack(fill="x", padx=6)
-        row2 = tk.Frame(dp, bg="#14141a")
-        row2.pack(fill="x", padx=4, pady=(2, 4))
-        for text, cmd in (("Apply", self.applyDrawnPath), ("Undo point", self.undoWaypoint),
-                          ("Clear points", self.clearWaypoints),
-                          ("Trace blocks", self.tracePointsFromBlocks),
-                          ("Clear map", self.clearMap)):
-            tk.Button(row2, text=text, command=cmd).pack(side="left", padx=3)
-        self.drawInfo = tk.Label(row2, text="", fg="#777", bg="#14141a", font=("Segoe UI", 8))
-        self.drawInfo.pack(side="left", padx=6)
+        tk.Button(row2, text="Trace blocks", command=self.tracePointsFromBlocks) \
+            .pack(side="left", padx=(12, 0))
+        tk.Button(row2, text="Clear map", command=self.clearMap).pack(side="left", padx=(6, 0))
+        self.drawInfo = tk.Label(mapFrame, text="", fg="#777", bg=PANEL_BG, font=("Segoe UI", 8),
+                                 anchor="w")
+        self.drawInfo.pack(fill="x", pady=(4, 0))
 
-        self._loadFieldImage()
-
-        # Right column: blocks + parameters --------------------------------
-        right = tk.Frame(top, bg="#14141a")
-        right.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=8)
-
-        hdr = tk.Frame(right, bg="#14141a")
-        hdr.pack(fill="x")
+    def _buildSidePanel(self, side):
+        # header: brain status and the hide button -- always on screen
+        hdr = tk.Frame(side, bg=PANEL_BG)
+        hdr.pack(side="top", fill="x", pady=(0, 6))
+        tk.Button(hdr, text="Hide panel  (H) ▸", command=self.toggleSidebar) \
+            .pack(side="right")
         self.brainStatus = tk.Label(hdr, text="brain: waiting...", anchor="w", fg="#00F0FF",
-                                    bg="#14141a", font=("Segoe UI", 10, "bold"))
-        self.brainStatus.pack(side="left")
+                                    bg=PANEL_BG, font=("Segoe UI", 10, "bold"))
+        self.brainStatus.pack(side="left", fill="x", expand=True)
 
-        # Start pose: the numbers on one row and the buttons on the next.
-        # Packed side by side they needed more width than the column had, and
-        # pack answers that by dropping whatever is last -- which is how
-        # "Reset robot" would quietly not be there at all.
-        sp = tk.Frame(right, bg="#14141a")
-        sp.pack(fill="x", pady=(6, 0))
-        tk.Label(sp, text="start pose", fg="#ccc", bg="#14141a").pack(side="left")
+        # footer: run / export / save -- packed before the scrolling part so it
+        # always keeps its space, however short the window is
+        foot = tk.Frame(side, bg=PANEL_BG)
+        foot.pack(side="bottom", fill="x", pady=(8, 0))
+        f1 = tk.Frame(foot, bg=PANEL_BG)
+        f1.pack(fill="x")
+        for text, cmd, color in (("Run all  (F5)", self.runAll, "#2ECC71"),
+                                 ("Run selected  (F6)", self.runSelected, "#00F0FF"),
+                                 ("Stop  (Esc)", self.stop, "#FF6B81")):
+            tk.Button(f1, text=text, command=cmd, fg="black", bg=color,
+                      activebackground=color, activeforeground="black") \
+                .pack(side="left", fill="x", expand=True, padx=(0, 4))
+        f2 = tk.Frame(foot, bg=PANEL_BG)
+        f2.pack(fill="x", pady=(6, 0))
+        tk.Button(f2, text="Save → autonomous.cpp  (Ctrl+S)", command=self.savePlan) \
+            .pack(side="left", fill="x", expand=True, padx=(0, 4))
+        tk.Button(f2, text="Load", command=self.loadPlan).pack(side="left", padx=(0, 4))
+        tk.Button(f2, text="Export code", command=self.exportCode).pack(side="left")
+        f3 = tk.Frame(foot, bg=PANEL_BG)
+        f3.pack(fill="x", pady=(4, 0))
+        self.calibrateVar = tk.BooleanVar(value=True)
+        tk.Checkbutton(f3, text="calibrate first (export)", variable=self.calibrateVar,
+                       bg=PANEL_BG, fg="#ddd", selectcolor=INPUT_BG, activebackground=PANEL_BG,
+                       activeforeground="#ddd").pack(side="left")
+        self.setStartVar = tk.BooleanVar(value=True)
+        tk.Checkbutton(f3, text="Run all starts from the start pose", variable=self.setStartVar,
+                       bg=PANEL_BG, fg="#ddd", selectcolor=INPUT_BG, activebackground=PANEL_BG,
+                       activeforeground="#ddd").pack(side="left", padx=(10, 0))
+
+        # the scrolling middle
+        body = tk.Frame(side, bg=PANEL_BG)
+        body.pack(side="top", fill="both", expand=True)
+        sc = tk.Canvas(body, bg=PANEL_BG, highlightthickness=0)
+        vsb = tk.Scrollbar(body, command=sc.yview)
+        sc.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        sc.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(sc, bg=PANEL_BG)
+        win = sc.create_window(0, 0, window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: sc.configure(scrollregion=sc.bbox("all")))
+        sc.bind("<Configure>", lambda e: sc.itemconfigure(win, width=e.width))
+        self._sideCanvas = sc
+
+        def wheel(e):
+            sc.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        saved = {}
+
+        def enter(_e):
+            saved["old"] = self.bind_all("<MouseWheel>")
+            self.bind_all("<MouseWheel>", wheel)
+
+        def leave(_e):
+            self.unbind_all("<MouseWheel>")
+            if saved.get("old"):
+                self.bind_all("<MouseWheel>", saved["old"])
+        side.bind("<Enter>", enter)
+        side.bind("<Leave>", leave)
+
+        def section(title):
+            f = tk.LabelFrame(inner, text=f" {title} ", fg="#9a9a9a", bg=PANEL_BG,
+                              font=("Segoe UI", 9), bd=1, relief="groove")
+            f.pack(fill="x", padx=(0, 6), pady=(0, 8))
+            return f
+
+        def row(parent, pady=(3, 3)):
+            r = tk.Frame(parent, bg=PANEL_BG)
+            r.pack(fill="x", padx=6, pady=pady)
+            return r
+
+        def labelled(parent, label, var, width=7, first=False):
+            tk.Label(parent, text=label, fg="#8a8a8a", bg=PANEL_BG) \
+                .pack(side="left", padx=(0 if first else 8, 2))
+            e = tk.Entry(parent, textvariable=var, width=width, font=("Consolas", 10))
+            e.pack(side="left")
+            return e
+
+        # robot: where it starts, and how big it is ------------------------
+        rb = section("robot")
+        r1 = row(rb)
         self.startVars = []
         for i, lab in enumerate(("x", "y", "hdg")):
-            tk.Label(sp, text=lab, fg="#888", bg="#14141a").pack(side="left", padx=(8, 2))
             v = tk.StringVar(value="0")
-            e = tk.Entry(sp, textvariable=v, width=7, font=("Consolas", 10))
-            e.pack(side="left")
+            e = labelled(r1, lab, v, 6, first=(i == 0))
             e.bind("<Return>", lambda _e: self.applyStartPose())
             self.startVars.append(v)
-        tk.Button(sp, text="Send to robot", command=self.sendStartPose).pack(side="left", padx=6)
-
-        sp2 = tk.Frame(right, bg="#14141a")
-        sp2.pack(fill="x", pady=(2, 2))
-        self.pickBtn = tk.Button(sp2, text="Pick start on map", command=self.togglePickStart)
+        tk.Button(r1, text="Send to robot", command=self.sendStartPose).pack(side="right")
+        r2 = row(rb)
+        self.pickBtn = tk.Button(r2, text="Pick start", command=self.togglePickStart)
         self.pickBtn.pack(side="left")
-        tk.Button(sp2, text="Use robot's pose", command=self.useRobotPose).pack(side="left", padx=6)
-        tk.Button(sp2, text="Reset robot", command=self.resetRobot, fg="#FF6B81").pack(side="left")
+        tk.Button(r2, text="Use robot's pose", command=self.useRobotPose) \
+            .pack(side="left", padx=6)
+        tk.Button(r2, text="Reset robot", command=self.resetRobot, fg="#FF6B81") \
+            .pack(side="left")
+        # Footprint: drawn as a bounding box at the start, the end of the route,
+        # the selected block and the live robot. length runs along the heading
+        # (front to back), width across it.
+        r3 = row(rb, pady=(3, 6))
+        tk.Label(r3, text="size (in)", fg="#ccc", bg=PANEL_BG).pack(side="left")
+        self.robotLenVar = tk.StringVar(value=fmt(DEFAULT_ROBOT_IN))
+        self.robotWidVar = tk.StringVar(value=fmt(DEFAULT_ROBOT_IN))
+        for lab, var in (("length", self.robotLenVar), ("width", self.robotWidVar)):
+            e = labelled(r3, lab, var, 6)
+            e.bind("<Return>", lambda _e: self.redrawMap())
+            e.bind("<FocusOut>", lambda _e: self.redrawMap())
 
-        # block list
-        lf = tk.Frame(right, bg="#14141a")
-        lf.pack(fill="both", expand=True, pady=(6, 0))
-        self.listbox = tk.Listbox(lf, font=("Consolas", 10), bg="#161B22", fg="#ddd",
-                                  selectbackground="#1c2838", selectforeground="#00F0FF",
-                                  activestyle="none", height=12, exportselection=False)
+        # selected route point, like path.jerryio's "Control" panel -----------
+        pt = section("selected point")
+        r4 = row(pt, pady=(3, 6))
+        self.ptVars = []
+        for i, lab in enumerate(("x", "y", "heading")):
+            v = tk.StringVar()
+            e = labelled(r4, lab, v, 7 if lab == "heading" else 6, first=(i == 0))
+            e.bind("<Return>", lambda _e: self.applyPointPanel())
+            e.bind("<FocusOut>", lambda _e: self.applyPointPanel())
+            self.ptVars.append(v)
+        for text, delta in (("↻", self.HEADING_STEP), ("↺", -self.HEADING_STEP)):
+            tk.Button(r4, text=text, width=3, font=("Segoe UI Symbol", 11),
+                      command=lambda d=delta: self.rotatePoint(d)).pack(side="right", padx=(4, 0))
+
+        # blocks -------------------------------------------------------------
+        bl = section("blocks")
+        lf = tk.Frame(bl, bg=PANEL_BG)
+        lf.pack(fill="x", padx=6, pady=6)
+        self.listbox = tk.Listbox(lf, font=("Consolas", 10), bg=INPUT_BG, fg="#ddd",
+                                  selectbackground="#3d4f2a", selectforeground="#e8ffc8",
+                                  activestyle="none", height=9, exportselection=False)
         self.listbox.pack(side="left", fill="both", expand=True)
         self.listbox.bind("<<ListboxSelect>>", self.onSelect)
+
+        def listWheel(e):
+            # over the blocks list the wheel scrolls only the list -- "break"
+            # keeps it from also reaching the sidebar's own wheel binding
+            self.listbox.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            return "break"
+        self.listbox.bind("<MouseWheel>", listWheel)
         sb = tk.Scrollbar(lf, command=self.listbox.yview)
         sb.pack(side="left", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
-        ops = tk.Frame(lf, bg="#14141a")
+        ops = tk.Frame(lf, bg=PANEL_BG)
         ops.pack(side="left", fill="y", padx=(6, 0))
         for text, cmd in (("Up", lambda: self.moveBlock(-1)), ("Down", lambda: self.moveBlock(1)),
                           ("Duplicate", self.duplicateBlock), ("Delete", self.deleteBlock),
                           ("Clear all", self.clearBlocks)):
-            tk.Button(ops, text=text, width=10, command=cmd).pack(pady=2)
+            tk.Button(ops, text=text, width=9, command=cmd).pack(pady=2)
 
-        # parameters panel
-        self.paramFrame = tk.LabelFrame(right, text="parameters", fg="#ccc", bg="#14141a",
-                                        font=("Segoe UI", 9))
-        self.paramFrame.pack(fill="x", pady=6)
+        # parameters of the selected block --------------------------------
+        self.paramFrame = tk.LabelFrame(inner, text=" parameters ", fg="#9a9a9a", bg=PANEL_BG,
+                                        font=("Segoe UI", 9), bd=1, relief="groove")
+        self.paramFrame.pack(fill="x", padx=(0, 6), pady=(0, 4))
         self.paramWidgets = {}
-        self.codeLabel = tk.Label(right, text="", anchor="w", justify="left", fg="#2ECC71",
-                                  bg="#14141a", font=("Consolas", 9), wraplength=520)
-        self.codeLabel.pack(fill="x")
+        self.codeLabel = tk.Label(inner, text="", anchor="w", justify="left", fg="#2ECC71",
+                                  bg=PANEL_BG, font=("Consolas", 9), wraplength=430)
+        self.codeLabel.pack(fill="x", pady=(0, 8))
 
-        # movement buttons
-        mv = tk.LabelFrame(right, text="add block", fg="#ccc", bg="#14141a", font=("Segoe UI", 9))
-        mv.pack(fill="x", pady=(2, 6))
+        # add a block ----------------------------------------------------------
+        mv = section("add block")
+        grid = tk.Frame(mv, bg=PANEL_BG)
+        grid.pack(fill="x", padx=6, pady=6)
         for i, kind in enumerate(KINDS):
-            tk.Button(mv, text=kind, width=14, command=lambda k=kind: self.addBlock(k)) \
-                .grid(row=i // 4, column=i % 4, padx=3, pady=3)
+            tk.Button(grid, text=kind, command=lambda k=kind: self.pickMotion(k)) \
+                .grid(row=i // 3, column=i % 3, padx=2, pady=2, sticky="ew")
+        for c in range(3):
+            grid.columnconfigure(c, weight=1, uniform="kinds")
 
-        # driving
-        dr = tk.LabelFrame(right, text="drive", fg="#ccc", bg="#14141a", font=("Segoe UI", 9))
-        dr.pack(fill="x", pady=(0, 6))
-        drow = tk.Frame(dr, bg="#14141a")
-        drow.pack(fill="x", padx=4, pady=4)
+        # driving ----------------------------------------------------------------
+        dr = section("drive")
+        drow = row(dr, pady=(4, 6))
         self.driveBtn = tk.Button(drow, text="Drive (WASD)", command=self.toggleDrive)
         self.driveBtn.pack(side="left")
-        tk.Label(drow, text="power", fg="#888", bg="#14141a").pack(side="left", padx=(8, 2))
+        tk.Label(drow, text="power", fg="#888", bg=PANEL_BG).pack(side="left", padx=(8, 2))
         self.powerVar = tk.IntVar(value=70)
         tk.Scale(drow, from_=10, to=127, orient="horizontal", variable=self.powerVar,
-                 length=110, bg="#14141a", fg="#ddd", highlightthickness=0,
-                 troughcolor="#161B22").pack(side="left")
-        self.driveStatus = tk.Label(drow, text="off", fg="#777", bg="#14141a",
+                 length=110, bg=PANEL_BG, fg="#ddd", highlightthickness=0,
+                 troughcolor=INPUT_BG).pack(side="left")
+        self.driveStatus = tk.Label(drow, text="off", fg="#777", bg=PANEL_BG,
                                     font=("Consolas", 9))
         self.driveStatus.pack(side="left", padx=8)
 
-        # run / export bar
-        bar = tk.Frame(right, bg="#14141a")
-        bar.pack(fill="x")
-        for text, cmd, color in (("Run all  (F5)", self.runAll, "#2ECC71"),
-                                 ("Run selected  (F6)", self.runSelected, "#00F0FF"),
-                                 ("Stop  (Esc)", self.stop, "#FF6B81")):
-            tk.Button(bar, text=text, command=cmd, fg="black", bg=color).pack(side="left", padx=3)
-        tk.Button(bar, text="Export code", command=self.exportCode).pack(side="left", padx=(16, 3))
-        self.calibrateVar = tk.BooleanVar(value=True)
-        tk.Checkbutton(bar, text="calibrate first", variable=self.calibrateVar, bg="#14141a",
-                       fg="#ddd", selectcolor="#161B22", activebackground="#14141a",
-                       activeforeground="#ddd").pack(side="left")
-        tk.Button(bar, text="Save", command=self.savePlan).pack(side="left", padx=3)
-        tk.Button(bar, text="Load", command=self.loadPlan).pack(side="left", padx=3)
+        self.hint = tk.Label(inner, text="Drag the robot to place it, any route point to move "
+                             "it, and the knob on a point's line to turn it.  D = draw a path "
+                             "(click to add points, Enter to apply).  H = hide this panel.  "
+                             "Ctrl+Z / Ctrl+Y undo / redo.  Delete = remove block.  Ctrl+S saves "
+                             "the plan and writes it into autonomous.cpp.  Ctrl+O load.  "
+                             "Ctrl+E export.", anchor="w", justify="left", wraplength=430,
+                             fg="#777", bg=PANEL_BG, font=("Segoe UI", 8))
+        self.hint.pack(fill="x", pady=(0, 8))
 
-        self.hint = tk.Label(right, text="Click the map to set the selected block's point, or "
-                             "drag any point on it.  D = draw a path with the mouse.  "
-                             "Delete = remove block.  Ctrl+S / Ctrl+O save / load.  Ctrl+E export.",
-                             anchor="w", justify="left", wraplength=520, fg="#777", bg="#14141a",
-                             font=("Segoe UI", 8))
-        self.hint.pack(fill="x", pady=(6, 0))
+    def toggleSidebar(self):
+        """Hide the whole right-hand panel so only the map shows (and bring it
+        back). The map grows to fill the window when the panel goes."""
+        self.sidebarShown = not self.sidebarShown
+        if self.sidebarShown:
+            self.side.pack(side="right", fill="y", padx=(0, 8), pady=8, before=self.mapFrame)
+        else:
+            self.side.pack_forget()
+        self._setIconActive("panel", not self.sidebarShown)
 
     def _bindKeys(self):
         self.bind("<F5>", lambda e: self.runAll())
         self.bind("<F6>", lambda e: self.runSelected())
-        self.bind("<Escape>", lambda e: (self.stopDrive(), self.stop()))
+        self.bind("<Escape>", lambda e: self.cancelPending() if self.pending
+                  else (self.stopDrive(), self.stop()))
         self.bind("<Control-s>", lambda e: self.savePlan())
         self.bind("<Control-o>", lambda e: self.loadPlan())
         self.bind("<Control-e>", lambda e: self.exportCode())
         self.listbox.bind("<Delete>", lambda e: self.deleteBlock())
+        self.bind("<Delete>", lambda e: None if self._typing() or self.drawMode
+                  else self.deleteBlock())
         # ...and the draw-path keys, which must not fire while a number is
         # being typed into one of the entries (Tk sends the key to the
         # widget first, then here).
@@ -990,10 +1342,14 @@ class PlannerWindow(tk.Toplevel):
         self.bind("<FocusOut>", lambda e: self.stopDrive() if self.driveMode else None)
         self.bind("<d>", lambda e: None if self._typing() or self.driveMode else self.toggleDraw())
         self.bind("<D>", lambda e: None if self._typing() or self.driveMode else self.toggleDraw())
-        self.bind("<Control-z>", lambda e: None if self._typing() else self.undoWaypoint())
+        self.bind("<h>", lambda e: None if self._typing() else self.toggleSidebar())
+        self.bind("<H>", lambda e: None if self._typing() else self.toggleSidebar())
+        self.bind("<Control-z>", lambda e: None if self._typing() else self.undoPath())
+        self.bind("<Control-y>", lambda e: None if self._typing() else self.redoPath())
+        self.bind("<Control-Z>", lambda e: None if self._typing() else self.redoPath())
         self.bind("<BackSpace>", lambda e: None if self._typing() else self.undoWaypoint())
-        self.bind("<Return>", lambda e: self.applyDrawnPath()
-                  if self.drawMode and not self._typing() else None)
+        self.bind("<Return>", lambda e: self.applyAction()
+                  if (self.drawMode or self.pending) and not self._typing() else None)
 
     def _typing(self):
         """True when the keyboard focus is in a text entry / combobox."""
@@ -1002,14 +1358,15 @@ class PlannerWindow(tk.Toplevel):
             isinstance(w, ttk.Entry)
 
     def _loadFieldImage(self):
-        """tools/field.png scaled to the map; PIL if present (any size),
-        else Tk's own loader (integer downscale only)."""
+        """tools/field.png, scaled to the map. With Pillow it is resized to
+        whatever size the map has (see _relayout); without it Tk can only
+        subsample it, so the map stays at its fixed size."""
         if not os.path.exists(FIELD_PNG):
             return
         try:
-            from PIL import Image, ImageTk
-            img = Image.open(FIELD_PNG).convert("RGB").resize((MAP_PX, MAP_PX), Image.LANCZOS)
-            self.fieldImage = ImageTk.PhotoImage(img)
+            from PIL import Image
+            self._fieldSrc = Image.open(FIELD_PNG).convert("RGB")
+            self._scaleField()
         except ImportError:
             try:
                 img = tk.PhotoImage(file=FIELD_PNG)
@@ -1018,16 +1375,54 @@ class PlannerWindow(tk.Toplevel):
             except tk.TclError:
                 self.fieldImage = None
         except Exception:
+            self._fieldSrc = None
             self.fieldImage = None
 
+    def _scaleField(self):
+        if self._fieldSrc is None:
+            return
+        from PIL import Image, ImageTk
+        self.fieldImage = ImageTk.PhotoImage(
+            self._fieldSrc.resize((self.mapPx, self.mapPx), Image.LANCZOS))
+
+    def _onMapConfigure(self, _e):
+        """The canvas changed size (window resized, panel hidden / shown):
+        refit the map once things settle, not on every step of a drag."""
+        if self._relayoutJob:
+            self.after_cancel(self._relayoutJob)
+        self._relayoutJob = self.after(60, self._relayout)
+
+    def _relayout(self):
+        """Fit the square map in the middle of the canvas, as large as the
+        window allows while keeping a margin each side for the icons."""
+        self._relayoutJob = None
+        w, h = self.map.winfo_width(), self.map.winfo_height()
+        if w < 60 or h < 60:
+            return
+        side = MAP_PX if self._fieldSrc is None and self.fieldImage else \
+            int(max(220, min(h, w - 2 * self.ICON_MARGIN)))
+        x0, y0 = (w - side) // 2, (h - side) // 2
+        changed = (side, x0, y0) != (self.mapPx, self.mapX0, self.mapY0)
+        self.mapPx, self.mapX0, self.mapY0 = side, x0, y0
+        self._placeIcons()
+        if changed:
+            self._scaleField()
+            self.map.delete("field")
+            self.redrawMap()
+
     # -- coordinates --
+    @property
+    def ppi(self):
+        """Map pixels per field inch."""
+        return self.mapPx / FIELD_IN
+
     def toMap(self, x, y):
-        ppi = MAP_PX / FIELD_IN
-        return MAP_PX / 2 + x * ppi, MAP_PX / 2 - y * ppi
+        return (self.mapX0 + self.mapPx / 2 + x * self.ppi,
+                self.mapY0 + self.mapPx / 2 - y * self.ppi)
 
     def toField(self, px, py):
-        ppi = MAP_PX / FIELD_IN
-        return (px - MAP_PX / 2) / ppi, (MAP_PX / 2 - py) / ppi
+        return ((px - self.mapX0 - self.mapPx / 2) / self.ppi,
+                (self.mapY0 + self.mapPx / 2 - py) / self.ppi)
 
     # -- map drawing --
     def simulation(self):
@@ -1036,6 +1431,8 @@ class PlannerWindow(tk.Toplevel):
         whole motion simulation each time is what made it crawl and
         flicker -- the route only changes when the blocks or the start
         pose do."""
+        if self._frameSim is not None:      # mid-paint: nothing changes until it ends
+            return self._frameSim
         key = (repr(self.blocks), tuple(self.start))
         if self._simCache[0] != key:
             self._simCache = (key, simulate(self.blocks, tuple(self.start)))
@@ -1051,57 +1448,173 @@ class PlannerWindow(tk.Toplevel):
         self.after_idle(self._drawMap)
 
     def _drawMap(self):
+        """Repaint the route layer. The field render is created once and left
+        alone -- only the items drawn on top of it ("dyn") are replaced, all
+        inside this one callback, so the map never shows a half-drawn frame
+        and the big image isn't rebuilt every time something moves."""
         self._redrawPending = False
         c = self.map
-        c.delete("all")
-        if self.fieldImage:
-            c.create_image(0, 0, anchor="nw", image=self.fieldImage)
-            # A field render is a busy thing to draw a route over, so it's
-            # knocked back with a stippled dark wash (Tk canvases have no
-            # alpha) -- the field still reads, the path sits clearly on top.
-            c.create_rectangle(0, 0, MAP_PX, MAP_PX, fill="#0A0A12", stipple="gray25",
-                               outline="")
-        else:
-            c.create_rectangle(0, 0, MAP_PX, MAP_PX, fill="#1b1b22", outline="")
-        # tile grid (24 in) either way -- faint so it reads over the render
-        for v in range(-72, 73, 24):
-            px, _ = self.toMap(v, 0)
-            _, py = self.toMap(0, v)
-            col = "#5a5a66" if v == 0 else "#33333d"
-            c.create_line(px, 0, px, MAP_PX, fill=col, dash=(2, 6))
-            c.create_line(0, py, MAP_PX, py, fill=col, dash=(2, 6))
+        if not c.find_withtag("field"):
+            # Clean like path.jerryio: just the field on a flat dark ground --
+            # no grid, no wash over the render.
+            if self.fieldImage:
+                c.create_image(self.mapX0, self.mapY0, anchor="nw", image=self.fieldImage,
+                               tags="field")
+            else:
+                c.create_rectangle(self.mapX0, self.mapY0, self.mapX0 + self.mapPx,
+                                   self.mapY0 + self.mapPx, fill="#222222", outline="",
+                                   tags="field")
+            c.tag_lower("field")
+        c.delete("dyn")
+        c.delete("live")
+        # The simulation is looked up once per paint: pointHeading() asks for
+        # it for every point, and the cache key is a repr of every block.
+        self._frameSim = self.simulation()
+        try:
+            self._paintMap()
+        finally:
+            self._frameSim = None
+            self._tagNew("dyn")
+        self._paintLive()
+        self._tagNew("live")
+        c.tag_raise("live")
+        c.tag_raise("ui")
 
+    def _tagNew(self, tag):
+        """Tag the items just drawn: the ones not yet in any layer."""
+        c = self.map
+        for item in c.find_withtag("!field&&!ui&&!dyn&&!live"):
+            c.addtag_withtag(tag, item)
+
+    def redrawLive(self):
+        """Repaint only the live robot and its trail. The robot reports 20
+        times a second; redoing the whole route for each would be most of
+        the flicker, so those updates touch just this small layer, at most
+        about 25 times a second."""
+        if self._livePending or self._redrawPending:
+            return          # a repaint is already on its way, and includes this
+        self._livePending = True
+        self.after(40, self._drawLive)
+
+    def _drawLive(self):
+        self._livePending = False
+        if self._redrawPending:
+            return
+        c = self.map
+        c.delete("live")
+        self._paintLive()
+        self._tagNew("live")
+        c.tag_raise("live")
+        c.tag_raise("ui")
+
+    # A step this long between two trail samples is not driving: the robot's
+    # position was reset (setPose, "Send to robot") or the odometry glitched.
+    # Joining the two would draw a straight line clean across the field.
+    TRAIL_JUMP_IN = 18.0
+
+    def trailRuns(self):
+        """The robot's trail as separate polylines, split wherever it jumps or
+        has a point that can't be on the field, and ending at the live pose
+        when that is just a short step on."""
+        limit = FIELD_IN / 2 + 12
+        runs, run = [], []
+        for pt in self.robotPath:
+            x, y = pt
+            if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > limit or abs(y) > limit:
+                if len(run) > 1:
+                    runs.append(run)
+                run = []
+                continue
+            if run and math.hypot(x - run[-1][0], y - run[-1][1]) > self.TRAIL_JUMP_IN:
+                if len(run) > 1:
+                    runs.append(run)
+                run = []
+            run.append((x, y))
+        if run and self.robotPose and math.hypot(self.robotPose[0] - run[-1][0],
+                                                 self.robotPose[1] - run[-1][1])                 <= self.TRAIL_JUMP_IN:
+            run.append((self.robotPose[0], self.robotPose[1]))   # the thinned trail stops short
+        if len(run) > 1:
+            runs.append(run)
+        return runs
+
+    def _paintLive(self):
+        # robot: driven path then live pose
+        for run in self.trailRuns():
+            flat = [v for x, y in run for v in self.toMap(x, y)]
+            self.drawPolyline(flat, "#2EFF8C", 2)
+        if self.robotPose:
+            self.drawRobotMarker(self.robotPose, "#2EFF8C", "", robot=True)
+
+    def _paintMap(self):
+        c = self.map
         # planned route: every block's movement, drawn from where the
         # previous block left the robot, so the whole stack reads as one
-        # route. Unselected blocks in pink, the selected one in cyan.
+        # route. All in the path green, the selected block's leg brighter.
         sim = self.simulation()
-        self.drawRobotMarker(tuple(self.start), "#FF8C00", "S")
+        self.drawStartRobot()
+        # footprint boxes only at the ends of the route and the selected
+        # block -- one per block would bury a drawn path
+        lastMove = max((i for i, b in enumerate(self.blocks)
+                        if b["kind"] in MOTIONS or b["kind"] == "setPose"), default=None)
         for i, (b, (pose, shape)) in enumerate(zip(self.blocks, sim)):
             sel = (i == self.selected)
-            col = "#00F0FF" if sel else "#FF6B81"
-            w = 4 if sel else 2
+            col = PATH_SEL if sel else PATH_GREEN
+            w = 4 if sel else 3
             dash = (6, 3) if not b.get("forwards", True) else None
             if shape and shape[0] == "trace":
-                self.drawTrace(shape[1], col, w, dash)
-            elif shape and shape[0] in ("turn", "swing"):
+                self.drawTrace(shape[1], col, w, dash, arrow=False)
+            elif shape and shape[0] == "swing":     # just the line the robot's centre takes
+                self.drawTrace(shape[5], col, w, None, arrow=False)
+            elif shape and shape[0] == "turn":
+                # no arc for an applied turn: they pile up along a route. Only the
+                # selected turnToPoint shows where it aims.
                 _, x, y, a0, a1 = shape[:5]
-                if shape[0] == "swing":
-                    self.drawTrace(shape[5], col, w, None, arrow=False)
-                self.drawTurnArc(x, y, a0, a1, col, w, swing=(shape[0] == "swing"))
-                if b["kind"] in ("turnToPoint", "swingToPoint"):
+                if sel and b["kind"] == "turnToPoint":
                     x0, y0 = self.toMap(x, y)
                     x1, y1 = self.toMap(b["x"], b["y"])
                     c.create_line(x0, y0, x1, y1, fill=col, width=1, dash=(2, 4))
                     c.create_oval(x1 - 4, y1 - 4, x1 + 4, y1 + 4, outline=col)
-            if b["kind"] in MOTIONS or b["kind"] == "setPose":
-                self.drawRobotMarker(pose, col, str(i + 1), small=True)
+            # a marker only where it means something: the selected block and
+            # the end of the route (the flag), not one per block
+            swing = shape and shape[0] == "swing"
+            if swing and (sel or i == self.hoverSwing) and i != lastMove:
+                self.drawSwingEnd(shape, PATH_SEL)      # where the swing leaves the robot
+            elif sel and not swing and (b["kind"] in MOTIONS or b["kind"] == "setPose"):
+                self.drawRobotBox(pose, PURPLE, width=1, dash=(4, 3))
+            if i == lastMove:
+                self.drawRobotBox(pose, END_BOX, width=2)
 
-        # robot: driven path then live pose
-        if len(self.robotPath) > 1:
-            pts = [self.toMap(x, y) for x, y in self.robotPath]
-            self.drawPolyline([v for p in pts for v in p], "#2EFF8C", 2)
-        if self.robotPose:
-            self.drawRobotMarker(self.robotPose, "#2EFF8C", "", robot=True)
+        # The route's points, always visible like path.jerryio's: a disc on
+        # every block's target, drawn after all the lines so none hides one.
+        # The selected block's is larger; the last one carries the flag.
+        for i, b in enumerate(self.blocks):
+            if b["kind"] in ("moveToPoint", "moveToPose"):
+                r = 11 if i == self.selected else 8
+                self.drawPoint(b["x"], b["y"], PURPLE, r=r)
+                self.drawHeadingLine(i, r)
+            elif b["kind"].startswith("swing"):     # the point the swing ends on
+                r = 11 if i == self.selected else 8
+                self.drawPoint(*self.pointPos(i), PURPLE, r=r)
+                self.drawHeadingLine(i, r)
+        ends = [b for b in self.blocks if b["kind"] in ("moveToPoint", "moveToPose")]
+        if ends:
+            self.drawFlag(ends[-1]["x"], ends[-1]["y"])
+        self._chips = []
+        if self.pending:
+            self._paintPending()
+        else:
+            sel = self.selected
+            if sel is not None and sel < len(self.blocks) \
+                    and self.blocks[sel]["kind"] == "moveToPose":
+                self.drawLeadHandle(self.blocks[sel], self.poseBefore(sel), PATH_SEL)
+        if not self.pending and self.aimVisible():
+            i = self.selected
+            b = self.blocks[i]
+            if b["kind"] in self.AIM_KINDS:
+                self.drawAimLine(i, self.poseBefore(i))
+            else:                       # turn / swing to a point: show its target
+                self.drawPoint(b["x"], b["y"], PATH_SEL, r=8)
+            self.drawShapeChips(b, self.poseBefore(i))
 
         self.drawWaypoints()
 
@@ -1114,37 +1627,43 @@ class PlannerWindow(tk.Toplevel):
 
     def pathPoints(self):
         """The drawn route as (x, y, stop) points -- see path_points()."""
-        return path_points(self.waypoints, self.spacing(), self.smoothVar.get())
+        self.pathLegs = []
+        return path_points(self.effectiveWaypoints(), self.spacing(), self.smoothVar.get(),
+                           legs=self.pathLegs)
 
     def drawWaypoints(self):
         """Control points and the route through them, live while drawing."""
         if not self.waypoints:
             if self.drawMode:
-                self.drawInfo.config(text="click the map to drop points")
+                self.drawInfo.config(text="click the map to drop points" + (
+                    "  (continues from the end of the route)" if self.anchor() else ""))
             return
         c = self.map
         pts = self.pathPoints()
         if len(pts) > 1:
             flat = [v for x, y, _ in pts for v in self.toMap(x, y)]
-            self.drawPolyline(flat, "#FFD166", 3,
+            self.drawPolyline(flat, PATH_GREEN, 3,
                               dash=(7, 4) if self.reverseVar.get() else None)
-            self.drawDirectionArrows([(x, y) for x, y, _ in pts], "#FFD166")
         for i, w in enumerate(self.waypoints):
             px, py = self.toMap(w[0], w[1])
             straight = len(w) > 2 and w[2] == STRAIGHT
-            r = 8 if i == 0 else 6
-            col = "#FF8C00" if i == 0 else ("#7CE0FF" if straight else "#FFD166")
-            if straight:      # square = hard corner, circle = flows through
-                c.create_rectangle(px - r, py - r, px + r, py + r, outline="#101018", width=4)
-                c.create_rectangle(px - r, py - r, px + r, py + r, outline=col, width=2,
-                                   fill="#14141a")
+            r = 11
+            # translucent purple points like path.jerryio; a hard (straight)
+            # corner is a square instead of a disc
+            if straight:
+                c.create_rectangle(px - r, py - r, px + r, py + r, fill=POINT_FILL,
+                                   outline=PURPLE, width=1)
             else:
-                c.create_oval(px - r - 1, py - r - 1, px + r + 1, py + r + 1,
-                              outline="#101018", width=4)
-                c.create_oval(px - r, py - r, px + r, py + r, outline=col, width=2,
-                              fill="#14141a")
-            c.create_text(px, py, text=str(i + 1) if i else "S", fill=col,
-                          font=("Segoe UI", 7, "bold"))
+                self.drawPoint(w[0], w[1], PURPLE, r)
+            c.create_text(px, py, text=str(i + 1), fill="#f2f2f2", font=("Segoe UI", 7, "bold"))
+        self.drawWaypointHeadings()
+        lx, ly = self.waypoints[-1][0], self.waypoints[-1][1]
+        if len(pts) > 1:
+            # where the robot would end up, facing along the last leg
+            hdg = heading_to(pts[-2][0], pts[-2][1], pts[-1][0], pts[-1][1],
+                             not self.reverseVar.get())
+            self.drawRobotBox((pts[-1][0], pts[-1][1], hdg), END_BOX, width=2)
+        self.drawFlag(lx, ly)
         curves = sum(1 for w in self.waypoints if len(w) < 3 or w[2] == CURVE)
         dist = sum(math.hypot(b[0] - a[0], b[1] - a[1])
                    for a, b in zip(pts, pts[1:]))
@@ -1154,20 +1673,163 @@ class PlannerWindow(tk.Toplevel):
             text=f"{len(self.waypoints)} points ({curves} curve, "
                  f"{len(self.waypoints) - curves} straight)  ->  {shape}  ({dist:.0f} in)")
 
+    def wpTravelHeading(self, i):
+        """The way the robot faces leaving drawn point i along the route
+        (the last point: arriving at it), when no heading was chosen."""
+        fwd = not self.reverseVar.get()
+        wp = self.waypoints
+        if i + 1 < len(wp):
+            return heading_to(wp[i][0], wp[i][1], wp[i + 1][0], wp[i + 1][1], fwd)
+        if i > 0:
+            return heading_to(wp[i - 1][0], wp[i - 1][1], wp[i][0], wp[i][1], fwd)
+        end = self.anchor()
+        return end[2] if end is not None else 0.0
+
+    def wpHeading(self, i):
+        """(heading, set) of drawn point i: the one chosen with the heading
+        buttons, else the direction of travel."""
+        w = self.waypoints[i]
+        if len(w) > 3 and w[3] is not None:
+            return w[3], True
+        return self.wpTravelHeading(i), False
+
+    def setWpHeading(self, i, theta):
+        w = self.waypoints[i]
+        self.waypoints[i] = (w[0], w[1], w[2] if len(w) > 2 else CURVE,
+                             round(theta % 360.0, 1))
+
+    def curWp(self):
+        """Index of the drawn point the heading controls act on, or None."""
+        i = self.selWp
+        return i if self.drawMode and i is not None and i < len(self.waypoints) else None
+
+    def drawWaypointHeadings(self):
+        """A heading line out of every drawn point, as path.jerryio does. One
+        chosen with the heading buttons is solid with an arrowhead; the rest
+        are dashed and only show the direction of travel."""
+        for i, w in enumerate(self.waypoints):
+            h, isSet = self.wpHeading(i)
+            px, py = self.toMap(w[0], w[1])
+            rad = math.radians(h)
+            kx, ky = px + math.sin(rad) * self.HEAD_LEN, py - math.cos(rad) * self.HEAD_LEN
+            sel = i == self.selWp
+            self.map.create_line(px, py, kx, ky, fill="#d6c8ff" if isSet or sel else "#b3a6e6",
+                                 width=2, arrow="last")
+            if sel:
+                self.map.create_oval(px - 13, py - 13, px + 13, py + 13, outline="#d6c8ff",
+                                     width=2)
+
+    def routeEnd(self):
+        """(x, y, heading) the existing blocks leave the robot at, or None
+        with no blocks. The position is the last block's *target* point,
+        not where the simulated robot happened to stop, so a path drawn from
+        here joins the line already on the map with no gap."""
+        if not self.blocks:
+            return None
+        sim = self.simulation()
+        if not sim:
+            return None
+        x, y, th = sim[-1][0]
+        for b in reversed(self.blocks):
+            if b["kind"].startswith("swing"):
+                break           # a swing moves the robot: the route ends where it does
+            if b["kind"] in ("moveToPoint", "moveToPose", "setPose"):
+                return (b["x"], b["y"], th)
+        return (x, y, th)
+
+    def anchor(self):
+        """The pose a drawn path continues from: where the blocks already in
+        the plan leave the robot. None when there are no blocks (the first
+        point drawn is then the start pose) or while re-shaping a traced
+        route. It is looked up fresh every time, never stored, so editing
+        the blocks by hand moves it and the drawing can't drift off the end
+        of the route."""
+        if self.replaceOnApply:
+            return None
+        end = self.routeEnd()
+        if end is None and self.startPlaced:
+            end = tuple(self.start)         # the robot as placed on the map
+        elif end is None and self.robotPose:
+            # nothing planned yet: the first path starts from the robot
+            # itself, wherever it currently is
+            end = tuple(self.robotPose)
+        return end
+
+    def effectiveWaypoints(self):
+        """Control points of the drawing, led by the anchor if there is one."""
+        end = self.anchor()
+        # The leg out of the anchor is whatever the first point drawn is: a
+        # left click curves out of the route's end, a right click runs
+        # straight to it. (A straight anchor would make the first leg
+        # straight whatever you clicked.)
+        first = self.waypoints[0] if self.waypoints else None
+        mode = first[2] if first is not None and len(first) > 2 else STRAIGHT
+        lead = [(end[0], end[1], mode)] if end else []
+        return lead + list(self.waypoints)
+
     def toggleDraw(self):
+        if self.pending:
+            self.cancelPending()
         self.drawMode = not self.drawMode
-        self.drawBtn.config(relief="sunken" if self.drawMode else "raised")
+        self.aimPending = False
+        self.drawBtnRow.config(relief="sunken" if self.drawMode else "raised")
+        self._setIconActive("draw", self.drawMode)       # lit while drawing
         if self.drawMode and self.pickStart:
             self.togglePickStart()
         self.redrawMap()
 
     def undoWaypoint(self):
         if self.waypoints:
-            self.waypoints.pop()
+            self.redoStack.append(("wp", self.waypoints.pop()))
+            if self.selWp is not None and self.selWp >= len(self.waypoints):
+                self.selWp = None
+            self.syncPointPanel()
             self.redrawMap()
+
+    def pushUndo(self):
+        """Snapshot the plan before a path is applied, for undoPath()."""
+        self.undoStack.append(self.snapshot())
+        del self.undoStack[:-50]
+        self.redoStack = []             # a new edit forks history
+
+    def undoPath(self):
+        """Ctrl+Z: drop the control point being drawn, or, with none in
+        progress, take back the path that was applied last."""
+        if self.waypoints:
+            self.undoWaypoint()
+            return
+        if not self.undoStack:
+            return
+        self.redoStack.append(("plan", self.snapshot()))
+        self.restore(self.undoStack.pop())
+
+    def snapshot(self):
+        return (copy.deepcopy(self.blocks), list(self.start), self.selected)
+
+    def restore(self, snap):
+        self.blocks, start, self.selected = copy.deepcopy(snap[0]), snap[1], snap[2]
+        self.start = list(start)
+        for v, val in zip(self.startVars, self.start):
+            v.set(fmt(val))
+        self.replaceOnApply = False
+        self.refreshList()
+        self.showParams()
+
+    def redoPath(self):
+        """Ctrl+Y / Ctrl+Shift+Z: put back what Ctrl+Z last took away."""
+        if not self.redoStack:
+            return
+        kind, item = self.redoStack.pop()
+        if kind == "wp":
+            self.waypoints.append(item)
+            self.redrawMap()
+        else:
+            self.undoStack.append(self.snapshot())
+            self.restore(item)
 
     def clearWaypoints(self):
         self.waypoints = []
+        self.replaceOnApply = False
         self.drawInfo.config(text="")
         self.redrawMap()
 
@@ -1176,6 +1838,7 @@ class PlannerWindow(tk.Toplevel):
         path the robot actually drove. The movement blocks are the plan
         rather than scribble, so those are only cleared if asked for."""
         self.waypoints = []
+        self.replaceOnApply = False
         self.robotPath = []
         self.drawInfo.config(text="")
         if self.blocks and messagebox.askyesno(
@@ -1183,6 +1846,7 @@ class PlannerWindow(tk.Toplevel):
                              "block{} and the route they draw?".format(
                                  "" if len(self.blocks) == 1 else "s"),
                 default="no", parent=self):
+            self.pushUndo()
             self.blocks = []
             self.selected = None
             self.showParams()
@@ -1192,13 +1856,16 @@ class PlannerWindow(tk.Toplevel):
         """Flip a dropped point between curve and straight."""
         x, y = self.waypoints[i][0], self.waypoints[i][1]
         mode = self.waypoints[i][2] if len(self.waypoints[i]) > 2 else CURVE
-        self.waypoints[i] = (x, y, STRAIGHT if mode == CURVE else CURVE)
+        self.waypoints[i] = (x, y, STRAIGHT if mode == CURVE else CURVE) + tuple(
+            self.waypoints[i][3:])
         self.redrawMap()
 
     def removeWaypointAt(self, ex, ey):
         i = self._hitWaypoint(ex, ey)
         if i is not None:
             del self.waypoints[i]
+            self.selWp = None
+            self.syncPointPanel()
             self.redrawMap()
 
     def tracePointsFromBlocks(self):
@@ -1213,6 +1880,7 @@ class PlannerWindow(tk.Toplevel):
                 if math.hypot(pt[0] - pts[-1][0], pt[1] - pts[-1][1]) > 0.05:
                     pts.append(pt)
         self.waypoints = pts
+        self.replaceOnApply = True      # the traced route replaces the blocks
         if not self.drawMode:
             self.toggleDraw()
         else:
@@ -1234,21 +1902,18 @@ class PlannerWindow(tk.Toplevel):
         turnToHeading first, so the moveToPoint after it drives a
         straight line instead of steering onto the target as it goes."""
         pts = self.pathPoints()
+        end = self.anchor()
+        # With blocks already in the plan the drawing is led by their end
+        # point (see anchor()), so the new path is appended and joins on
+        # exactly; with none, the first point drawn becomes the start pose.
+        replace = end is None
+        fromRobot = end is not None and not self.blocks   # first path: starts at the robot
         if len(pts) < 2:
-            messagebox.showinfo("Draw path", "Drop at least two points on the map first.",
+            messagebox.showinfo("Draw path", "Drop at least one point on the map first."
+                                if end else "Drop at least two points on the map first.",
                                 parent=self)
             return
-        replace = True
-        if self.blocks:
-            ans = messagebox.askyesnocancel(
-                "Apply path",
-                "Replace the current blocks with the drawn path?\n\n"
-                "Yes  -- replace them (the first point becomes the start pose)\n"
-                "No   -- append the path to the end of the list",
-                parent=self)
-            if ans is None:
-                return
-            replace = ans
+        self.pushUndo()
         fwd = not self.reverseVar.get()
         exitRange = round(self.spacing() / 2.0, 2)
         # With "smooth" off the route is a turn-and-drive one: aim down each
@@ -1258,34 +1923,71 @@ class PlannerWindow(tk.Toplevel):
         if replace:
             x0, y0 = pts[0][0], pts[0][1]
             hdg = heading_to(x0, y0, pts[1][0], pts[1][1], fwd)
+            if len(self.waypoints[0]) > 3 and self.waypoints[0][3] is not None:
+                hdg = self.waypoints[0][3]         # the start heading was chosen
             self.start = [round(x0, 1), round(y0, 1), round(hdg, 1)]
             for v, val in zip(self.startVars, self.start):
                 v.set(fmt(val))
             rest = pts[1:]
             cx, cy, ch = x0, y0, hdg
         else:
-            rest = pts        # appended: drive to the first point too
-            sim = self.simulation()
-            cx, cy, ch = sim[-1][0] if sim else tuple(self.start)
+            if fromRobot:       # the start pose is where the robot is now, heading included
+                self.start = [round(v, 1) for v in end]
+                for v, val in zip(self.startVars, self.start):
+                    v.set(fmt(val))
+            cx, cy, ch = end
+            rest = pts[1:]      # pts[0] is the anchor: the robot is already there
+        # headings chosen on drawn points: each lands on the nearest point of
+        # the route, which then turns to it (and so stops there)
+        chosen = {}
+        for k, w in enumerate(self.waypoints):
+            if len(w) > 3 and w[3] is not None and not (replace and k == 0):
+                n = min(range(len(rest)),
+                        key=lambda m: math.hypot(rest[m][0] - w[0], rest[m][1] - w[1]),
+                        default=None)
+                if n is not None:
+                    chosen[n] = w[3]
+        legs = list(self.pathLegs)      # filled by pathPoints() above, one per point after the first
+        legs = legs[len(legs) - len(rest):] if len(legs) >= len(rest) else [True] * len(rest)
         for i, (x, y, stop) in enumerate(rest):
-            if turnFirst:
-                # only where the route actually turns -- a leg carrying
-                # straight on doesn't need (or want) a turn block
-                want = heading_to(cx, cy, x, y, fwd)
+            want = heading_to(cx, cy, x, y, fwd)
+            if turnFirst or legs[i]:
+                # A straight leg (right click) is aimed down first, so the
+                # moveToPoint after it drives a straight line. Without that
+                # the robot steers onto the point as it goes -- a curve --
+                # whenever it isn't already facing it. Only where the route
+                # actually turns: a leg carrying straight on needs no turn.
                 if abs((want - ch + 180) % 360 - 180) > self.TURN_DEG:
                     blocks.append(new_block("turnToHeading", theta=round(want, 2)))
                     blocks.append(new_block("waitUntilDone"))
-                ch = want       # the drive that follows holds this heading
+            ch = want           # arriving along this leg, the robot faces its way
             # points along a curve are flowed through (minSpeed + early exit);
             # straight points and the last point are arrived on properly.
-            stop = stop or i == len(rest) - 1
+            stop = stop or i == len(rest) - 1 or i in chosen
             blocks.append(new_block("moveToPoint", x=round(x, 2), y=round(y, 2), forwards=fwd,
                                     minSpeed=0 if stop else 40,
                                     earlyExitRange=0.0 if stop else exitRange))
             blocks.append(new_block("waitUntilDone"))
+            if i in chosen:
+                if abs((chosen[i] - ch + 180) % 360 - 180) > self.TURN_DEG:
+                    blocks.append(new_block("turnToHeading", theta=round(chosen[i] % 360.0, 2)))
+                    blocks.append(new_block("waitUntilDone"))
+                ch = chosen[i]
             cx, cy = x, y
         self.blocks = blocks if replace else self.blocks + blocks
-        self.selected = len(self.blocks) - len(blocks)
+        # Select the last movement of the path just added: a block added next
+        # goes in after it (past its waitUntilDone), i.e. on the end of this
+        # path -- not after the path's first block, which is where the swing
+        # used to end up.
+        newEnd = max((k for k in range(len(self.blocks) - len(blocks), len(self.blocks))
+                      if self.blocks[k]["kind"] in ("moveToPoint", "moveToPose")),
+                     default=len(self.blocks) - 1)
+        self.selected = newEnd
+        # The drawing is spent; the next one continues from the new end of
+        # the route (and Ctrl+Z takes this path back).
+        self.waypoints = []
+        self.selWp = None
+        self.replaceOnApply = False
         self.refreshList()
         self.showParams()
 
@@ -1321,12 +2023,106 @@ class PlannerWindow(tk.Toplevel):
     HALO = "#0B0B12"
 
     def drawPolyline(self, flat, color, width, dash=None, arrow=None):
+        # one clean line, no dark halo -- the field render is plain enough
         if len(flat) < 4:
             return
-        self.map.create_line(*flat, fill=self.HALO, width=width + 4, dash=dash,
-                             capstyle="round", joinstyle="round")
         self.map.create_line(*flat, fill=color, width=width, dash=dash, arrow=arrow,
                              capstyle="round", joinstyle="round")
+
+    def drawPoint(self, x, y, color, r=11):
+        """A path point as path.jerryio draws it: a purple disc with a thin
+        rim. Solid rather than see-through -- stippled fills are slow to
+        paint and were part of the flicker."""
+        px, py = self.toMap(x, y)
+        self.map.create_oval(px - r, py - r, px + r, py + r, fill=POINT_FILL, outline=color,
+                             width=1)
+
+    HEAD_LEN = 26      # px from a point's centre to the knob on its heading line
+
+    def headingKnob(self, i):
+        """Map position (px, py) of block i's heading knob, and the point."""
+        px, py = self.toMap(*self.pointPos(i))
+        rad = math.radians(self.pointHeading(i)[0])
+        return (px + math.sin(rad) * self.HEAD_LEN, py - math.cos(rad) * self.HEAD_LEN), (px, py)
+
+    def pointPos(self, i):
+        """Field (x, y) of block i's point. A swing has no target of its own
+        (or aims at something else), so its point is where it leaves the robot."""
+        b = self.blocks[i]
+        if b["kind"].startswith("swing"):
+            sim = self.simulation()
+            if i < len(sim):
+                return sim[i][0][0], sim[i][0][1]
+        return b["x"], b["y"]
+
+    def drawHeadingLine(self, i, r):
+        """The line out of a point showing the way the robot faces there. A
+        heading that has been set is solid; one that is only the direction
+        of travel is dashed and dim. The selected point gets a knob to drag."""
+        (kx, ky), (px, py) = self.headingKnob(i)
+        isSet = self.pointHeading(i)[1]
+        col = "#d6c8ff" if (isSet or i == self.selected) else "#b3a6e6"
+        self.map.create_line(px, py, kx, ky, fill=col, width=2, arrow="last")
+        if i == self.selected:
+            self.map.create_oval(kx - 5, ky - 5, kx + 5, ky + 5, fill="#d6c8ff", outline=PURPLE,
+                                 width=2)
+
+    def _hitHeadingKnob(self, ex, ey):
+        i = self.selected
+        if i is None or i >= len(self.blocks) or self.blocks[i]["kind"] not in (
+                "moveToPoint", "moveToPose", "swingToHeading", "swingToPoint"):
+            return None
+        (kx, ky), _ = self.headingKnob(i)
+        return i if math.hypot(kx - ex, ky - ey) <= self.HIT_PX else None
+
+    def startKnob(self):
+        """Map position of the knob on the start robot's heading line."""
+        px, py = self.toMap(self.start[0], self.start[1])
+        rad = math.radians(self.start[2])
+        return px + math.sin(rad) * self.HEAD_LEN, py - math.cos(rad) * self.HEAD_LEN
+
+    def drawStartRobot(self):
+        """The robot where the plan starts: its footprint box, a disc on its
+        centre and a heading line with a knob. Drag the robot to put it
+        somewhere else, drag the knob to turn it."""
+        px, py = self.toMap(self.start[0], self.start[1])
+        kx, ky = self.startKnob()
+        self.drawRobotBox(tuple(self.start), PURPLE, width=2)
+        self.drawPoint(self.start[0], self.start[1], PURPLE, r=9)
+        self.map.create_line(px, py, kx, ky, fill="#d6c8ff", width=2)
+        self.map.create_oval(kx - 5, ky - 5, kx + 5, ky + 5, fill="#d6c8ff", outline=PURPLE,
+                             width=2)
+
+    def _hitStart(self, ex, ey):
+        """True on the start robot's body (inside its footprint)."""
+        px, py = self.toMap(self.start[0], self.start[1])
+        length, wid = self.robotSize()
+        reach = max(self.HIT_PX, min(length, wid) / 2 * self.ppi)
+        return math.hypot(px - ex, py - ey) <= reach
+
+    def _hitStartKnob(self, ex, ey):
+        kx, ky = self.startKnob()
+        return math.hypot(kx - ex, ky - ey) <= self.HIT_PX
+
+    def finishStartDrag(self):
+        """The robot has been put down: that is now where the first path
+        starts, and (idle brain only) where the robot itself is told it is."""
+        self.startPlaced = True
+        if self.link and self.planStatus[0] != "RUNNING":
+            self.link._send(f"POSE {self.start[0]:.2f} {self.start[1]:.2f} {self.start[2]:.2f}")
+
+    def drawFlag(self, x, y):
+        """Chequered finish flag standing on the last point of the route."""
+        px, py = self.toMap(x, y)
+        top = py - 24
+        self.map.create_line(px, py - 4, px, top, fill="#e8e8e8", width=2)
+        s = 5
+        for row in range(2):
+            for col in range(3):
+                dark = (row + col) % 2 == 0
+                x0, y0 = px + 1 + col * s, top + row * s
+                self.map.create_rectangle(x0, y0, x0 + s, y0 + s, outline="",
+                                          fill="#111111" if dark else "#f4f4f4")
 
     def drawDirectionArrows(self, pts, color, every_px=70):
         """Arrowheads spaced along a route, so which way round it goes is
@@ -1388,75 +2184,245 @@ class PlannerWindow(tk.Toplevel):
         self.map.create_line(ex - math.sin(tang) * 6, ey + math.cos(tang) * 6, ex, ey,
                              fill=color, width=width, arrow="last")
 
-    def drawRobotMarker(self, pose, color, label, small=False, robot=False):
+    def robotSize(self):
+        """(length, width) in inches from the window, falling back to the
+        default for anything that isn't a positive number."""
+        def num(var):
+            try:
+                v = float(var.get())
+                return v if v > 0 else DEFAULT_ROBOT_IN
+            except (ValueError, tk.TclError):
+                return DEFAULT_ROBOT_IN
+        return num(self.robotLenVar), num(self.robotWidVar)
+
+    def drawRobotBox(self, pose, color, width=2, dash=None):
+        """The robot's footprint (length along the heading, width across it)
+        centred on `pose`, rotated to its heading, with the front edge
+        marked so it's clear which way it faces."""
+        x, y, th = pose
+        px, py = self.toMap(x, y)
+        ppi = self.ppi
+        length, wid = self.robotSize()
+        rad = math.radians(th)
+        fwd = (math.sin(rad), -math.cos(rad))     # screen direction of the heading
+        right = (math.cos(rad), math.sin(rad))
+        corners = []
+        for a, f in ((-1, 1), (1, 1), (1, -1), (-1, -1)):     # front-left first
+            ca, cf = a * wid / 2 * ppi, f * length / 2 * ppi
+            corners += [px + right[0] * ca + fwd[0] * cf, py + right[1] * ca + fwd[1] * cf]
+        self.map.create_polygon(*corners, outline=color, fill="", width=width, dash=dash)
+        self.map.create_line(*corners[0:4], fill=color, width=width + 2)   # front edge
+
+    def drawSwingEnd(self, shape, color):
+        """One footprint box where a swing leaves the robot, turned to the
+        heading it ends on."""
+        trace, heads = shape[5], shape[6]
+        if len(trace) >= 2:
+            x, y = trace[-1]
+            self.drawRobotBox((x, y, heads[-1]), color, width=2)
+
+    def _swingAt(self, ex, ey):
+        """Index of the swing whose path (or end footprint) is under the mouse."""
+        best, bestD = None, 14.0
+        for i, (b, (pose, shape)) in enumerate(zip(self.blocks, self.simulation())):
+            if not shape or shape[0] != "swing":
+                continue
+            for x, y in shape[5][::2] + [shape[5][-1]]:
+                px, py = self.toMap(x, y)
+                d = math.hypot(px - ex, py - ey)
+                if d < bestD:
+                    best, bestD = i, d
+        return best
+
+    def drawRobotMarker(self, pose, color, label, small=False, robot=False, box=False):
         x, y, th = pose
         px, py = self.toMap(x, y)
         r = 9 if not small else 6
         rad = math.radians(th)
         tx, ty = px + math.sin(rad) * (r + 10), py - math.cos(rad) * (r + 10)
+        if robot or box:
+            self.drawRobotBox(pose, color, width=2 if robot else 1, dash=None if robot else (4, 3))
         if robot:
-            # robot outline (18 in square) rotated to heading
-            half = 9 * MAP_PX / FIELD_IN
-            corners = []
-            for cx, cy in ((-half, -half), (half, -half), (half, half), (-half, half)):
-                rx = cx * math.cos(rad) - cy * math.sin(rad)
-                ry = cx * math.sin(rad) + cy * math.cos(rad)
-                corners += [px + rx, py + ry]
-            self.map.create_polygon(*corners, outline=color, fill="", width=2)
-        self.map.create_oval(px - r - 1, py - r - 1, px + r + 1, py + r + 1,
-                             outline=self.HALO, width=4)
-        self.map.create_oval(px - r, py - r, px + r, py + r, outline=color, width=2,
-                             fill="#14141a" if not robot else "")
-        self.map.create_line(px, py, tx, ty, fill=self.HALO, width=5, arrow="last")
+            self.map.create_oval(px - r, py - r, px + r, py + r, outline=color, width=2)
+        else:
+            self.drawPoint(x, y, color, r=r + 2)
         self.map.create_line(px, py, tx, ty, fill=color, width=2, arrow="last")
         if label:
             self.map.create_text(px, py, text=label, fill=color, font=("Segoe UI", 8, "bold"))
 
+    def _onMapLeave(self, _e):
+        self._hoverOver(None)
+        if self.hoverSwing is not None:
+            self.hoverSwing = None
+            self.redrawMap()
+
     def onMapMotion(self, e):
+        icon = self._iconAt(e.x, e.y)
+        self._hoverOver(icon)
+        if icon:
+            self.mapStatus.config(text=self.icons[icon]["tip"])
+            if str(self.map.cget("cursor")) != "hand2":
+                self.map.config(cursor="hand2")
+            return
         x, y = self.toField(e.x, e.y)
+        hs = None if (self.pending or self.drag) else self._swingAt(e.x, e.y)
+        if hs != self.hoverSwing:           # hovering a swing shows the body's path through it
+            self.hoverSwing = hs
+            self.redrawMap()
         if self.pickStart:
             hint = "   -- click to set START pose"
+        elif self.pending:
+            hint = "   -- tap to place, drag to adjust, Enter = Apply, Esc = cancel"
         elif self.drawMode:
             i = self._hitWaypoint(e.x, e.y)
             hint = ("   -- drag to move, right-click to flip curve/straight, "
                     "shift-click to remove") if i is not None else \
                    "   -- left-click = curve point, right-click = straight point"
+        elif self._hitAimKnob(e.x, e.y) is not None:
+            hint = "   -- drag to aim this turn"
+        elif self._hitHeadingKnob(e.x, e.y) is not None:
+            hint = "   -- drag to turn this point's heading"
         elif self._hitBlockPoint(e.x, e.y) is not None:
             hint = "   -- drag to move this block's point"
+        elif self._hitStartKnob(e.x, e.y):
+            hint = "   -- drag to turn the robot"
+        elif self._hitStart(e.x, e.y):
+            hint = "   -- drag to put the robot where it is"
+        elif self.aimable() and (not self.drawMode or self.aimPending):
+            kind = self.blocks[self.selected]["kind"]
+            what = "swing" if kind.startswith("swing") else "turn"
+            hint = (f"   -- click or drag to aim this {what}" if kind in self.AIM_KINDS
+                    else f"   -- click to set where this {what} aims; drag to adjust")
         else:
             hint = ""
-        self.mapStatus.config(text=f"({x:6.1f}, {y:6.1f}) in" + hint)
+        # the cursor says what a click will do: a crosshair when it drops a
+        # point, a hand over anything that can be picked up
+        grab = (self._chipAt(e.x, e.y) is not None or self._hitHeadingKnob(e.x, e.y) is not None
+                or self._hitStartKnob(e.x, e.y)
+                or self._hitAimKnob(e.x, e.y) is not None
+                or self._hitBlockPoint(e.x, e.y) is not None or self._hitStart(e.x, e.y)
+                or (self.drawMode and self._hitWaypoint(e.x, e.y) is not None))
+        cursor = "hand2" if grab else ("crosshair" if self.drawMode or self.pickStart or self.pending
+                                       or (self.aimable() and self.aimPending) else "arrow")
+        if str(self.map.cget("cursor")) != cursor:
+            self.map.config(cursor=cursor)
+        # inches (what the code uses and Jerry.io exports); the cm are what
+        # path.jerryio's own cursor readout and point panel show on screen
+        self.mapStatus.config(text=f"({x:6.1f}, {y:6.1f}) in  = ({x * 2.54:7.1f}, "
+                                   f"{y * 2.54:7.1f}) cm" + hint)
 
     def onMapPress(self, e):
+        icon = self._iconAt(e.x, e.y)
+        if icon:                                # a click on one of the map's icons
+            self.icons[icon]["cmd"]()
+            return
+        chip = self._chipAt(e.x, e.y)
+        if chip:                                # a shape option beside the selected swing
+            self._applyChip(chip)
+            return
         x, y = self.toField(e.x, e.y)
         x, y = round(x, 1), round(y, 1)
         if self.pickStart:
             self.start[0], self.start[1] = x, y
             self.startVars[0].set(fmt(x))
             self.startVars[1].set(fmt(y))
+            self.startPlaced = True
             self.togglePickStart()
             self.redrawMap()
             return
+        if self.pending:                        # placing a motion: the tap sets where it goes
+            knob = self._hitPendingKnob(e.x, e.y)
+            if knob == "lead":
+                self.drag = ("pendlead", 0)
+            elif knob == "hdg":
+                self.drag = ("pend", 0)         # a drag turns the finish heading
+            else:
+                self._placePending(e.x, e.y, True)
+                self.drag = ("pend", 0)
+            return
+        k = self._hitLeadKnob(e.x, e.y)         # the arc's lead point on the selected moveToPose
+        if k is not None:
+            self.pushUndo()
+            self.drag = ("lead", k)
+            return
+        k = self._hitHeadingKnob(e.x, e.y)     # the knob on the selected point's heading line
+        if k is not None:
+            self.pushUndo()
+            self.drag = ("hdg", k)
+            return
+        k = self._hitAimKnob(e.x, e.y)          # the knob on a selected turn / swing's aim line
+        if k is not None:
+            self.pushUndo()
+            self.drag = ("aim", k)
+            return
+        if self._hitStartKnob(e.x, e.y):       # the knob on the start robot's heading line
+            self.pushUndo()
+            self.drag = ("starthdg", 0)
+            return
+        if self.drawMode and self.aimPending and self.aimable():
+            self.pushUndo()
+            kind = self.blocks[self.selected]["kind"]
+            if kind in self.AIM_KINDS:
+                self._aimAt(self.selected, e.x, e.y)
+                self.drag = ("aim", self.selected)
+            else:
+                self.blocks[self.selected]["x"], self.blocks[self.selected]["y"] = x, y
+                self.autoSide(self.selected)
+                self.drag = ("block", self.selected)
+            self.showParams()
+            self.refreshList()
+            return
         if self.drawMode:
             i = self._hitWaypoint(e.x, e.y)
+            j = self._hitBlockPoint(e.x, e.y) if i is None else None
+            if j is not None:                  # a point of the route: drag it, as in jerry
+                self.selWp = None
+                self.pushUndo()
+                self.selected = j
+                self.refreshList()
+                self.showParams()
+                self.drag = ("block", j)
+                return
+            if i is None and self._hitStart(e.x, e.y) and not self.waypoints:
+                self.pushUndo()                # pick the robot up (nothing drawn yet to click on)
+                self.drag = ("start", 0)
+                return
             if i is None:                      # new curve point at the end
+                self.redoStack = []
                 self.waypoints.append((x, y, CURVE))
                 i = len(self.waypoints) - 1
+            self.selWp = i                     # its heading is set with the heading buttons
             self.drag = ("wp", i)
+            self.syncPointPanel()
             self.redrawMap()
             return
         i = self._hitBlockPoint(e.x, e.y)      # grab a block's point and drag it
         if i is not None:
+            self.pushUndo()                    # so Ctrl+Z puts a dragged point back
             if i != self.selected:
                 self.selected = i
                 self.refreshList()
                 self.showParams()
             self.drag = ("block", i)
             return
+        if self._hitStart(e.x, e.y):           # point at the robot and drag it where it is
+            self.pushUndo()
+            self.drag = ("start", 0)
+            return
+        if self.aimable() and self.blocks[self.selected]["kind"] in self.AIM_KINDS:
+            # a turn / swing to a heading: the click (and drag) aims it
+            self.pushUndo()
+            self._aimAt(self.selected, e.x, e.y)
+            self.drag = ("aim", self.selected)
+            self.showParams()
+            self.refreshList()
+            return
         if self.selected is None or self.blocks[self.selected]["kind"] not in HAS_POINT:
             return
+        self.pushUndo()
         b = self.blocks[self.selected]
         b["x"], b["y"] = x, y
+        self.autoSide(self.selected)
         self.drag = ("block", self.selected)
         self.showParams()
         self.refreshList()
@@ -1467,20 +2433,62 @@ class PlannerWindow(tk.Toplevel):
         x, y = self.toField(e.x, e.y)
         x, y = round(x, 1), round(y, 1)
         what, i = self.drag
-        if what == "wp":
+        if what == "pend":
+            if self.pending:
+                self._placePending(e.x, e.y, False)
+        elif what == "pendlead":
+            if self.pending:
+                self.setLead(self.pending[0], self._poseAt(self.pending[1]), e.x, e.y)
+                self.syncPendingParams()
+                self.redrawMap()
+        elif what == "lead" and i < len(self.blocks):
+            self.setLead(self.blocks[i], self.poseBefore(i), e.x, e.y)
+            self.codeLabel.config(text=block_code(self.blocks[i]))
+            self.syncList()
+        elif what == "wp":
             if i < len(self.waypoints):
                 w = self.waypoints[i]
-                self.waypoints[i] = (x, y, w[2] if len(w) > 2 else CURVE)
+                self.waypoints[i] = (x, y, w[2] if len(w) > 2 else CURVE) + tuple(w[3:])
+                self.syncPointPanel()
                 self.redrawMap()
+        elif what == "start":
+            self.start[0], self.start[1] = x, y
+            for v, val in zip(self.startVars, self.start):
+                v.set(fmt(val))
+            self.redrawMap()
+        elif what == "starthdg":
+            px, py = self.toMap(self.start[0], self.start[1])
+            if math.hypot(e.x - px, e.y - py) > 3:
+                self.start[2] = round(math.degrees(math.atan2(e.x - px, py - e.y)) % 360.0, 1)
+                self.startVars[2].set(fmt(self.start[2]))
+                self.redrawMap()
+        elif what == "aim" and i < len(self.blocks):
+            self._aimAt(i, e.x, e.y)
+            self.codeLabel.config(text=block_code(self.blocks[i]))
+            self.syncList()
+        elif what == "hdg" and i < len(self.blocks):
+            # turn the heading to point at the mouse
+            _, (px, py) = self.headingKnob(i)
+            if math.hypot(e.x - px, e.y - py) > 3:
+                self.setPointHeading(i, math.degrees(math.atan2(e.x - px, py - e.y)))
+                self.codeLabel.config(text=block_code(self.blocks[i]))
+                self.syncPointPanel()
+                self.syncList()
         elif i < len(self.blocks):
             b = self.blocks[i]
             b["x"], b["y"] = x, y
+            self.autoSide(i)
             self.codeLabel.config(text=block_code(b))
-            self.refreshList()          # redraws the map too
+            self.syncPointPanel()
+            self.syncList()             # redraws the map too
 
     def onMapRelease(self, _e):
-        if self.drag and self.drag[0] == "block":
+        if self.drag and self.drag[0] in ("start", "starthdg"):
+            self.finishStartDrag()
+        if self.drag and self.drag[0] in ("block", "hdg", "aim", "lead"):
             self.showParams()
+        if self.drag and self.drag[0] in ("aim", "block"):
+            self.aimPending = False         # aimed: the next click drops a point again
         self.drag = None
 
     def onMapRightClick(self, e):
@@ -1491,10 +2499,15 @@ class PlannerWindow(tk.Toplevel):
             return
         i = self._hitWaypoint(e.x, e.y)
         if i is not None:
+            self.selWp = i
+            self.syncPointPanel()
             self.toggleWaypointMode(i)
             return
         x, y = self.toField(e.x, e.y)
+        self.redoStack = []
         self.waypoints.append((round(x, 1), round(y, 1), STRAIGHT))
+        self.selWp = len(self.waypoints) - 1
+        self.syncPointPanel()
         self.redrawMap()
 
     # -- driving (WASD) --
@@ -1590,6 +2603,7 @@ class PlannerWindow(tk.Toplevel):
             self.start = [float(v.get()) for v in self.startVars]
         except ValueError:
             return
+        self.startPlaced = True
         self.redrawMap()
 
     def sendStartPose(self):
@@ -1612,6 +2626,7 @@ class PlannerWindow(tk.Toplevel):
     def useRobotPose(self):
         if self.robotPose:
             self.start = [round(v, 1) for v in self.robotPose]
+            self.startPlaced = True
             for v, val in zip(self.startVars, self.start):
                 v.set(fmt(val))
             self.redrawMap()
@@ -1626,23 +2641,229 @@ class PlannerWindow(tk.Toplevel):
             self.listbox.see(self.selected)
         self.redrawMap()
 
+    def syncList(self):
+        """refreshList() for the middle of a drag: the block list has the same
+        number of rows, so only the rows whose text changed are rewritten.
+        Rebuilding the whole listbox on every mouse move made it flash."""
+        if self.listbox.size() != len(self.blocks):
+            return self.refreshList()
+        for k, b in enumerate(self.blocks):
+            text = f"{k + 1:2d}. {block_summary(b)}"
+            if self.listbox.get(k) != text:
+                self.listbox.delete(k)
+                self.listbox.insert(k, text)
+        want = (self.selected,) if self.selected is not None and self.selected < len(self.blocks) \
+            else ()
+        if tuple(self.listbox.curselection()) != want:
+            self.listbox.selection_clear(0, "end")
+            for k in want:
+                self.listbox.selection_set(k)
+        self.redrawMap()
+
     def onSelect(self, _e=None):
+        self.pending = None
+        self.aimPending = False
         sel = self.listbox.curselection()
         self.selected = sel[0] if sel else None
         self.showParams()
         self.redrawMap()
 
+    # -- placing a motion: pick it, tap the map, see its path, then Apply --
+    def pickMotion(self, kind):
+        """A movement button. A motion is previewed before it becomes a
+        block: tap the map and the path the robot would take shows as one
+        dashed line; Enter / Apply adds it, Esc drops it. Everything else
+        (wait, setPose, ...) is added straight away, as is anything while
+        the path editor is open."""
+        self.pending = None
+        if kind not in MOTIONS or self.drawMode:
+            self.addBlock(kind)
+            return
+        at = len(self.blocks) if self.selected is None else self.selected + 1
+        if at < len(self.blocks) and self.blocks[at]["kind"] == "waitUntilDone":
+            at += 1                 # never between a movement and its waitUntilDone
+        b = new_block(kind)
+        x, y, th = self._poseAt(at)
+        if kind in HAS_POINT:
+            b["x"], b["y"] = round(x, 1), round(y, 1)
+        if kind in HAS_HEADING:
+            b["theta"] = round(th, 1)
+        self.pending = (b, at)
+        self.showParams()           # its parameters are editable straight away
+        self.mapStatus.config(text=f"{kind}: tap the map to place it"
+                                   + (" (drag to turn it)" if kind == "moveToPose" else "")
+                                   + "  --  Enter = Apply, Esc = cancel")
+        self.redrawMap()
+
+    def _poseAt(self, at):
+        """Where the robot is as the block at index `at` would start."""
+        sim = self.simulation()
+        return sim[at - 1][0] if 0 < at <= len(sim) else tuple(self.start)
+
+    def _placePending(self, ex, ey, first):
+        """A tap (first) or drag on the map while a motion is being placed."""
+        b, at = self.pending
+        k = b["kind"]
+        x0, y0, th0 = self._poseAt(at)
+        if k in self.AIM_KINDS:                     # aimed by direction
+            px, py = self.toMap(x0, y0)
+            if math.hypot(ex - px, ey - py) < 4:
+                return
+            b["theta"] = round(math.degrees(math.atan2(ex - px, py - ey)) % 360.0, 1)
+        elif first or k != "moveToPose":            # a target point
+            fx, fy = self.toField(ex, ey)
+            b["x"], b["y"] = round(fx, 1), round(fy, 1)
+            if k == "moveToPose":
+                b["theta"] = round(heading_to(x0, y0, b["x"], b["y"]), 1)
+        else:                                       # moveToPose: drag turns the finish heading
+            px, py = self.toMap(b["x"], b["y"])
+            if math.hypot(ex - px, ey - py) >= 4:
+                b["theta"] = round(math.degrees(math.atan2(ex - px, py - ey)) % 360.0, 1)
+        self._pendingSide()
+        self.syncPendingParams()
+        self.redrawMap()
+
+    def _pendingSide(self):
+        """Lock the side a pending swing turns towards (the other one if it
+        goes backwards)."""
+        b, at = self.pending
+        if not b["kind"].startswith("swing"):
+            return
+        x0, y0, th0 = self._poseAt(at)
+        target = b["theta"] if b["kind"] == "swingToHeading" else \
+            heading_to(x0, y0, b["x"], b["y"], b.get("forwards", True))
+        err = angle_err(target, th0, b.get("direction", "AUTO"))
+        if abs(err) > 0.5:
+            b["side"] = swing_side(err, b.get("forwards", True))
+
+    def _paintPending(self):
+        """The motion being placed: just its path (dashed, in its own colour)
+        and a ring on where it goes. No handles, nothing else."""
+        b, at = self.pending
+        pose = self._poseAt(at)
+        shape = simulate([b], pose)[0][1]
+        c = self.map
+        if shape and shape[0] == "trace":
+            self.drawTrace(shape[1], PREVIEW, 3, (6, 3), arrow=False)
+        elif shape and shape[0] == "swing":         # a line and one box where it ends
+            self.drawTrace(shape[5], PREVIEW, 3, (6, 3), arrow=False)
+            self.drawSwingEnd(shape, PREVIEW)
+        elif shape and shape[0] == "turn":
+            _, x, y, a0, a1 = shape[:5]
+            self.drawTurnArc(x, y, a0, a1, PREVIEW, 3, swing=False)
+        if b["kind"] in HAS_POINT:
+            px, py = self.toMap(b["x"], b["y"])
+            c.create_oval(px - 7, py - 7, px + 7, py + 7, outline=PREVIEW, width=2)
+            if b["kind"] == "moveToPose":           # facing there, and the arc's lead point
+                rad = math.radians(b["theta"])
+                c.create_line(px, py, px + math.sin(rad) * 24, py - math.cos(rad) * 24,
+                              fill=PREVIEW, width=2, arrow="last")
+                self.drawLeadHandle(b, pose, PREVIEW)
+            elif b["kind"] in self.AIM_POINT_KINDS:
+                x0, y0 = self.toMap(pose[0], pose[1])
+                c.create_line(x0, y0, px, py, fill=PREVIEW, width=1, dash=(2, 4))
+        self.drawShapeChips(b, pose)        # the same settings chips an added swing has
+
+    # -- the arc of a moveToPose --
+    # Its curve is lemlib's boomerang: the robot chases a "carrot" that sits
+    # behind the target along its finishing heading, lead * distance away.
+    # So two points shape the arc, like the handles of a bezier: the
+    # heading knob out the front of the target (the way it ends up
+    # facing) and the lead point behind it (how wide the curve swings).
+    def leadHandle(self, b, pose0):
+        """Map position of the lead point of moveToPose block b."""
+        tth = b["theta"] if b.get("forwards", True) else b["theta"] + 180
+        dist = math.hypot(b["x"] - pose0[0], b["y"] - pose0[1])
+        r, reach = math.radians(tth), b.get("lead", 0.6) * dist
+        return self.toMap(b["x"] - reach * math.sin(r), b["y"] - reach * math.cos(r))
+
+    def setLead(self, b, pose0, ex, ey):
+        """Slide the lead point to the mouse, along the heading line."""
+        dist = math.hypot(b["x"] - pose0[0], b["y"] - pose0[1])
+        if dist < 1.0:
+            return
+        tth = b["theta"] if b.get("forwards", True) else b["theta"] + 180
+        mx, my = self.toField(ex, ey)
+        r = math.radians(tth)
+        back = -((mx - b["x"]) * math.sin(r) + (my - b["y"]) * math.cos(r))
+        b["lead"] = round(max(0.0, min(1.0, back / dist)), 2)
+
+    def drawLeadHandle(self, b, pose0, color):
+        hx, hy = self.leadHandle(b, pose0)
+        tx, ty = self.toMap(b["x"], b["y"])
+        self.map.create_line(tx, ty, hx, hy, fill=color, width=1, dash=(2, 3))
+        self.map.create_oval(hx - 5, hy - 5, hx + 5, hy + 5, fill=color, outline="")
+
+    def _hitLeadKnob(self, ex, ey):
+        """Index of the selected moveToPose whose lead point is under the mouse."""
+        i = self.selected
+        if i is None or i >= len(self.blocks) or self.blocks[i]["kind"] != "moveToPose":
+            return None
+        hx, hy = self.leadHandle(self.blocks[i], self.poseBefore(i))
+        return i if math.hypot(hx - ex, hy - ey) <= self.HIT_PX else None
+
+    def _hitPendingKnob(self, ex, ey):
+        """"lead" or "hdg" when the mouse is on a handle of the moveToPose
+        being placed, else None."""
+        b, at = self.pending
+        if b["kind"] != "moveToPose":
+            return None
+        hx, hy = self.leadHandle(b, self._poseAt(at))
+        if math.hypot(hx - ex, hy - ey) <= self.HIT_PX:
+            return "lead"
+        tx, ty = self.toMap(b["x"], b["y"])
+        rad = math.radians(b["theta"])
+        if math.hypot(tx + math.sin(rad) * 24 - ex, ty - math.cos(rad) * 24 - ey) <= self.HIT_PX:
+            return "hdg"
+        return None
+
+    def applyAction(self):
+        """Enter / the Apply button: add the motion being placed, or else
+        turn the drawn path into blocks."""
+        if self.pending:
+            self.applyPending()
+        elif self.drawMode:
+            self.applyDrawnPath()
+
+    def applyPending(self):
+        b, at = self.pending
+        self.pending = None
+        self.pushUndo()
+        self.blocks.insert(at, b)
+        # lemlib motions are asynchronous: each gets its waitUntilDone, as addBlock does
+        self.blocks.insert(at + 1, new_block("waitUntilDone"))
+        self.selected = at
+        self.refreshList()
+        self.showParams()
+        self.mapStatus.config(text=f"{b['kind']} added")
+
+    def cancelPending(self):
+        self.pending = None
+        self.mapStatus.config(text="")
+        self.showParams()           # back to the selected block's
+        self.redrawMap()
+
     def addBlock(self, kind):
         # New blocks start where the route currently ends, so the map shows
         # something sensible before you've typed anything.
+        aims = kind in self.AIM_KINDS + self.AIM_POINT_KINDS
+        if self.drawMode and aims and self.waypoints and len(self.pathPoints()) >= 2:
+            # The points drawn so far are not blocks yet, so the swing would
+            # have nothing to hang off and land on the robot's pose. Apply
+            # them first: the swing then goes on the end of this path.
+            self.applyDrawnPath()
+        self.aimPending = self.drawMode and aims
         sim = self.simulation()
         end = sim[-1][0] if sim else tuple(self.start)
+        self.pushUndo()
         b = new_block(kind)
         if kind in HAS_POINT:
             b["x"], b["y"] = round(end[0], 1), round(end[1], 1)
         if kind in HAS_HEADING:
             b["theta"] = round(end[2], 1)
         at = len(self.blocks) if self.selected is None else self.selected + 1
+        if self.drawMode and aims:
+            at = len(self.blocks)   # drawing continues from the route's end, so does this
         # ...but never between a movement and the waitUntilDone that
         # belongs to it.
         if at < len(self.blocks) and self.blocks[at]["kind"] == "waitUntilDone":
@@ -1656,13 +2877,21 @@ class PlannerWindow(tk.Toplevel):
         self.selected = at
         self.refreshList()
         self.showParams()
+        if kind in self.AIM_KINDS + self.AIM_POINT_KINDS:
+            what = "swing" if kind.startswith("swing") else "turn"
+            self.mapStatus.config(text=f"Click on the map to aim this {what}"
+                                       + (", drag to adjust" if kind in self.AIM_KINDS else "")
+                                       + ("  (then keep drawing)" if self.drawMode else ""))
 
+    # Every edit below takes an undo snapshot first, so Ctrl+Z covers block
+    # edits as well as drawn paths.
     def moveBlock(self, delta):
         i = self.selected
         if i is None:
             return
         j = i + delta
         if 0 <= j < len(self.blocks):
+            self.pushUndo()
             self.blocks[i], self.blocks[j] = self.blocks[j], self.blocks[i]
             self.selected = j
             self.refreshList()
@@ -1670,49 +2899,333 @@ class PlannerWindow(tk.Toplevel):
     def duplicateBlock(self):
         if self.selected is None:
             return
+        self.pushUndo()
         self.blocks.insert(self.selected + 1, dict(self.blocks[self.selected]))
         self.selected += 1
         self.refreshList()
 
     def deleteBlock(self):
-        if self.selected is None:
+        if self.selected is None or self.selected >= len(self.blocks):
             return
+        self.pushUndo()
         del self.blocks[self.selected]
         self.selected = min(self.selected, len(self.blocks) - 1) if self.blocks else None
         self.refreshList()
         self.showParams()
 
     def clearBlocks(self):
-        if self.blocks and not messagebox.askyesno("Clear", "Remove every block?", parent=self):
+        if self.blocks and not messagebox.askyesno(
+                "Clear", "Remove every block?\n(Ctrl+Z brings them back.)", parent=self):
             return
+        self.pushUndo()
         self.blocks = []
         self.selected = None
         self.refreshList()
         self.showParams()
 
+    # -- aiming swings and turns on the map --
+    AIM_KINDS = ("turnToHeading", "swingToHeading")          # aimed by direction
+    AIM_POINT_KINDS = ("turnToPoint", "swingToPoint")        # aimed by a target point
+
+    def aimable(self):
+        """True when the selected block is a turn or swing, i.e. something a
+        click or drag on the map aims. (While drawing a path a click normally
+        drops a point; a swing just added in draw mode is "pending" and takes
+        the next click -- see aimPending.)"""
+        i = self.selected
+        return (i is not None and i < len(self.blocks)
+                and self.blocks[i]["kind"] in self.AIM_KINDS + self.AIM_POINT_KINDS)
+
+    def aimVisible(self):
+        """Whether the selected turn / swing shows its aim line and shape
+        options. While drawing, only until you carry on drawing: once more
+        points follow it the swing is no longer at the end of the path, and
+        its controls left hanging at the old pose looked like it still was."""
+        return self.aimable() and (not self.drawMode or self.aimPending or not self.waypoints)
+
+    def poseBefore(self, i):
+        """Where the robot is as block i starts. The simulated robot stops a
+        little short of (or past) the point it drove to, so when it is
+        essentially at the target of the movement just before, that target is
+        used: the aim line then sits on the path's last point."""
+        sim = self.simulation()
+        if not 0 < i <= len(sim):
+            return tuple(self.start)
+        x, y, th = sim[i - 1][0]
+        for j in range(i - 1, -1, -1):
+            b = self.blocks[j]
+            if b["kind"].startswith("swing"):
+                break           # the robot is where the swing left it, not at an older target
+            if b["kind"] in self.ROUTE_POINTS:
+                if math.hypot(b["x"] - x, b["y"] - y) <= 6.0:
+                    x, y = b["x"], b["y"]
+                break
+        return (x, y, th)
+
+    def autoSide(self, i):
+        """Pick which side a swing pivots on from the way it turns: a swing
+        forwards turning clockwise locks the right side, counter-clockwise
+        the left. Set when a swing is aimed on the map; the side box in the
+        parameters still overrides it (e.g. for a swing in reverse)."""
+        b = self.blocks[i]
+        if not b["kind"].startswith("swing"):
+            return
+        x0, y0, th0 = self.poseBefore(i)
+        if b["kind"] == "swingToHeading":
+            target = b["theta"]
+        elif (b["x"], b["y"]) != (x0, y0):
+            target = heading_to(x0, y0, b["x"], b["y"], b.get("forwards", True))
+        else:
+            return
+        err = angle_err(target, th0, b.get("direction", "AUTO"))
+        if abs(err) > 0.5:
+            b["side"] = swing_side(err, b.get("forwards", True))
+
+    def _aimAt(self, i, ex, ey):
+        """Point turnToHeading / swingToHeading block i at map position
+        (ex, ey), as seen from where the robot is when the block starts."""
+        x0, y0, _ = self.poseBefore(i)
+        px, py = self.toMap(x0, y0)
+        if math.hypot(ex - px, ey - py) < 4:
+            return
+        self.blocks[i]["theta"] = round(math.degrees(math.atan2(ex - px, py - ey)) % 360.0, 1)
+        self.autoSide(i)
+
+    def _aimKnob(self, i, pose0=None):
+        """Map position of the knob on the aim line of heading block i, and
+        of the robot it comes out of."""
+        x0, y0, _ = pose0 or self.poseBefore(i)
+        px, py = self.toMap(x0, y0)
+        rad = math.radians(self.blocks[i]["theta"])
+        reach = self.HEAD_LEN * 1.7
+        return (px + math.sin(rad) * reach, py - math.cos(rad) * reach), (px, py)
+
+    def _hitAimKnob(self, ex, ey):
+        i = self.selected
+        if not self.aimVisible() or self.blocks[i]["kind"] not in self.AIM_KINDS:
+            return None
+        (kx, ky), _ = self._aimKnob(i)
+        return i if math.hypot(kx - ex, ky - ey) <= self.HIT_PX else None
+
+    def drawShapeChips(self, b, pose0):
+        """Small option chips beside the selected swing / turn: which side it
+        pivots on, which way round it turns, and for a point, forwards or in
+        reverse. lemlib's swing has no radius setting -- the arc comes from
+        the pivot side (the robot turns about that wheel) and the direction --
+        so these are the ways to change its curve. Clicking one sets the
+        block's parameter and the arc redraws."""
+        params = KIND_PARAMS[b["kind"]]
+        rows = []
+        if "side" in params:
+            rows.append(("pivot", [("L", "side", "LEFT"), ("R", "side", "RIGHT")]))
+        if "direction" in params:
+            rows.append(("turn", [("auto", "direction", "AUTO"), ("cw", "direction", "CW"),
+                                  ("ccw", "direction", "CCW")]))
+        if "forwards" in params:
+            rows.append(("drive", [("fwd", "forwards", True), ("back", "forwards", False)]))
+        px, py = self.toMap(pose0[0], pose0[1])
+        c = self.map
+        h, gap = 20, 4
+        widest = max(6 + sum(18 + 7 * len(t) + gap for t, _, _ in chips) for _, chips in rows)
+        x0 = px + 40
+        room = c.winfo_width() - self.ICON_MARGIN - 8      # keep clear of the icon column
+        if x0 + widest > room:                             # no room on the right: go left
+            x0 = max(46, px - 34 - widest)
+        y = max(6, py - 12 - len(rows) * (h + gap))
+        for label, chips in rows:
+            c.create_text(x0, y + h / 2, text=label, anchor="e", fill="#cfcfcf",
+                          font=("Segoe UI", 8))
+            x = x0 + 6
+            for text, name, value in chips:
+                w = 18 + 7 * len(text)
+                on = b.get(name) == value
+                c.create_rectangle(x, y, x + w, y + h, fill=PATH_GREEN if on else "#383838",
+                                   outline="#101010")
+                c.create_text(x + w / 2, y + h / 2, text=text, fill="#101010" if on else "#e6e6e6",
+                              font=("Segoe UI", 8, "bold"))
+                self._chips.append(((x, y, x + w, y + h), name, value))
+                x += w + gap
+            y += h + gap
+
+    def _chipAt(self, ex, ey):
+        if not (self.pending or self.aimVisible()):
+            return None
+        for (x0, y0, x1, y1), name, value in self._chips:
+            if x0 <= ex <= x1 and y0 <= ey <= y1:
+                return name, value
+        return None
+
+    def _applyChip(self, chip):
+        name, value = chip
+        if self.pending:                    # a motion still being placed
+            b = self.pending[0]
+            if b.get(name) != value:
+                b[name] = value
+                if name == "forwards":
+                    self._pendingSide()
+                self.syncPendingParams()
+                self.redrawMap()
+            return
+        b = self.blocks[self.selected]
+        if b.get(name) == value:
+            return
+        self.pushUndo()
+        b[name] = value
+        if name == "forwards" and b["kind"].startswith("swing"):
+            self.autoSide(self.selected)        # a backward swing locks the other side
+        self.refreshList()
+        self.showParams()
+
+    def drawAimLine(self, i, pose0):
+        """The aim line of the selected turn / swing: out of the robot's
+        position as the block starts, along the heading it turns to, ending
+        in a knob you can drag."""
+        (kx, ky), (px, py) = self._aimKnob(i, pose0)
+        self.map.create_line(px, py, kx, ky, fill=PATH_SEL, width=2, dash=(5, 3))
+        self.map.create_oval(kx - 6, ky - 6, kx + 6, ky + 6, fill=PATH_SEL, outline=PURPLE,
+                             width=2)
+
+    # -- point headings (path.jerryio's per-point heading line) --
+    ROUTE_POINTS = ("moveToPoint", "moveToPose", "setPose")
+    HEADING_STEP = 15.0      # what the rotate buttons turn by, degrees
+
+    def turnAfter(self, i):
+        """Index of the turnToHeading that belongs to point block i (it
+        follows the block, past its waitUntilDone), or None."""
+        j = i + 1
+        if j < len(self.blocks) and self.blocks[j]["kind"] == "waitUntilDone":
+            j += 1
+        if j < len(self.blocks) and self.blocks[j]["kind"] == "turnToHeading":
+            return j
+        return None
+
+    def pointHeading(self, i):
+        """(heading, set) of route point i. moveToPose / setPose carry their
+        own theta; a moveToPoint is 'set' when a turnToHeading follows it,
+        and otherwise shows the way the robot is facing as it arrives."""
+        b = self.blocks[i]
+        if b["kind"] in HAS_HEADING and not b["kind"].startswith("swing"):
+            return b["theta"], True
+        j = self.turnAfter(i)
+        if j is not None:
+            return self.blocks[j]["theta"], True
+        sim = self.simulation()
+        return (sim[i][0][2] if i < len(sim) else 0.0), False
+
+    def setPointHeading(self, i, theta):
+        """Give route point i a heading. moveToPose / setPose just take the
+        theta; a moveToPoint gets a turnToHeading (and waitUntilDone) right
+        after it, which turns the robot in place to that heading there."""
+        theta = round(theta % 360.0, 1)
+        b = self.blocks[i]
+        if b["kind"] in HAS_HEADING and not b["kind"].startswith("swing"):
+            b["theta"] = theta
+            return
+        j = self.turnAfter(i)
+        if j is not None:
+            self.blocks[j]["theta"] = theta
+            return
+        at = i + 1
+        if at >= len(self.blocks) or self.blocks[at]["kind"] != "waitUntilDone":
+            self.blocks.insert(at, new_block("waitUntilDone"))
+        self.blocks.insert(at + 1, new_block("turnToHeading", theta=theta))
+        self.blocks.insert(at + 2, new_block("waitUntilDone"))
+
+    def rotatePoint(self, delta):
+        """The rotate buttons: turn the selected point's heading by delta."""
+        w = self.curWp()
+        if w is not None:
+            self.setWpHeading(w, self.wpHeading(w)[0] + delta)
+            self.syncPointPanel()
+            self.redrawMap()
+            return
+        i = self.selected
+        if i is None or i >= len(self.blocks) or self.blocks[i]["kind"] not in self.ROUTE_POINTS:
+            return
+        self.pushUndo()
+        self.setPointHeading(i, self.pointHeading(i)[0] + delta)
+        self.refreshList()
+        self.showParams()
+
+    def syncPointPanel(self):
+        """Fill the point panel from the selected route point (blank if the
+        selection isn't one)."""
+        w = self.curWp()
+        if w is not None:
+            wp = self.waypoints[w]
+            for v, val in zip(self.ptVars, (wp[0], wp[1], self.wpHeading(w)[0])):
+                v.set(fmt(round(val, 2)))
+            return
+        i = self.selected
+        if i is None or i >= len(self.blocks) or self.blocks[i]["kind"] not in self.ROUTE_POINTS:
+            for v in self.ptVars:
+                v.set("")
+            return
+        b = self.blocks[i]
+        for v, val in zip(self.ptVars, (b["x"], b["y"], self.pointHeading(i)[0])):
+            v.set(fmt(round(val, 2)))
+
+    def applyPointPanel(self):
+        w = self.curWp()
+        if w is not None:
+            try:
+                x, y, h = (float(v.get()) for v in self.ptVars)
+            except ValueError:
+                return self.syncPointPanel()
+            wp = self.waypoints[w]
+            if (wp[0], wp[1], round(h % 360.0, 1)) == (
+                    x, y, round(self.wpHeading(w)[0] % 360.0, 1)):
+                return                   # nothing changed
+            hdg = tuple(wp[3:])
+            self.waypoints[w] = (x, y, wp[2] if len(wp) > 2 else CURVE) + hdg
+            if round(h % 360.0, 1) != round(self.wpHeading(w)[0] % 360.0, 1):
+                self.setWpHeading(w, h)
+            self.redrawMap()
+            return
+        i = self.selected
+        if i is None or i >= len(self.blocks) or self.blocks[i]["kind"] not in self.ROUTE_POINTS:
+            return
+        try:
+            x, y, h = (float(v.get()) for v in self.ptVars)
+        except ValueError:
+            return self.syncPointPanel()
+        b = self.blocks[i]
+        if (b["x"], b["y"], round(h % 360.0, 1)) == (x, y, round(self.pointHeading(i)[0] % 360.0, 1)):
+            return                       # nothing changed (FocusOut fires on every tab through)
+        self.pushUndo()
+        b["x"], b["y"] = x, y
+        self.setPointHeading(i, h)
+        self.refreshList()
+        self.showParams()
+
     # -- parameter panel --
     def showParams(self):
+        self.syncPointPanel()
         for w in self.paramFrame.winfo_children():
             w.destroy()
         self.paramWidgets = {}
-        if self.selected is None:
+        if self.pending:        # a motion still being placed: tune it before Apply
+            b = self.pending[0]
+            self.paramFrame.config(text=f" new {b['kind']}  (not applied yet) ")
+        elif self.selected is None:
             tk.Label(self.paramFrame, text="select a block (or add one)", fg="#777",
-                     bg="#14141a").grid(row=0, column=0, padx=6, pady=4)
+                     bg=PANEL_BG).grid(row=0, column=0, padx=6, pady=4)
             self.codeLabel.config(text="")
             return
-        b = self.blocks[self.selected]
-        self.paramFrame.config(text=f"{self.selected + 1}. {b['kind']}")
+        else:
+            b = self.blocks[self.selected]
+            self.paramFrame.config(text=f"{self.selected + 1}. {b['kind']}")
         col = 0
         for name in KIND_PARAMS[b["kind"]]:
             default, kind = PARAM_SPEC[name]
-            tk.Label(self.paramFrame, text=name, fg="#aaa", bg="#14141a",
+            tk.Label(self.paramFrame, text=name, fg="#aaa", bg=PANEL_BG,
                      font=("Segoe UI", 8)).grid(row=(col // 5) * 2, column=col % 5, sticky="w",
                                                 padx=6)
             if kind == "bool":
                 var = tk.BooleanVar(value=bool(b[name]))
-                w = tk.Checkbutton(self.paramFrame, variable=var, bg="#14141a",
+                w = tk.Checkbutton(self.paramFrame, variable=var, bg=PANEL_BG,
                                    text="forwards" if var.get() else "backwards",
-                                   fg="#ddd", selectcolor="#161B22",
+                                   fg="#ddd", selectcolor=INPUT_BG,
                                    command=lambda n=name: self.paramChanged(n))
             elif isinstance(kind, list):
                 var = tk.StringVar(value=str(b[name]))
@@ -1729,7 +3242,28 @@ class PlannerWindow(tk.Toplevel):
             col += 1
         self.codeLabel.config(text=block_code(b))
 
+    def syncPendingParams(self):
+        """Put the pending block's values into the parameter boxes in place
+        (tapping or dragging on the map moves them) without rebuilding the
+        panel, which would steal the focus from a box being typed in."""
+        if not self.pending:
+            return
+        b = self.pending[0]
+        for name, var in self.paramWidgets.items():
+            if isinstance(var, tk.BooleanVar):
+                var.set(bool(b[name]))
+            elif PARAM_SPEC[name][1] in ("num", "int"):
+                var.set(fmt(b[name]))
+            else:
+                var.set(str(b[name]))
+        for w in self.paramFrame.winfo_children():
+            if isinstance(w, tk.Checkbutton) and "forwards" in b:
+                w.config(text="forwards" if b["forwards"] else "backwards")
+        self.codeLabel.config(text=block_code(b))
+
     def paramChanged(self, name):
+        if self.pending:
+            return self.pendingParamChanged(name)
         if self.selected is None:
             return
         b = self.blocks[self.selected]
@@ -1737,22 +3271,56 @@ class PlannerWindow(tk.Toplevel):
         _, kind = PARAM_SPEC[name]
         try:
             if kind == "bool":
-                b[name] = bool(var.get())
+                new = bool(var.get())
             elif isinstance(kind, list):
-                b[name] = var.get()
+                new = var.get()
             elif kind == "int":
-                b[name] = int(float(var.get()))
+                new = int(float(var.get()))
             else:
-                b[name] = float(var.get())
+                new = float(var.get())
         except (ValueError, tk.TclError):
             return
+        if new == b[name]:
+            return          # FocusOut fires on every tab through a field: nothing changed
+        self.pushUndo()
+        b[name] = new
         self.codeLabel.config(text=block_code(b))
+        # flipping a swing between forwards and backwards locks the other side
+        if name == "forwards" and b["kind"].startswith("swing"):
+            self.autoSide(self.selected)
+            self.paramWidgets["side"].set(b["side"])
         # forwards checkbox text follows its value
         if kind == "bool":
             for w in self.paramFrame.winfo_children():
                 if isinstance(w, tk.Checkbutton):
                     w.config(text="forwards" if b[name] else "backwards")
         self.refreshList()
+
+    def pendingParamChanged(self, name):
+        """A parameter box edited while a motion is still being placed: it
+        goes into the pending block and the preview redraws. No undo step --
+        nothing is in the plan yet."""
+        b = self.pending[0]
+        var = self.paramWidgets[name]
+        _, kind = PARAM_SPEC[name]
+        try:
+            if kind == "bool":
+                new = bool(var.get())
+            elif isinstance(kind, list):
+                new = var.get()
+            elif kind == "int":
+                new = int(float(var.get()))
+            else:
+                new = float(var.get())
+        except (ValueError, tk.TclError):
+            return
+        if new == b[name]:
+            return
+        b[name] = new
+        if name == "forwards":
+            self._pendingSide()
+        self.syncPendingParams()
+        self.redrawMap()
 
     # -- robot --
     # Uploading is a burst of lines (CLEAR, one ADD per block) and over the
@@ -1779,9 +3347,25 @@ class PlannerWindow(tk.Toplevel):
             self.stopDrive()
         self.pendingRun = "ALL" if which is None else which
         self.uploadTries = 1
+        if which is None and self.setStartVar.get():
+            # The route is in field coordinates, so it only matches the map if
+            # the robot starts where the map says it does. Without this the
+            # run starts from whatever pose the robot's odometry has -- the
+            # drawn start pose is never sent -- and every point is driven to
+            # from the wrong place.
+            self.link._send(f"POSE {self.start[0]:.2f} {self.start[1]:.2f} {self.start[2]:.2f}")
         self.uploadPlan()
         self.brainStatus.config(text=f"uploading {len(self.blocks)} blocks to the robot...",
                                 fg="#FF8C00")
+
+    def startOffset(self):
+        """(inches, degrees) between the robot's live pose and the plan's start
+        pose, when that is enough to matter; None if it is close or unknown."""
+        if not self.robotPose:
+            return None
+        d = math.hypot(self.robotPose[0] - self.start[0], self.robotPose[1] - self.start[1])
+        a = abs((self.robotPose[2] - self.start[2] + 180) % 360 - 180)
+        return (d, a) if d > 2.0 or a > 5.0 else None
 
     def runAll(self):
         self.startRun(None)
@@ -1821,25 +3405,34 @@ class PlannerWindow(tk.Toplevel):
         plot = state.get("plot")
         if plot:
             self.robotPose = (plot["poseX"], plot["poseY"], plot["poseTheta"])
-        if state.get("path"):
+        if self.onBrainScreen:
+            # the brain empties its path on a new run or a pose reset; keeping
+            # the old one would leave last run's line lying under the new one
+            self.robotPath = state.get("path") or []
+        elif state.get("path"):
             self.robotPath = state["path"]
         status, idx, count = state.get("plan") or ("IDLE", -1, 0)
         self.planStatus = (status, idx, count)
         self.checkPendingRun(count)
         # The robot sends a state 20 times a second whether or not anything
         # moved; redrawing an identical map just makes it shimmer.
-        sig = (None if not self.robotPose else tuple(round(v, 2) for v in self.robotPose),
+        sig = (None if not self.robotPose else
+               (round(self.robotPose[0], 1), round(self.robotPose[1], 1),
+                round(self.robotPose[2] * 2) / 2),
                len(self.robotPath), status, idx, count, self.onBrainScreen)
         unchanged = sig == self._lastState
         self._lastState = sig
         if self.pendingRun is not None or time.time() < self.statusHold:
             if not unchanged:
-                self.redrawMap()
+                self.redrawLive()
             return
         if self.onBrainScreen:
             txt = f"brain: PLANNER  {status}  ({count} block{'' if count == 1 else 's'} on robot)"
             if idx >= 0:
                 txt += f"  step {idx + 1}/{count}"
+            off = self.startOffset()
+            if off and status != "RUNNING":
+                txt += f"   [robot is {off[0]:.1f} in / {off[1]:.0f} deg off the start pose]"
             if status == "RUNNING" and 0 <= idx < len(self.blocks):
                 self.listbox.selection_clear(0, "end")
                 self.listbox.selection_set(idx)
@@ -1850,7 +3443,12 @@ class PlannerWindow(tk.Toplevel):
             self.brainStatus.config(text=f"brain: on {state['screen']} -- tap PATH PLANNER on the "
                                     "brain (or mirror) to run from here", fg="#FF8C00")
         if not unchanged:
-            self.redrawMap()
+            # a drawing that has no blocks or placed robot behind it starts at
+            # the live robot, so that one does need the whole route repainted
+            if self.waypoints and not self.blocks and not self.startPlaced:
+                self.redrawMap()
+            else:
+                self.redrawLive()
 
     # -- files --
     def exportCode(self):
@@ -1863,7 +3461,7 @@ class PlannerWindow(tk.Toplevel):
         win = tk.Toplevel(self)
         win.title("Exported code")
         txt = tk.Text(win, width=100, height=min(30, len(self.blocks) + 4), font=("Consolas", 10),
-                      bg="#161B22", fg="#2ECC71")
+                      bg=INPUT_BG, fg="#2ECC71")
         txt.pack(fill="both", expand=True)
         txt.insert("1.0", code)
         tk.Label(win, text=f"saved to {EXPORT_PATH} and copied to the clipboard",
@@ -1878,8 +3476,27 @@ class PlannerWindow(tk.Toplevel):
             return
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"start": self.start, "blocks": self.blocks,
-                       "waypoints": [[p[0], p[1], p[2] if len(p) > 2 else CURVE]
+                       "waypoints": [[p[0], p[1], p[2] if len(p) > 2 else CURVE] + list(p[3:4])
                                      for p in self.waypoints]}, f, indent=2)
+        self.planName = os.path.basename(path)
+        self._retitle()
+        # ...and the plan as a function in src/autonomous.cpp, named after the file
+        if not self.blocks:
+            messagebox.showinfo("Save", "Plan saved. It has no blocks, so no function was "
+                                "written to autonomous.cpp.", parent=self)
+            return
+        try:
+            name, replaced = write_auto_function(
+                auto_function_name(os.path.splitext(os.path.basename(path))[0]),
+                self.blocks, self.start)
+        except OSError as err:
+            messagebox.showerror("Save", f"Plan saved, but autonomous.cpp couldn't be "
+                                 f"updated:\n{err}", parent=self)
+            return
+        messagebox.showinfo(
+            "Save", f"Plan saved.\n\n{'Updated' if replaced else 'Added'} void {name}() in "
+                    "src/autonomous.cpp (declared in include/autonomous.hpp).\n\n"
+                    f"Call {name}() from runAutonomous() to run it.", parent=self)
 
     def loadPlan(self):
         os.makedirs(PLANS_DIR, exist_ok=True)
@@ -1894,9 +3511,18 @@ class PlannerWindow(tk.Toplevel):
             v.set(fmt(val))
         self.blocks = [new_block(b["kind"], **{k: v for k, v in b.items() if k != "kind"})
                        for b in data.get("blocks", []) if b.get("kind") in KINDS]
-        self.waypoints = [(float(p[0]), float(p[1]),
-                           p[2] if len(p) > 2 and p[2] in (CURVE, STRAIGHT) else CURVE)
-                          for p in data.get("waypoints", [])]
+        # saved control points belong to a route with no blocks behind it; with
+        # blocks loaded a drawing is anchored on their end instead
+        self.waypoints = [] if self.blocks else \
+            [(float(p[0]), float(p[1]),
+              p[2] if len(p) > 2 and p[2] in (CURVE, STRAIGHT) else CURVE) + tuple(p[3:4])
+             for p in data.get("waypoints", [])]
+        self.undoStack = []
+        self.redoStack = []
+        self.replaceOnApply = False
+        self.startPlaced = True          # a loaded plan's start pose is where the robot goes
+        self.planName = os.path.basename(path)
+        self._retitle()
         self.selected = 0 if self.blocks else None
         self.refreshList()
         self.showParams()

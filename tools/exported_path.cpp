@@ -2,35 +2,107 @@
 // Coordinates: inches, origin at field centre, heading 0 = +y, clockwise +.
 //
 // Planned against this robot configuration (src/main.cpp):
-//   lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
-//   lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
+//   lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 350, 2);
+//   lemlib::OdomSensors sensors(USE_TRACKING_WHEELS ? &verticalTracking : nullptr, nullptr,
 //   lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
-//   lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
+//   lemlib::ControllerSettings angular_controller(4, 0.001, 43, 0, 1, 100, 3, 500, 0);
 //   lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttle_curve, &steer_curve);
 //
 //   lateral (drive)  kP 10  kI 0  kD 28  windup 3
 //                    exit: small 1 for 100 ms, large 3 for 500 ms, slew 20
-//   angular (turn)   kP 5.6  kI 0.001  kD 28.59  windup 0
-//                    exit: small 0 for 0 ms, large 0 for 0 ms, slew 0
+//   angular (turn)   kP 4  kI 0.001  kD 43  windup 0
+//                    exit: small 1 for 100 ms, large 3 for 500 ms, slew 0
 
 // Calibrates the IMU and starts odometry. It blocks for ~3 s and the
 // robot must be still and untouched while it runs. initialize() already
 // calibrates on startup, so drop this line if the robot has been sitting
 // since then -- it re-zeroes the heading, hence the setPose below it.
 chassis.calibrate();
-chassis.setPose(0.90, -65.40, 359.30);  // start pose
+chassis.setPose(-0.70, -63.60, 0.00);  // start pose
 
-chassis.moveToPoint(0.60, -41.20, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 1: moveToPoint (0.6, -41.2) 2000ms
+chassis.moveToPoint(-1.21, -51.61, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 1: moveToPoint (-1.2, -51.6) 2000ms
 chassis.waitUntilDone();  // 2: waitUntilDone
-chassis.turnToHeading(303.16, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 3: turnToHeading hdg 303.2 2000ms
+chassis.moveToPoint(-1.96, -39.64, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 3: moveToPoint (-2.0, -39.6) 2000ms
 chassis.waitUntilDone();  // 4: waitUntilDone
-chassis.moveToPoint(-36.90, -16.70, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 5: moveToPoint (-36.9, -16.7) 2000ms
+chassis.moveToPoint(-3.99, -27.83, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 5: moveToPoint (-4.0, -27.8) 2000ms
 chassis.waitUntilDone();  // 6: waitUntilDone
-chassis.turnToHeading(3.78, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 7: turnToHeading hdg 3.8 2000ms
+chassis.moveToPoint(-9.48, -17.21, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 7: moveToPoint (-9.5, -17.2) 2000ms
 chassis.waitUntilDone();  // 8: waitUntilDone
-chassis.moveToPoint(-34.60, 18.10, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 9: moveToPoint (-34.6, 18.1) 2000ms
+chassis.moveToPoint(-16.43, -7.43, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 9: moveToPoint (-16.4, -7.4) 2000ms
 chassis.waitUntilDone();  // 10: waitUntilDone
-chassis.turnToHeading(232.01, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 11: turnToHeading hdg 232.0 2000ms
+chassis.moveToPoint(-18.69, 3.97, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 11: moveToPoint (-18.7, 4.0) 2000ms
 chassis.waitUntilDone();  // 12: waitUntilDone
-chassis.moveToPoint(-61.10, -2.60, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 13: moveToPoint (-61.1, -2.6) 2000ms
+chassis.moveToPoint(-12.30, 14.07, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 13: moveToPoint (-12.3, 14.1) 2000ms
 chassis.waitUntilDone();  // 14: waitUntilDone
+chassis.moveToPoint(-1.86, 18.19, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 15: moveToPoint (-1.9, 18.2) 2000ms
+chassis.waitUntilDone();  // 16: waitUntilDone
+chassis.moveToPoint(9.04, 13.28, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 17: moveToPoint (9.0, 13.3) 2000ms
+chassis.waitUntilDone();  // 18: waitUntilDone
+chassis.moveToPoint(14.97, 3.84, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 19: moveToPoint (15.0, 3.8) 2000ms
+chassis.waitUntilDone();  // 20: waitUntilDone
+chassis.moveToPoint(9.07, -6.55, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 21: moveToPoint (9.1, -6.5) 2000ms
+chassis.waitUntilDone();  // 22: waitUntilDone
+chassis.moveToPoint(3.96, -17.24, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 23: moveToPoint (4.0, -17.2) 2000ms
+chassis.waitUntilDone();  // 24: waitUntilDone
+chassis.moveToPoint(6.94, -28.51, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 25: moveToPoint (6.9, -28.5) 2000ms
+chassis.waitUntilDone();  // 26: waitUntilDone
+chassis.moveToPoint(16.42, -35.75, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 27: moveToPoint (16.4, -35.8) 2000ms
+chassis.waitUntilDone();  // 28: waitUntilDone
+chassis.moveToPoint(27.61, -39.83, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 29: moveToPoint (27.6, -39.8) 2000ms
+chassis.waitUntilDone();  // 30: waitUntilDone
+chassis.moveToPoint(35.12, -31.62, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 31: moveToPoint (35.1, -31.6) 2000ms
+chassis.waitUntilDone();  // 32: waitUntilDone
+chassis.moveToPoint(37.62, -19.91, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 33: moveToPoint (37.6, -19.9) 2000ms
+chassis.waitUntilDone();  // 34: waitUntilDone
+chassis.moveToPoint(36.24, -8.01, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 35: moveToPoint (36.2, -8.0) 2000ms
+chassis.waitUntilDone();  // 36: waitUntilDone
+chassis.moveToPoint(35.98, 3.96, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 37: moveToPoint (36.0, 4.0) 2000ms
+chassis.waitUntilDone();  // 38: waitUntilDone
+chassis.moveToPoint(31.83, 14.79, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 39: moveToPoint (31.8, 14.8) 2000ms
+chassis.waitUntilDone();  // 40: waitUntilDone
+chassis.moveToPoint(21.86, 21.43, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 41: moveToPoint (21.9, 21.4) 2000ms
+chassis.waitUntilDone();  // 42: waitUntilDone
+chassis.moveToPoint(12.43, 28.81, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 43: moveToPoint (12.4, 28.8) 2000ms
+chassis.waitUntilDone();  // 44: waitUntilDone
+chassis.moveToPoint(3.89, 37.20, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 45: moveToPoint (3.9, 37.2) 2000ms
+chassis.waitUntilDone();  // 46: waitUntilDone
+chassis.moveToPoint(1.43, 48.59, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 47: moveToPoint (1.4, 48.6) 2000ms
+chassis.waitUntilDone();  // 48: waitUntilDone
+chassis.moveToPoint(6.12, 59.43, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 49: moveToPoint (6.1, 59.4) 2000ms
+chassis.waitUntilDone();  // 50: waitUntilDone
+chassis.moveToPoint(16.81, 64.40, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 51: moveToPoint (16.8, 64.4) 2000ms
+chassis.waitUntilDone();  // 52: waitUntilDone
+chassis.moveToPoint(28.69, 66.01, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 53: moveToPoint (28.7, 66.0) 2000ms
+chassis.waitUntilDone();  // 54: waitUntilDone
+chassis.moveToPoint(40.64, 65.41, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 55: moveToPoint (40.6, 65.4) 2000ms
+chassis.waitUntilDone();  // 56: waitUntilDone
+chassis.moveToPoint(43.44, 55.54, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 57: moveToPoint (43.4, 55.5) 2000ms
+chassis.waitUntilDone();  // 58: waitUntilDone
+chassis.moveToPoint(38.78, 44.49, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 59: moveToPoint (38.8, 44.5) 2000ms
+chassis.waitUntilDone();  // 60: waitUntilDone
+chassis.moveToPoint(32.55, 34.35, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 61: moveToPoint (32.5, 34.4) 2000ms
+chassis.waitUntilDone();  // 62: waitUntilDone
+chassis.moveToPoint(26.45, 24.43, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 63: moveToPoint (26.4, 24.4) 2000ms
+chassis.waitUntilDone();  // 64: waitUntilDone
+chassis.moveToPoint(35.46, 17.09, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 65: moveToPoint (35.5, 17.1) 2000ms
+chassis.waitUntilDone();  // 66: waitUntilDone
+chassis.moveToPoint(46.34, 12.04, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 67: moveToPoint (46.3, 12.0) 2000ms
+chassis.waitUntilDone();  // 68: waitUntilDone
+chassis.moveToPoint(55.63, 4.57, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 69: moveToPoint (55.6, 4.6) 2000ms
+chassis.waitUntilDone();  // 70: waitUntilDone
+chassis.moveToPoint(60.02, -6.44, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 71: moveToPoint (60.0, -6.4) 2000ms
+chassis.waitUntilDone();  // 72: waitUntilDone
+chassis.moveToPoint(60.32, -18.42, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 73: moveToPoint (60.3, -18.4) 2000ms
+chassis.waitUntilDone();  // 74: waitUntilDone
+chassis.moveToPoint(60.15, -30.42, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 75: moveToPoint (60.1, -30.4) 2000ms
+chassis.waitUntilDone();  // 76: waitUntilDone
+chassis.moveToPoint(60.20, -42.41, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 77: moveToPoint (60.2, -42.4) 2000ms
+chassis.waitUntilDone();  // 78: waitUntilDone
+chassis.moveToPoint(57.13, -53.94, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 79: moveToPoint (57.1, -53.9) 2000ms
+chassis.waitUntilDone();  // 80: waitUntilDone
+chassis.moveToPoint(49.39, -62.79, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 81: moveToPoint (49.4, -62.8) 2000ms
+chassis.waitUntilDone();  // 82: waitUntilDone
+chassis.moveToPoint(37.50, -63.04, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 40, .earlyExitRange = 6.00});  // 83: moveToPoint (37.5, -63.0) 2000ms
+chassis.waitUntilDone();  // 84: waitUntilDone
+chassis.moveToPoint(32.70, -62.50, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 85: moveToPoint (32.7, -62.5) 2000ms
+chassis.waitUntilDone();  // 86: waitUntilDone
