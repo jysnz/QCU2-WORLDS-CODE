@@ -13,9 +13,29 @@ void thirty_sec(){
     chassis.waitUntilDone();
 }
 
+void scrimmageAutoAWP() {
+    // Robot is placed facing the first point (Jerry.io assumes it faces away: 118.811).
+    chassis.setPose(-2.070, -60.135, 298.811);
+    driveTo(-14.804, -53.131, true);  
+    turnTo(65.225);
+    driveTo(-23.081, -56.951, false);  
+    turnTo(0);
+    driveTo(-23.081, -62.681, false); 
+    driveTo(-23.081, -54.086, true);  
+    turnTo(108.667);
+    driveTo(-46.639, -46.127, false); 
+    turnTo(92.603);
+    driveTo(-25.628, -47.083, true);  
+    turnTo(3.918);
+    driveTo(-24.036, -23.843, true);   
+    turnTo(90.807);
+    driveTo(-46.639, -23.525, false);  
+    turnTo(283.158);
+}
+
 // No auton selector - only one autonomous routine.
 void runAutonomous() {
-    thirty_sec();
-    holdEndPosition();
+    scrimmageAutoAWP();
+    holdEndPosition(-46.639, -23.525, 283.158); // last waypoint of scrimmageAutoAWP
 }
 

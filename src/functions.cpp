@@ -141,12 +141,28 @@ void jawheadControl() {
 }
 
 // ─── Autonomous helpers ──────────────────────────────────────────────────────
-// Holds the robot's final pose for the rest of the autonomous period: if it gets pushed, drive and
-// turn back to where it ended. Never returns; PROS stops the autonomous task when the period ends.
-void holdEndPosition() {
-    const lemlib::Pose home = chassis.getPose();
-    constexpr float kPosTol = 1.5f;  // inches
-    constexpr float kAngTol = 3.0f;  // degrees
+// Default top speed for driveTo / turnTo (0-127).
+static constexpr int kDefaultPathSpeed = 120;
+
+void driveTo(float x, float y, bool forwards, int maxSpeed, int timeoutMs) {
+    chassis.moveToPoint(x, y, timeoutMs, {.forwards = forwards, .maxSpeed = (float)(maxSpeed > 0 ? maxSpeed : kDefaultPathSpeed)});
+    chassis.waitUntilDone();
+}
+
+void turnTo(float heading, int maxSpeed, int timeoutMs) {
+    chassis.turnToHeading(heading, timeoutMs, {.maxSpeed = maxSpeed > 0 ? maxSpeed : kDefaultPathSpeed});
+    chassis.waitUntilDone();
+}
+
+// Drives to the intended final pose (x, y, heading) and holds it for the rest of the autonomous
+// period: if the robot ends short or gets pushed, it drives and turns back. The target is passed in
+// rather than read from the odometry, because the last move can time out or settle early and the
+// measured pose would then lock in the error. Never returns; PROS stops the autonomous task when
+// the period ends.
+void holdEndPosition(float x, float y, float theta) {
+    const lemlib::Pose home(x, y, theta);
+    constexpr float kPosTol = 1.0f;  // inches
+    constexpr float kAngTol = 2.0f;  // degrees
 
     while (true) {
         const lemlib::Pose p = chassis.getPose();
