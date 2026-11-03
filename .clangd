@@ -1,0 +1,4 @@
+Diagnostics:
+  # Hints about headers "not used directly" are unreliable here (PROS/LemLib umbrella headers)
+  UnusedIncludes: None
+  MissingIncludes: None
