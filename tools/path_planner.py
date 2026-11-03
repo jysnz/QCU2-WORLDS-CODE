@@ -133,6 +133,8 @@ INPUT_BG = "#1f1f1f"        # text entries and the block list, a step darker
 PATH_GREEN = "#8bd13f"     # the route line
 PATH_SEL = "#c6f27a"        # ...the selected block's leg
 PREVIEW = "#4fc3f7"         # the motion being placed, before Apply
+EXIT_COL = "#ff9f1c"        # earlyExitRange ring: the motion ends once the robot is inside it
+EXIT_OFF = "#8a8a8a"        # ...the same ring when minSpeed is 0 and lemlib ignores it
 PURPLE = "#7a5cd6"          # path points and the robot footprint
 POINT_FILL = "#4b3d8f"      # the inside of a path point
 END_BOX = "#b9a6ff"         # the robot footprint at the end of a path
@@ -720,8 +722,8 @@ def sim_move_to_point(robot, b, trace):
         d = math.hypot(tx - x, ty - y)
         if d < 7.5:
             close = True
-        if d < b.get("earlyExitRange", 0):
-            break
+        if b["minSpeed"] != 0 and d < b.get("earlyExitRange", 0):
+            break       # lemlib: earlyExitRange only counts while minSpeed != 0
         angErr = angle_err(heading_to(x, y, tx, ty), eff)
         latErr = d * math.cos(math.radians(angErr))
         if not fwd:
@@ -759,8 +761,8 @@ def sim_move_to_pose(robot, b, trace):
         d = math.hypot(tx - x, ty - y)
         if d < 7.5:
             close = True
-        if d < b.get("earlyExitRange", 0):
-            break
+        if b["minSpeed"] != 0 and d < b.get("earlyExitRange", 0):
+            break       # lemlib: earlyExitRange only counts while minSpeed != 0
         if close:
             cx, cy = tx, ty
         else:
@@ -1604,6 +1606,8 @@ class PlannerWindow(tk.Toplevel):
             self._paintPending()
         else:
             sel = self.selected
+            if sel is not None and sel < len(self.blocks):
+                self.drawExitRing(self.blocks[sel], sim[sel][1])
             if sel is not None and sel < len(self.blocks) \
                     and self.blocks[sel]["kind"] == "moveToPose":
                 self.drawLeadHandle(self.blocks[sel], self.poseBefore(sel), PATH_SEL)
@@ -2036,6 +2040,32 @@ class PlannerWindow(tk.Toplevel):
         px, py = self.toMap(x, y)
         self.map.create_oval(px - r, py - r, px + r, py + r, fill=POINT_FILL, outline=color,
                              width=1)
+
+    def drawExitRing(self, b, shape=None):
+        """The early-exit range of a moveToPoint / moveToPose: a ring of
+        earlyExitRange inches around its target. The motion ends the moment
+        the robot is inside it, still travelling, so the next block takes
+        over mid-glide. Orange when it will take effect; grey when minSpeed
+        is 0, because lemlib ignores earlyExitRange then. A dot marks where
+        the simulated robot actually leaves the motion."""
+        if b["kind"] not in ("moveToPoint", "moveToPose"):
+            return
+        rng = b.get("earlyExitRange", 0)
+        if rng <= 0:
+            return
+        c = self.map
+        active = b.get("minSpeed", 0) != 0
+        col = EXIT_COL if active else EXIT_OFF
+        px, py = self.toMap(b["x"], b["y"])
+        r = rng * self.ppi
+        c.create_oval(px - r, py - r, px + r, py + r, outline=col,
+                      width=2 if active else 1, dash=(5, 3))
+        c.create_text(px, py + r + 9, fill=col, font=("Segoe UI", 8, "bold"),
+                      text=f"exit {fmt(rng)} in" if active
+                      else f"exit {fmt(rng)} in -- ignored while minSpeed is 0")
+        if active and shape and shape[0] == "trace" and shape[1]:
+            ex, ey = self.toMap(*shape[1][-1])       # where the robot leaves the motion
+            c.create_oval(ex - 4, ey - 4, ex + 4, ey + 4, fill=col, outline="#1b1b1b")
 
     HEAD_LEN = 26      # px from a point's centre to the knob on its heading line
 
@@ -2754,6 +2784,7 @@ class PlannerWindow(tk.Toplevel):
         if b["kind"] in HAS_POINT:
             px, py = self.toMap(b["x"], b["y"])
             c.create_oval(px - 7, py - 7, px + 7, py + 7, outline=PREVIEW, width=2)
+            self.drawExitRing(b, shape)
             if b["kind"] == "moveToPose":           # facing there, and the arc's lead point
                 rad = math.radians(b["theta"])
                 c.create_line(px, py, px + math.sin(rad) * 24, py - math.cos(rad) * 24,
