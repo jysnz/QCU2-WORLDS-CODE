@@ -2,14 +2,15 @@
 #include "autonomous.hpp"
 #include "functions.hpp"
 #include "pid_tuner.hpp"
-#include "point_planner.hpp"
+#include "auto_tuner.hpp"
+#include "driver_menu.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
-#include <cstdint>
+#include <cstdint> 
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -45,11 +46,11 @@ pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
-lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
+lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 350, 2);
 // Offsets in inches from the tracking center (vertical: left of center is negative,
 // horizontal: behind center is negative)
-constexpr float VERTICAL_WHEEL_DIAMETER = 2;   // effective diameter in inches
-constexpr float HORIZONTAL_WHEEL_DIAMETER = 2; // effective diameter in inches
+constexpr float VERTICAL_WHEEL_DIAMETER = 2;   // effective diameter in inches, calibrated from 48in pushes
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2; // effective diameter in inches, calibrated from 48in pushes
 lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, -0.04);
 lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, -1.472);
 // Set to false to run odometry on the IMU + drive motors alone (to tell whether a problem is
@@ -88,47 +89,31 @@ void initialize() {
         s.rightDrive.motors = dashboard::readMotors(right_motor_group, "R");
         s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
     };
-    // The PID tuner / point planner own the brain screen while active
-    screen.screenBusy = [] { return pidTunerActive || pointPlannerActive; };
+    // The PID tuner / auto tuner / driver menu own the brain screen while active
+    screen.screenBusy = [] { return pidTunerActive || autoTunerActive || driverMenuActive; };
     dashboard::startScreenTask(screen);
 }
 
 void opcontrol() {
-    // Hold DPAD-LEFT when driver control starts to enter the PID tuner, or
-    // DPAD-UP to enter the point planner. Normal driving runs if neither is
-    // held. A single instantaneous read here misses the press almost every
-    // time -- you can only start pressing it once you see/feel driver
-    // control begin, which is after this line would have already sampled
-    // false. Poll for a short window instead so a hold that starts right at
-    // opcontrol() still gets caught.
-    //
-    // NOTE: this used to initialize enterTuner to `true` and never set it
-    // back to `false`, so the tuner ran unconditionally and jawheadControl()
-    // (normal driving) never did. Fixed here -- both now default to `false`
-    // and only flip on an actual press.
-    homeLift();
-
-    bool enterTuner = false;
-    bool enterPlanner = false;
+    // Hold DPAD-LEFT when driver control starts to enter the calibration menu (PID TUNING /
+    // AUTO PID TUNE / PATH PLANNER / ODOM SETUP / ... -- see driver_menu.cpp). With nothing held
+    // the robot just drives. Tapping DRIVE in the menu also falls through to normal driving.
+    // A single instantaneous read here misses the press almost every time -- you can only start
+    // pressing it once you see/feel driver control begin -- so poll for a short window instead.
+    bool enterMenu = false;
     for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
-            enterTuner = true;
-            break;
-        }
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP)) {
-            enterPlanner = true;
+            enterMenu = true;
             break;
         }
         pros::delay(20);
     }
 
-    if (enterTuner) {
-        pidTunerControl();
-    } else if (enterPlanner) {
-        pointPlannerControl();
-    } else {
-        jawheadControl();
-    }
+    if (enterMenu)
+        driverMenuControl();
+
+    homeLift();
+    jawheadControl();
 }
 void autonomous() {
     homeLift();

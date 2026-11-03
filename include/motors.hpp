@@ -35,14 +35,13 @@ public:
     double h = pros::Imu::get_heading() * 360.0 / scale;
     return h >= 360.0 ? h - 360.0 : h; // scaling can push a 359.x reading past 360
   }
-  double rawRotation() const { return pros::Imu::get_rotation(); } // unscaled
+  double rawRotation() const { return pros::Imu::get_rotation(); } // unscaled, for SPIN CAL
 };
 extern ScaledImu imu; // port 16
 extern pros::Rotation verticalRotation; // port 15
 extern pros::Rotation horizontalRotation; // port 14
 extern pros::Controller controller;
 
-// ─── LemLib chassis ──────────────────────────────────────────────────────────
 extern lemlib::Chassis chassis;
 
 // Zeroes the odometry pose and makes sure it stays a real number. While the IMU recalibrates its
@@ -58,3 +57,5 @@ inline bool resetPoseAfterCalibration() {
     }
     return false;
 }
+
+// ─── LemLib chassis ──────────────────────────────────────────────────────────
