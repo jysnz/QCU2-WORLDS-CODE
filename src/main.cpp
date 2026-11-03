@@ -46,7 +46,7 @@ pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
-lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 350, 2);
+lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 10.25, lemlib::Omniwheel::NEW_325, 350, 2);
 // Offsets in inches from the tracking center (vertical: left of center is negative,
 // horizontal: behind center is negative)
 constexpr float VERTICAL_WHEEL_DIAMETER = 2;   // effective diameter in inches, calibrated from 48in pushes
