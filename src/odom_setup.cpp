@@ -268,6 +268,15 @@ void odomSetupControl() {
       }
     }
 
+    // TURN TEST: tap ZERO, then press controller A to pivot in place to 180 deg (B = back to 0).
+    // With correct tracker offsets X/Y barely change; the readout above keeps updating live.
+    if (mode == Mode::IDLE) {
+      if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A))
+        chassis.turnToHeading(180, 3000); // async: returns at once so the readout keeps drawing
+      else if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_B))
+        chassis.turnToHeading(0, 3000);
+    }
+
     drawReadout();
     pros::delay(50);
   }

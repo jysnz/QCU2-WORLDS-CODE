@@ -4,6 +4,8 @@ void twoVtwo_right();
 void twoVtwo_left();
 void path();
 void parkingtest();
+void thirtyseconds();
+void test();
 void runAutonomous();
 void skills();
 void skillsV1();

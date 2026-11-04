@@ -31,7 +31,7 @@ const bool VEXNET_ENABLED = false;
 pros::MotorGroup left_motor_group({11, 20}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-10, -19}, pros::MotorGears::green);
 pros::Motor claw(12);
-pros::Motor lift(11);
+pros::Motor lift(14);
 pros::adi::Pneumatics clamp('B', false);
 
 // What the IMU reads after the robot is turned a true 360 degrees (SPIN CAL on the ODOM SETUP
@@ -39,7 +39,7 @@ pros::adi::Pneumatics clamp('B', false);
 constexpr double INERTIAL_SCALE = 360.0;
 ScaledImu imu(9, INERTIAL_SCALE);
 // No tracking wheels on axl yet -- placeholder ports, not used by odometry (see motors.hpp).
-pros::Rotation verticalRotation(17);
+pros::Rotation verticalRotation(-17); // negative port = reversed, so driving forward reads positive
 pros::Rotation horizontalRotation(18);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
@@ -47,15 +47,15 @@ pros::Controller controller(pros::E_CONTROLLER_MASTER);
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 10.6, lemlib::Omniwheel::NEW_325, 350, 2);
 // Offsets in inches from the tracking center (vertical: left of center is negative,
 // horizontal: behind center is negative). Placeholders until wheels are fitted on axl.
-constexpr float VERTICAL_WHEEL_DIAMETER = 2;
-constexpr float HORIZONTAL_WHEEL_DIAMETER = 2;
+constexpr float VERTICAL_WHEEL_DIAMETER = 2.074;   // calibrated: 48in push read 46.28in
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2.079; // calibrated: 48in push read 46.17in
 lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, 0.622);
-lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, 2.605);
+lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, -1.5);
 // Odometry runs on the IMU + drive motors alone until kUseTrackingWheels (motors.hpp) is true.
 lemlib::OdomSensors sensors(kUseTrackingWheels ? &verticalTracking : nullptr, nullptr,
                             kUseTrackingWheels ? &horizontalTracking : nullptr, nullptr, &imu);
-lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
+lemlib::ControllerSettings lateral_controller(25, 0.001, 130, 3, 1, 100, 3, 500, 20);
+lemlib::ControllerSettings angular_controller(4, 0.001, 42, 0, 1, 100, 3, 500, 0);
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 

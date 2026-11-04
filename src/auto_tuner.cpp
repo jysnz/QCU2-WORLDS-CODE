@@ -817,8 +817,8 @@ static void calibrateBeforeTune() {
 // wheel that isn't answering leaves the robot standing still (or the pose invalid).
 // Returns the name of the first one that doesn't answer, or nullptr if all do.
 static const char *findSensorFault() {
-  if (std::isinf(left_motor_group.get_position())) return "LEFT DRIVE (ports 1,2)";
-  if (std::isinf(right_motor_group.get_position())) return "RIGHT DRIVE (ports 4,5)";
+  if (std::isinf(left_motor_group.get_position())) return "LEFT DRIVE (ports 11,20)";
+  if (std::isinf(right_motor_group.get_position())) return "RIGHT DRIVE (ports 10,19)";
   // Odometry takes its heading from get_rotation(), which is infinite when the IMU is missing or
   // failed to calibrate -- get_heading() can still read a harmless 0.0 in that case.
   if (!std::isfinite(imu.get_rotation())) return "IMU (port 15, failed to calibrate or not found)";
