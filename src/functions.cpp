@@ -1,4 +1,5 @@
 #include "functions.hpp"
+#include "goals.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
 #include "pros/rtos.hpp"
@@ -106,16 +107,16 @@ void holdEndPosition(float x, float y, float theta) {
     while (true) {
         const lemlib::Pose p = chassis.getPose();
         const float dx = home.x - p.x, dy = home.y - p.y;
-        const float dist = std::hypot(dx, dy);
+        // A target at a goal is reached by touching the goal, since its centre can't be reached.
+        const bool there = atTarget(p.x, p.y, home.x, home.y, kPosTol);
+        const float dist = there ? 0.0f : std::hypot(dx, dy);
         float headErr = std::fmod(home.theta - p.theta + 540.0f, 360.0f) - 180.0f; // -180..180
 
         if (std::isfinite(dist) && std::isfinite(headErr)) {
             if (dist > kPosTol) {
-                // drive in reverse if the spot is behind the robot, so it doesn't spin around first
-                const float toPoint = std::atan2(dx, dy) * 180.0f / (float)M_PI; // 0 = +Y
-                const float rel = std::fmod(toPoint - p.theta + 540.0f, 360.0f) - 180.0f;
-                chassis.moveToPoint(home.x, home.y, 1500, {.forwards = std::abs(rel) <= 90.0f});
-                chassis.waitUntilDone();
+                // Drive home, going round goals and rerouting if it stalls. A goal home sits at
+                // is an intentional contact and is not avoided.
+                moveToPointSafe(home.x, home.y, 2500);
                 chassis.turnToHeading(home.theta, 1000);
                 chassis.waitUntilDone();
             } else if (std::abs(headErr) > kAngTol) {
