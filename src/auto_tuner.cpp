@@ -823,8 +823,8 @@ static const char *findSensorFault() {
   // failed to calibrate -- get_heading() can still read a harmless 0.0 in that case.
   if (!std::isfinite(imu.get_rotation())) return "IMU (port 15, failed to calibrate or not found)";
   if (kUseTrackingWheels) {
-    if (verticalRotation.get_position() == PROS_ERR) return "VERTICAL ROTATION (port 20)";
-    if (horizontalRotation.get_position() == PROS_ERR) return "HORIZONTAL ROTATION (port 19)";
+    if (verticalRotation.get_position() == PROS_ERR) return "VERTICAL ROTATION (port 17)";
+    if (horizontalRotation.get_position() == PROS_ERR) return "HORIZONTAL ROTATION (port 18)";
   }
   return nullptr;
 }

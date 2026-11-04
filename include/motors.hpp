@@ -40,9 +40,9 @@ extern ScaledImu imu; // port 15
 // The axl robot has no tracking wheels. These two exist so ODOM SETUP / the tuners build; they sit
 // on unused ports and odometry ignores them while kUseTrackingWheels is false. Fit the wheels,
 // set their real ports and offsets in main.cpp, then flip this to true.
-inline constexpr bool kUseTrackingWheels = false;
-extern pros::Rotation verticalRotation;   // port 20 (placeholder)
-extern pros::Rotation horizontalRotation; // port 19 (placeholder)
+inline constexpr bool kUseTrackingWheels = true;
+extern pros::Rotation verticalRotation;   // port 17
+extern pros::Rotation horizontalRotation; // port 18
 extern pros::Controller controller;
 
 extern lemlib::Chassis chassis;
