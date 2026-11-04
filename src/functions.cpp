@@ -148,6 +148,8 @@ void clawControl() {
 
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
+  // true = tank drive (left stick -> left side, right stick -> right side); false = arcade.
+  const bool kTankDrive = true;
   const int MAX_SPEED = 127;
   const double IMU_CORRECTION_KP = 0.8;
   const int INU_CORRECTION_MIN_MOVE = 15;
@@ -203,7 +205,7 @@ void jawheadControl() {
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
 
-    if (imu_status && std::abs(move) > INU_CORRECTION_MIN_MOVE &&
+    if (!kTankDrive && imu_status && std::abs(move) > INU_CORRECTION_MIN_MOVE &&
         std::abs(turn) < IMU_CORRECTION_MAX_TURN) {
       if (!headingLocked) {
         targetHeading = imu.get_heading();
@@ -225,8 +227,14 @@ void jawheadControl() {
       headingLocked = false;
     }
 
-    left_motor_group.move(std::clamp(move + turn, -MAX_SPEED, MAX_SPEED));
-    right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
+    if (kTankDrive) {
+      // Tank drive for testing: left stick Y drives the left side, right stick Y the right side.
+      left_motor_group.move(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y));
+      right_motor_group.move(controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_Y));
+    } else {
+      left_motor_group.move(std::clamp(move + turn, -MAX_SPEED, MAX_SPEED));
+      right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
+    }
 
     // Forward (clockwise) stops once the lift reaches LIFT_FORWARD_LIMIT.
     // Backward is not limited, so the lift can always be brought back down.

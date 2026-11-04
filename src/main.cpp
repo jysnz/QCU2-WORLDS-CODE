@@ -29,8 +29,8 @@ const bool VEXNET_ENABLED = false;
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({3, -4, 5, -6, 7}, pros::MotorGears::green);
-pros::MotorGroup right_motor_group({-8, 9, -10, 11, -12}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-8, 9, 10, -11, 12}, pros::MotorGears::green);
+pros::MotorGroup right_motor_group({-3, 4, -5, 6, -7}, pros::MotorGears::green);
 pros::MotorGroup intake2({17, -16}, pros::MotorGears::green);
 pros::MotorGroup lift({14, 19, -18}, pros::MotorGears::green);
 pros::Motor claw(13);
