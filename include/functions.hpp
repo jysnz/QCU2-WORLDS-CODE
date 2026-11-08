@@ -30,6 +30,8 @@ void intakeBlock();
 void outtakeBlock(double speed = 600);
 void intakeStop();
 void reset();
+void resetPose(double x, double y, double heading);
+void resetPosition(double x, double y);
 void leverReset();
 void gateCloseMid();
 void gateReset();

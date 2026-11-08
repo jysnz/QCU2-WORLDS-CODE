@@ -58,6 +58,12 @@ bool isReset = false;
 enum ArmState { LONG_GOAL, MID_GOAL, UNDER_GOAL };
 static ArmState currentArmState = LONG_GOAL; // Default position
 
+// ─── Pose reset target (edit these to the real field coordinate of the goal) ──
+const double GOAL_RESET_X = 0.0;        // inches
+const double GOAL_RESET_Y = 0.0;        // inches
+const double GOAL_RESET_HEADING = 0.0;  // degrees
+const bool GOAL_RESET_KEEP_HEADING = true; // true = only reset x/y, keep IMU heading
+
 // ─── Odometry helpers
 // ─────────────────────────────────────────────────────────
 float ticksToInches(float ticks) {
@@ -357,6 +363,18 @@ void intakeStop() { intake.move_velocity(0); }
 
 void reset() { chassis.setPose(0, 0, 0); }
 
+// ─── Pose reset (clears accumulated odometry error) ─────────────────────────
+// Snap the odometry to a known field position, e.g. when the robot is pushed
+// up against a goal. Units: inches, heading in degrees (LemLib convention).
+void resetPose(double x, double y, double heading) {
+  chassis.setPose(x, y, heading);
+}
+
+// Same, but keeps the robot's current heading (trust the IMU, fix x/y only).
+void resetPosition(double x, double y) {
+  chassis.setPose(x, y, chassis.getPose().theta);
+}
+
 void leverReset() {
   isLeverResetting = true; // Block other functions from using the motor
 
@@ -624,6 +642,7 @@ void catapultControl() {
   static bool descoreToggled = false;
   static bool wasAButtonTapped = false;
   static CatapultState lastCatState = CAT_IDLE;
+  static bool wasPoseResetPressed = false;
 
   while (true) {
     // 1. Gate Logic Base
@@ -651,6 +670,19 @@ void catapultControl() {
     bool descoreReset =
         controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
     bool aButtonPressed = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+    bool poseResetPressed =
+        controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT);
+
+    // Pose reset (Button LEFT): tap while sitting at the goal to snap odometry
+    // to GOAL_RESET_X / GOAL_RESET_Y and clear accumulated error.
+    if (poseResetPressed && !wasPoseResetPressed) {
+      if (GOAL_RESET_KEEP_HEADING)
+        resetPosition(GOAL_RESET_X, GOAL_RESET_Y);
+      else
+        resetPose(GOAL_RESET_X, GOAL_RESET_Y, GOAL_RESET_HEADING);
+      controller.rumble(".");
+    }
+    wasPoseResetPressed = poseResetPressed;
 
     // Toggle logic for Matchload (Button Y)
     if (matchLoadTapped && !wasMatchLoadTapped) {
