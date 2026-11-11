@@ -179,8 +179,12 @@ struct StraightPinArgs {
 // Steering on the line. (Run 2026-11-11: with 1.5 deg/in and 1.5 power/deg a 3.6 deg facing error
 // was still there 12 in later and the robot ended 1.2 in off the line -- 5 power of steering does
 // not turn the robot, and 1.5 deg/in needs ~40 in to come back onto the line.)
-constexpr float kLineKCross = 4.0f;       // degrees of heading per inch off the line
-constexpr float kLineMaxCross = 12.0f;    // ...never more than this
+// The heading is aimed at the pin's live bearing (so odometry drift or a slip on the way cannot
+// leave the robot parallel to, but off, the line) until kAimFreezeIn from the stop, then held: the
+// bearing swings wildly when the pin is a few inches away.
+constexpr float kAimFreezeIn = 6.0f;      // inches before the stop where the aim is frozen
+constexpr float kGentleIn = 3.0f;         // inches before the stop driven at kLineCreep (a pin is
+                                          // pushed out of the claw by a fast arrival)
 constexpr float kLineKHeading = 2.5f;     // power per degree of heading error
 constexpr float kLineKRate = 0.04f;       // power per deg/s of turning: damps the steering
 constexpr float kLineMaxTurn = 35.0f;     // power
@@ -326,6 +330,7 @@ void straightPinTask(void *p) {
     const uint32_t t0 = pros::millis();
     float prevTheta = pose.theta;
     float prevMag = 0;
+    float aimHeading = lineHeading;
     uint32_t seenAt = 0;
     bool searching = false;
     bool inDecel = false;
@@ -333,7 +338,6 @@ void straightPinTask(void *p) {
         pose = chassis.getPose();
         const float rx = pose.x - p0x, ry = pose.y - p0y;
         const float along = rx * ux + ry * uy;   // how far along the line
-        const float lat = -rx * uy + ry * ux;    // + = left of the line
         const float remaining = stopAt - along;
         const bool seen = pinCloseWatchHit();    // the IR sensor saw the pin: claws are closing
         if (seen && seenAt == 0)
@@ -367,6 +371,8 @@ void straightPinTask(void *p) {
                 }
             }
             target = std::max(target, std::min(kLineCreep, a.decelSpeed));
+            if (remaining <= kGentleIn)
+                target = std::min(target, kLineCreep);
             if (searching)
                 target = kLineCreep;
             mag = std::min(target, prevMag + kLineAccelStep);
@@ -374,7 +380,9 @@ void straightPinTask(void *p) {
         prevMag = mag;
 
         // hold the line's heading, leaning a little towards the line when off it
-        const float desired = lineHeading + std::clamp(kLineKCross * lat, -kLineMaxCross, kLineMaxCross);
+        if (remaining > kAimFreezeIn)
+            aimHeading = std::atan2(a.px - pose.x, a.py - pose.y) * 180.0f / (float)M_PI;
+        const float desired = aimHeading;
         float err = wrap180(desired - pose.theta);
         const float rate = (pose.theta - prevTheta) * 100.0f; // deg/s
         prevTheta = pose.theta;

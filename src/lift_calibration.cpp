@@ -244,8 +244,10 @@ static volatile bool pinWatchOn = false;
 static volatile bool pinWatchHit = false;
 
 static void pinWatchTask(void *) {
+  int hits = 0; // consecutive detections: one noisy read must not shut the claws
   while (true) {
-    if (pinWatchOn && !pinWatchHit && pinDetected()) {
+    hits = (pinWatchOn && !pinWatchHit && pinDetected()) ? hits + 1 : 0;
+    if (hits >= 3) {
       clawsClose();
       pinWatchHit = true;
       runlog::event("pin seen: claws closing");
