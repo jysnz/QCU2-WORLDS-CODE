@@ -1517,6 +1517,6 @@ void workingslow() {
 
 // No auton selector - only one autonomous routine.
 void runAutonomous() {
-    finalllllllllllllllllll();
+    workingslow();
 }
 
