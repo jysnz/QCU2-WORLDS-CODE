@@ -33,6 +33,8 @@ void controller_auto();
 void finalllllllllllllllllll();
 void upgrade();
 void savesave();
+void workinggg();
+void workingslow();
 void runAutonomous();
 void scrimmageAutoAWP();
 void skills();

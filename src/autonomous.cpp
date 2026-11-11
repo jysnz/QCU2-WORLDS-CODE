@@ -1425,6 +1425,96 @@ void savesave() {
 }
 // END planner: savesave
 
+// BEGIN planner: workinggg  (tools/path_planner.py -- saving this plan again replaces everything up to END)
+// Coordinates: inches, origin at field centre, heading 0 = +y, clockwise +.
+void workinggg() {
+    chassis.setPose(0.00, -63.90, 0.00);  // start pose
+    liftGoToLevel(1, true, 500);  // 1: liftToLevel LOW LIFT (wait)
+    pros::delay(500);  // 2: wait 500 ms
+    chassis.moveToPoint(0.00, -47.50, 1000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 3: moveToPoint (0.0, -47.5) 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 4: waitUntilDone
+    chassis.turnToHeading(268.43, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 5: turnToHeading hdg 268.4 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 6: waitUntilDone
+    chassis.moveToPoint(-18.40, -47.70, 1500, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 7: moveToPoint (-18.4, -47.7) 1500ms
+    while (chassis.isInMotion()) pros::delay(10);  // 8: waitUntilDone
+    liftGoToLevel(5, true, 2000);  // 9: liftToLevel PIN LIFT (wait)
+    pros::delay(500);  // 10: wait 500 ms
+    claw.retract(); claw2.retract();  // 11: claw BOTH OFF
+    chassis.moveToPoint(0.00, -47.50, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 12: moveToPoint (0.0, -47.5) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 13: waitUntilDone
+    goToPin(-24.00, -24.00, 1, 3450, 80, true, 6.00, 15.00, 20);  // 14: goToPin (-24.0, -24.0) lift LOW 3450ms
+    chassis.turnToHeading(201.45, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 15: turnToHeading hdg 201.4 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 16: waitUntilDone
+    chassis.moveToPoint(-22.90, -41.40, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 17: moveToPoint (-22.9, -41.4) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 18: waitUntilDone
+    liftDropAtLevel(1, 2000);  // 19: liftToLevel LOW DROP (+ open claws)
+    chassis.turnToHeading(120.96, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 20: turnToHeading hdg 121.0 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 21: waitUntilDone
+    chassis.moveToPoint(-34.90, -33.90, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 22: moveToPoint (-34.9, -33.9) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 23: waitUntilDone
+    homeLift();  // 24: homeLift
+    goToPin(-48.00, -48.00, 2, 2300, 70, true, 7.00, 7.00, 30);  // 25: goToPin (-48.0, -48.0) lift MID 2300ms
+    chassis.turnToHeading(106.49, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 26: turnToHeading hdg 106.5 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 27: waitUntilDone
+    chassis.moveToPoint(-29.60, -47.50, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 28: moveToPoint (-29.6, -47.5) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 29: waitUntilDone
+    liftDropAtLevel(2, 2000);  // 30: liftToLevel MID DROP (+ open claws)
+    while (chassis.isInMotion()) pros::delay(10);  // 31: waitUntilDone
+    homeLift();  // 32: homeLift
+    chassis.moveToPoint(-44.00, -42.40, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 33: moveToPoint (-44.0, -42.4) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 34: waitUntilDone
+    chassis.turnToHeading(44.26, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 35: turnToHeading hdg 44.3 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 36: waitUntilDone
+    chassis.moveToPoint(-7.70, -6.60, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 37: moveToPoint (-7.7, -6.6) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 38: waitUntilDone
+}
+// END planner: workinggg
+
+// BEGIN planner: workingslow  (tools/path_planner.py -- saving this plan again replaces everything up to END)
+// Coordinates: inches, origin at field centre, heading 0 = +y, clockwise +.
+void workingslow() {
+    chassis.setPose(0.00, -63.90, 0.00);  // start pose
+    liftGoToLevel(1, true, 500);  // 1: liftToLevel LOW LIFT (wait)
+    pros::delay(500);  // 2: wait 500 ms
+    chassis.moveToPoint(0.00, -47.50, 1000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 3: moveToPoint (0.0, -47.5) 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 4: waitUntilDone
+    chassis.turnToHeading(268.43, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 5: turnToHeading hdg 268.4 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 6: waitUntilDone
+    chassis.moveToPoint(-18.40, -47.70, 1500, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 7: moveToPoint (-18.4, -47.7) 1500ms
+    while (chassis.isInMotion()) pros::delay(10);  // 8: waitUntilDone
+    liftGoToLevel(5, true, 2000);  // 9: liftToLevel PIN LIFT (wait)
+    pros::delay(500);  // 10: wait 500 ms
+    claw.retract(); claw2.retract();  // 11: claw BOTH OFF
+    chassis.moveToPoint(0.00, -47.50, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 12: moveToPoint (0.0, -47.5) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 13: waitUntilDone
+    goToPin(-24.00, -24.00, 1, 3550, 50, true, 6.00, 10.00, 20);  // 14: goToPin (-24.0, -24.0) lift LOW 3550ms
+    chassis.turnToHeading(201.45, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 15: turnToHeading hdg 201.4 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 16: waitUntilDone
+    chassis.moveToPoint(-22.90, -41.40, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 17: moveToPoint (-22.9, -41.4) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 18: waitUntilDone
+    liftDropAtLevel(1, 2000);  // 19: liftToLevel LOW DROP (+ open claws)
+    chassis.turnToHeading(120.96, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 20: turnToHeading hdg 121.0 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 21: waitUntilDone
+    chassis.moveToPoint(-34.90, -33.90, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 22: moveToPoint (-34.9, -33.9) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 23: waitUntilDone
+    homeLift();  // 24: homeLift
+    goToPin(-48.00, -48.00, 2, 2300, 70, true, 7.00, 7.00, 30);  // 25: goToPin (-48.0, -48.0) lift MID 2300ms
+    chassis.turnToHeading(106.49, 1000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 26: turnToHeading hdg 106.5 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 27: waitUntilDone
+    chassis.moveToPoint(-29.60, -47.50, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 28: moveToPoint (-29.6, -47.5) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 29: waitUntilDone
+    liftDropAtLevel(2, 2000);  // 30: liftToLevel MID DROP (+ open claws)
+    while (chassis.isInMotion()) pros::delay(10);  // 31: waitUntilDone
+    homeLift();  // 32: homeLift
+    chassis.moveToPoint(-44.00, -42.40, 1000, {.forwards = false, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 33: moveToPoint (-44.0, -42.4) BWD 1000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 34: waitUntilDone
+    chassis.turnToHeading(44.26, 2000, {.direction = lemlib::AngularDirection::AUTO, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 35: turnToHeading hdg 44.3 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 36: waitUntilDone
+    chassis.moveToPoint(-7.70, -6.60, 2000, {.forwards = true, .maxSpeed = 127, .minSpeed = 0, .earlyExitRange = 0.00});  // 37: moveToPoint (-7.7, -6.6) 2000ms
+    while (chassis.isInMotion()) pros::delay(10);  // 38: waitUntilDone
+}
+// END planner: workingslow
+
 // No auton selector - only one autonomous routine.
 void runAutonomous() {
     finalllllllllllllllllll();

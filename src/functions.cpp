@@ -299,6 +299,18 @@ constexpr uint32_t kVisionLookMs = 300;
 // The heading is corrected ON THE MOVE: the camera steers from this far before the stop (while the
 // robot is braking), so it arrives at the stop already lined up. The stop-and-pivot is off.
 constexpr float kVisionSteerIn = 14.0f;
+// A FAR pin (further than this) is looked for with the camera before the drive starts: the robot, already
+// facing the pin's odometry bearing, stands still, lets the camera find the yellow pin, turns onto it, and
+// drives the line it is then pointing along. A pin nearer than this uses the existing approach unchanged.
+constexpr float kFarPinIn = 24.0f;
+constexpr bool kFarPreAim = false;        // (off: the camera now only works near the pin, see below)
+// THE CAMERA WINDOW: the camera is only used within kVisionWindowIn of the pin (distance of the claw tip),
+// and the robot is already at the slow kVisionApproach speed when it enters. It steers on the move down
+// to kVisionFreezeIn, then the heading is frozen (the blob jitters right at the pin and made it wobble),
+// and the robot rolls on at the slow speed until the IR closes the claws. No stop, no square-up.
+constexpr float kVisionWindowIn = 7.0f;
+constexpr float kVisionFreezeIn = 2.0f;
+constexpr bool kStopForVision = false;
 constexpr bool kVisionPivot = false;
 constexpr uint32_t kVisionHoldMs = 600;   // a sighting this recent counts as "lined up" at the stop
 constexpr int kSquareMaxFlips = 2;
@@ -402,7 +414,7 @@ void straightPinTask(void *p) {
         chassis.endMotion();
         return;
     }
-    const float ux = (a.px - p0x) / dist, uy = (a.py - p0y) / dist;
+    float ux = (a.px - p0x) / dist, uy = (a.py - p0y) / dist;
     lineHeading = std::atan2(ux, uy) * 180.0f / (float)M_PI;
     // (an event holds 55 characters) "was" = how far off the turn left it, before squaring up
     runlog::event("pin line: brg %.1f dist %.1f face %.1f was %.1f", lineHeading, dist,
@@ -414,7 +426,7 @@ void straightPinTask(void *p) {
     }
 
     // 3. drive it
-    const uint32_t t0 = pros::millis();
+    uint32_t t0 = pros::millis();
     float prevTheta = pose.theta;
     float prevMag = 0;
     uint32_t seenAt = 0;
@@ -539,6 +551,27 @@ void straightPinTask(void *p) {
         else
             runlog::event("pin vision: squared up at %+d px", lastVisErrPx);
     };
+    // 2b. a far pin: correct the heading on the camera BEFORE driving (the pin's coordinates are only as good
+    // as odometry, and a few degrees here is several inches at the pin). Near pins skip this.
+    bool farAimed = false; // the camera aimed the line before the drive: nothing re-aims it afterwards
+    if (kFarPreAim && dist > kFarPinIn && visionOk && pinVisionSig > 0 && kPinGrabByIR) {
+        lastVisSeenMs = 0; // only sightings made from here count
+        squareUp();
+        pose = chassis.getPose();
+        if (lastVisSeenMs != 0 && pros::millis() - lastVisSeenMs < 1000) {
+            // the camera had it: drive the line the robot now points along (the camera's pin, not odometry's)
+            farAimed = true;
+            lineHeading = pose.theta;
+            ux = std::sin(lineHeading * (float)M_PI / 180.0f);
+            uy = std::cos(lineHeading * (float)M_PI / 180.0f);
+            runlog::event("pin far %.0f in: aimed by camera, %.1f deg off odometry", dist,
+                          wrap180(lineHeading - std::atan2(a.px - pose.x, a.py - pose.y) * 180.0f / (float)M_PI));
+        } else {
+            runlog::event("pin far %.0f in: camera did not see it", dist);
+        }
+        pros::delay(40);
+        t0 = pros::millis(); // the timeout is for the drive itself
+    }
     while (chassis.isInMotion() && (int)(pros::millis() - t0) < a.timeoutMs) {
         const uint32_t nowMs = pros::millis();
         pose = chassis.getPose();
@@ -570,7 +603,9 @@ void straightPinTask(void *p) {
         // odometry alone; visionAssist is just "there is a camera and a signature", which the brake and
         // the stop at pinVisionRangeIn need.
         const bool visionAssist = visionOk && pinVisionSig > 0;
-        const bool visionOn = visionAssist && remaining <= pinVisionRangeIn + kVisionSteerIn;
+        // (a far pin the camera already aimed at is NOT steered again: re-aiming on the close-range camera
+        // is what swung the heading ~12 deg at the end of the run of 2026-11-11 18:16)
+        const bool visionOn = visionAssist && !farAimed && remaining <= kVisionWindowIn && remaining > kVisionFreezeIn;
         if (visionOn && !loggedZone) {
             loggedZone = true;
             runlog::event("pin vision: camera steering on, sig %d", pinVisionSig);
@@ -607,7 +642,7 @@ void straightPinTask(void *p) {
         // here (pin in view or not) -- no deceleration, no braking: full
         // speed right up to this point, a hard stop, then the square-up and
         // the creep-in put the claw on the pin slowly
-        if (kPinGrabByIR && visionAssist && remaining <= pinVisionRangeIn && seenAt == 0) {
+        if (kStopForVision && kPinGrabByIR && visionAssist && remaining <= pinVisionRangeIn && seenAt == 0) {
             runlog::event("pin vision: stopped %.1f in short, aligning", remaining);
             visionStopped = true;
             break;
@@ -623,9 +658,15 @@ void straightPinTask(void *p) {
             mag = since < hold ? prevMag
                                : prevMag * (1.0f - (float)(since - hold) / (float)kSeenStopMs);
         } else if (remaining <= kLineTol) {
-            // on the pin and the IR still has not fired (no camera to stop at
-            // pinVisionRangeIn): straight to the creep-in and its extra push
-            visionStopped = kPinGrabByIR;
+            // The claw tip is on the pin's coordinates and the IR has not fired: the pin is in the claw
+            // (the IR beam sits a little deeper than the claw tip), so shut the claws NOW instead of
+            // creeping on for the IR (run 2026-11-11: the pin was in the claw, the robot crept 1-2 s
+            // and the claws closed only when the drive timed out).
+            if (kPinGrabByIR) {
+                clawsClose();
+                runlog::event("pin arrived, IR silent: claws closed");
+            }
+            visionStopped = false;
             break;
         } else {
             // the approach brake: the camera path decelerates over the last
@@ -633,7 +674,7 @@ void straightPinTask(void *p) {
             // stop lands where it should (the coast from full speed used to
             // carry it past the stop, too close for the camera to square up)
             float target = a.maxSpeed;
-            const float toVisStop = remaining - pinVisionRangeIn;
+            const float toVisStop = remaining - kVisionWindowIn; // slow by the time the camera window starts
             if (kPinGrabByIR && visionAssist && toVisStop < kVisionBrakeIn) {
                 target = kVisionApproach + (a.maxSpeed - kVisionApproach) *
                                                 std::max(toVisStop, 0.0f) / kVisionBrakeIn;
@@ -689,7 +730,7 @@ void straightPinTask(void *p) {
         // centred (kVisionAlignedPx), or give up after kVisionAlignMs and
         // just drive the line in. Without a camera there is nothing to
         // square to: go straight to the creep-in.
-        if (visionOk && pinVisionSig > 0) {
+        if (kStopForVision && visionOk && pinVisionSig > 0 && !farAimed) {
             squareUp();
             pros::delay(50); // settle on the new heading before the last stretch
         }
