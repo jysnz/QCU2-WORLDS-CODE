@@ -50,6 +50,25 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
 void goToPin(float x, float y, int level, int timeoutMs = 3000, int maxSpeed = 0, bool forwards = true,
              float reach = 0, float decelRange = 10, float decelSpeed = 40);
 
+// ─── Vision-assisted pin grab (the straight pin drive in functions.cpp) ───
+// The MOMENT the camera sees the pin -- however far out -- the drive steers
+// straight at the largest object of signature slot pinVisionSig on the V5
+// Vision Sensor (slot 1 = YEL, the pin's captured signature; 0 turns the
+// assist off) in place of the odometry line-lean, braking over the last
+// 10 in down to an approach speed so the vision stop lands where it should.
+// pinVisionRangeIn (5 in) short of the pin it halts, squares up on it by
+// camera, then creeps in at low speed until the IR pin sensor closes the
+// claws -- it pushes at most 2 in past the nominal stop point and grabs
+// within 2 s, else moving on to the next motion.
+extern int pinVisionSig;
+extern float pinVisionRangeIn;
+// The x_middle reading that means "aimed at the pin". The sensor is created
+// zero-centred (centre of the FOV = 0, range -158..+158), so this defaults
+// to 0 -- the brain's Vision Utility screen shows the same point as ~158-160
+// on its own 0..316 scale. If the run log shows raw ~+158 when the robot is
+// square to the pin, the zero-centre flag is not applying: set this to 158.
+extern float pinVisionCenterPx;
+
 // Relocalizes the odometry against a field wall. Drives into the wall (backwards by default, so
 // the robot's back is flat against it) until it stalls or timeoutMs runs out, then overwrites the
 // coordinate that wall fixes -- and, with setHeading, the heading -- with what is true there:

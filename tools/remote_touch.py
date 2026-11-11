@@ -82,6 +82,15 @@ KEYBOARD (EDIT screen)
                         numeric fields; for choice fields the label
                         (FWD, CW, LEFT, ...) or its index
 
+VISION
+    HOME -> VISION mirrors the vision sensor screen (see
+    src/vision_calib.cpp): the color buttons YEL/RED/BLUE pick signature
+    slots 1/2/3, the info panel shows a live object count for each of the
+    three colors at once, exposure, the live camera view with the detected
+    object's box, and FOLLOW mode (the robot pivots to keep the selected
+    color's element centered while you move it by hand). Every button is
+    clickable here; the arrow keys and A/X act like the controller's.
+
 BEFORE YOU RUN THIS
     - Install pyserial once:  pip install pyserial
     - Close `pros terminal` and any other serial monitor (VS Code's PROS
@@ -262,7 +271,7 @@ class PacketStream:
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
                  "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE",
-                 "AUTO_TUNER", "LIFT_CAL", "DECEL_TUNE")
+                 "AUTO_TUNER", "LIFT_CAL", "DECEL_TUNE", "VISION")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -305,7 +314,7 @@ def parse_rui_line(line):
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
                                 "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
-                                "PATH", "PID", "RES", "AUTO", "MSG", "LIFT", "DECEL")}
+                                "PATH", "PID", "RES", "AUTO", "MSG", "LIFT", "DECEL", "VIS")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -442,6 +451,29 @@ def parse_rui_line(line):
             decel = {"values": v[:6], "running": v[6] == 1, "haveStart": v[7] == 1,
                      "msg": segments["MSG"]}
 
+    # Vision calibration screen (sendState() in vision_calib.cpp):
+    #   VIS:<present>,<follow>,<slot>,<exposure>,<cnt>,<seen>,<err>,<empty>,
+    #       <u_min>,<u_max>,<u_mean>,<v_min>,<v_max>,<v_mean>,<range>,<rgb>,
+    #       <objLeft>,<objTop>,<objWidth>,<objHeight>,
+    #       <yelCnt>,<redCnt>,<blueCnt>
+    # (obj* are FOV coords, zero point center; 0 when nothing is seen; the
+    # counts are the live object counts of color slots 1=YEL, 2=RED, 3=BLUE)
+    vision = None
+    if segments["VIS"]:
+        try:
+            v = [float(x) for x in segments["VIS"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 23:
+            vision = {"present": v[0] == 1, "follow": v[1] == 1, "slot": int(v[2]),
+                      "exposure": int(v[3]), "cnt": int(v[4]), "seen": v[5] == 1,
+                      "err": int(v[6]), "empty": v[7] == 1,
+                      "uMin": v[8], "uMax": v[9], "uMean": v[10],
+                      "vMin": v[11], "vMax": v[12], "vMean": v[13],
+                      "range": v[14], "rgb": int(v[15]),
+                      "obj": (int(v[16]), int(v[17]), int(v[18]), int(v[19])),
+                      "yelCnt": int(v[20]), "redCnt": int(v[21]), "blueCnt": int(v[22])}
+
     return {
         "screen": screen,
         "breadcrumb": breadcrumb,
@@ -466,6 +498,7 @@ def parse_rui_line(line):
         "auto": auto,
         "lift": lift,
         "decel": decel,
+        "vision": vision,
     }
 
 
@@ -718,6 +751,8 @@ FOOTER_BG = "#18181F"
 TARGET_LINE = "#FF6B81"
 PATH_LINE = "#2EFF8C"
 RED = "#FF3131"
+YELLOW = "#F1C40F"
+BLUE = "#4A90F2"
 WHITE = "#FFFFFF"
 BLACK = "#000000"
 HEADER_SUB = "#1a1a1a"
@@ -1295,6 +1330,95 @@ class BrainScreen:
         self.set_pen(GRAY)
         self.print(FONT_SMALL, 10, 222, d["msg"] or "tune from the decel window")
 
+    # -- VISION (vision_calib.cpp): status pill, info panel, the camera view
+    # with the detected object's box, and the five buttons.
+    def drawVisionScreen(self, st):
+        self.clearScreen()
+        self.drawHeader("VISION", st["breadcrumb"], CYAN)
+        self.drawBackButton()
+        v = st.get("vision")
+        if not v:
+            self.set_pen(GRAY)
+            self.print(FONT_SMALL, 20, 110, "waiting for state from the brain...")
+            return
+
+        status = ("NO SENSOR" if not v["present"] else "FOLLOWING" if v["follow"]
+                  else "SEEN" if v["seen"] else "SEARCHING")
+        statusColor = RED if not v["present"] else GREEN if v["follow"] else CYAN if v["seen"] else GRAY
+        self.fillRoundedRect(10, 58, 255, 84, 8, statusColor)
+        self.set_pen(BLACK)
+        self.print(FONT_MEDIUM, 22, 62, status)
+        if v["seen"]:
+            self.print(FONT_SMALL, 22, 76, f"err {v['err']} px")
+
+        self.set_pen(WHITE if v["present"] else RED)
+        self.print(FONT_SMALL, 10, 94, f"objects total: {v['cnt']}")
+        self.set_pen(YELLOW if v["present"] else RED)
+        self.print(FONT_SMALL, 10, 106, f"YEL {v['yelCnt']}")
+        self.set_pen("#FF6464" if v["present"] else RED)
+        self.print(FONT_SMALL, 80, 106, f"RED {v['redCnt']}")
+        self.set_pen("#4A90F2" if v["present"] else RED)
+        self.print(FONT_SMALL, 150, 106, f"BLUE {v['blueCnt']}")
+        self.set_pen(WHITE if v["present"] else RED)
+        self.print(FONT_SMALL, 10, 118, f"exposure {v['exposure']}")
+        slot_name = {1: "YEL", 2: "RED", 3: "BLUE"}.get(v["slot"], "-")
+        self.print(FONT_SMALL, 10, 130, f"tracking slot {v['slot']} ({slot_name})")
+        if v["empty"]:
+            self.set_pen(ORANGE)
+            self.print(FONT_SMALL, 10, 142, f"slot {v['slot']} empty - Vision Utility")
+        elif v["seen"]:
+            self.set_pen(CYAN)
+            ox, oy, ow, oh = v["obj"]
+            self.print(FONT_SMALL, 10, 142, f"obj x {ox} y {oy} w {ow} h {oh}")
+        else:
+            self.set_pen(CYAN)
+            self.print(FONT_SMALL, 10, 142,
+                       f"u {v['uMin']:.0f}..{v['uMax']:.0f} v {v['vMin']:.0f}..{v['vMax']:.0f}")
+
+        # camera view: the sensor's 316x212 FOV, center cross, object box
+        CX0, CY0, CX1, CY1 = 270, 58, 460, 150
+        self.set_pen(CARD)
+        self.fill_rect(CX0, CY0, CX1, CY1)
+        self.set_pen(AXIS)
+        self.draw_rect(CX0, CY0, CX1, CY1)
+        ccx, ccy = (CX0 + CX1) // 2, (CY0 + CY1) // 2
+        sx, sy = (CX1 - CX0) / 316.0, (CY1 - CY0) / 212.0
+        self.draw_line(ccx, CY0, ccx, CY1)
+        self.draw_line(CX0, ccy, CX1, ccy)
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, CX0 + 4, CY0 + 2, "FOV")
+        if v["seen"]:
+            ox, oy, ow, oh = v["obj"]
+            bx0, by0 = int(ccx + ox * sx), int(ccy + oy * sy)
+            bx1, by1 = int(bx0 + ow * sx), int(by0 + oh * sy)
+            self.set_pen(GREEN if abs(v["err"]) <= 12 else ORANGE)
+            self.draw_rect(bx0, by0, bx1, by1)
+
+        # the buttons, exactly where the brain has them (they are in BTN):
+        # FOLLOW lights green while following; the color buttons light in
+        # their own color when that color's slot is selected
+        for (x0, y0, x1, y1, label) in st["elements"]:
+            if label == "BACK":
+                continue
+            fill, fg = CARD, WHITE
+            if label.startswith("FOLLOW"):
+                fill = "#1E7A45" if v["follow"] else CARD
+            elif label == "RED" and v["slot"] == 2:
+                fill = RED
+            elif label == "YEL" and v["slot"] == 1:
+                fill, fg = YELLOW, BLACK
+            elif label == "BLUE" and v["slot"] == 3:
+                fill = BLUE
+            self.set_pen(fill)
+            self.fill_rect(x0, y0, x1, y1)
+            self.set_pen(fg)
+            self.print(FONT_SMALL, x0 + 8, y0 + (y1 - y0) // 2 - 6, label)
+
+        self.set_pen(FOOTER_BG)
+        self.fill_rect(0, 215, 480, 240)
+        self.set_pen(RED if not v["present"] else GRAY)
+        self.print(FONT_SMALL, 10, 222, st["footer"])
+
     # -- AUTO PID TUNER (drawAutoUI in auto_tuner.cpp) --
     # Header, BACK, the ANGULAR / LATERAL / START-STOP buttons, the info
     # panel and the footer message as the brain draws them; the graph area
@@ -1401,6 +1525,8 @@ class BrainScreen:
             self.drawLiftCalScreen(st)
         elif tag == "DECEL_TUNE":
             self.drawDecelTuneScreen(st)
+        elif tag == "VISION":
+            self.drawVisionScreen(st)
         elif tag == "POSE":
             self.drawPoseScreen(st)
         elif tag == "HANDOFF":

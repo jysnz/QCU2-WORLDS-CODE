@@ -2,7 +2,8 @@
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
-//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for the last two)
+//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for
+//           ODOM SETUP | DISTANCE | LIFT CAL | IR TEST | DECEL TUNE | VISION)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -24,6 +25,7 @@
 #include "decel_tune.hpp"
 #include "lift_calibration.hpp"
 #include "run_log.hpp"
+#include "vision_calib.hpp"
 #include "functions.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
@@ -714,7 +716,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[13] = {
+static const GridItem kHomeItems[14] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -728,8 +730,9 @@ static const GridItem kHomeItems[13] = {
     {"LIFT CAL"},
     {"IR TEST"},
     {"DECEL TUNE"},
+    {"VISION"},
 };
-static const int kHomeItemCount = 13;
+static const int kHomeItemCount = 14;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -2754,6 +2757,10 @@ void driverMenuControl() {
           goHome();
         } else if (hit == 12) {
           decelTuneControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 13) {
+          visionCalibControl(); // returns on its own BACK; sends RUI|VISION
+                                // lines meanwhile
           goHome();
         }
         break;
