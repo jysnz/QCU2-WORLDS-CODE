@@ -119,7 +119,7 @@ void opcontrol() {
         }
         pros::delay(20);
         pros::lcd::print(0, "Press DPAD-LEFT to enter menu");
-
+        
     }
 
     pinAutoGrabEnable(false); // (the menu's plan runs stay in charge of the lift)
@@ -135,5 +135,4 @@ void autonomous() {
     runlog::begin("autonomous"); // recorded; sent to the laptop afterwards (tools/run_reports/)
     runAutonomous();
     runlog::end("DONE");
-    runlog::end("ALL DONE")
 }
