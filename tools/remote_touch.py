@@ -262,7 +262,7 @@ class PacketStream:
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
                  "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE",
-                 "AUTO_TUNER")
+                 "AUTO_TUNER", "LIFT_CAL", "DECEL_TUNE")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -305,7 +305,7 @@ def parse_rui_line(line):
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
                                 "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
-                                "PATH", "PID", "RES", "AUTO", "MSG")}
+                                "PATH", "PID", "RES", "AUTO", "MSG", "LIFT", "DECEL")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -410,6 +410,38 @@ def parse_rui_line(line):
                     "angular": v[3:6], "lateral": v[6:9], "pu": v[9], "bestD": v[10],
                     "bestI": v[11], "running": v[12] == 1, "msg": segments["MSG"]}
 
+    # Lift calibration screen (sendState() in lift_calibration.cpp):
+    #   LIFT:<sel>,<live>,<moving>,<bumper>,<upper>,<claw>,<claw2>,<dropping>,<saveReq>~<name>,<lift>,<drop>;...
+    # (drop = -1: the level has no drop angle)
+    lift = None
+    if segments["LIFT"]:
+        head, _, tail = segments["LIFT"].partition("~")
+        try:
+            v = [float(x) for x in head.split(",")]
+            levels = []
+            for chunk in tail.split(";"):
+                f = chunk.split(",")
+                if len(f) == 3:
+                    levels.append((f[0], float(f[1]), float(f[2])))   # name, lift, drop
+        except ValueError:
+            v, levels = [], []
+        if len(v) == 9 and levels:
+            lift = {"sel": int(v[0]), "live": v[1], "moving": v[2] == 1, "bumper": v[3] == 1,
+                    "upper": v[4], "claw": v[5] == 1, "claw2": v[6] == 1, "dropping": v[7] == 1, "saveReq": int(v[8]),
+                    "levels": levels, "msg": segments["MSG"]}
+
+    # Decel tune screen (sendState() in decel_tune.cpp):
+    #   DECEL:<dist>,<speed>,<range>,<end>,<steps>,<own>,<running>,<haveStart>   MSG:<last result>
+    decel = None
+    if segments["DECEL"]:
+        try:
+            v = [float(x) for x in segments["DECEL"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 8:
+            decel = {"values": v[:6], "running": v[6] == 1, "haveStart": v[7] == 1,
+                     "msg": segments["MSG"]}
+
     return {
         "screen": screen,
         "breadcrumb": breadcrumb,
@@ -432,6 +464,8 @@ def parse_rui_line(line):
         "pid": pid,
         "result": result,
         "auto": auto,
+        "lift": lift,
+        "decel": decel,
     }
 
 
@@ -441,7 +475,8 @@ def is_pid_run_line(line):
     "CSV,ms,target,actual,error" samples in between -- and the auto
     tuner's "AT|RUN / S / END / DONE" stream (auto_tuner.cpp). These
     bypass the screen-state parser and go to their window as-is."""
-    return line.startswith("PID|") or line.startswith("CSV,") or line.startswith("AT|")
+    return (line.startswith("PID|") or line.startswith("CSV,") or line.startswith("AT|")
+            or line.startswith("LOG|"))
 
 
 class SerialLink:
@@ -457,6 +492,8 @@ class SerialLink:
         self.debug = debug
         self.bytesReceived = 0   # anything at all from the port
         self.linesReceived = 0   # decoded text lines (RUI or not)
+        self.dead = False        # port failed (unplugged, etc.) -> app reconnects
+        self.lastRx = time.time()
         self._stop = False
         self._thread = threading.Thread(target=self._readLoop, daemon=True)
         self._thread.start()
@@ -466,10 +503,12 @@ class SerialLink:
         while not self._stop:
             try:
                 raw = self.ser.read(self.ser.in_waiting or 1)
-            except serial.SerialException:
+            except (serial.SerialException, OSError):
+                self.dead = True
                 break
             if not raw:
                 continue
+            self.lastRx = time.time()
             self.bytesReceived += len(raw)
             for line in stream.feed(raw):
                 self.linesReceived += 1
@@ -500,8 +539,8 @@ class SerialLink:
     def _send(self, line):
         try:
             self.ser.write((line + "\n").encode("ascii", errors="ignore"))
-        except serial.SerialException:
-            pass
+        except (serial.SerialException, OSError):
+            self.dead = True
 
     def close(self):
         self._stop = True
@@ -560,6 +599,8 @@ class VexcomLink:
         self.debug = debug
         self.bytesReceived = 0
         self.linesReceived = 0
+        self.dead = False        # vexcom exited -> app reconnects
+        self.lastRx = time.time()
         self.error = None        # set if vexcom quits on us (port busy, etc.)
         self._lastLines = []
         self._stop = False
@@ -576,6 +617,7 @@ class VexcomLink:
                 else self.proc.stdout.read(1)
             if not raw:
                 break
+            self.lastRx = time.time()
             self.bytesReceived += len(raw)
             for line in stream.feed(raw):
                 self.linesReceived += 1
@@ -591,8 +633,9 @@ class VexcomLink:
             # vexcom exited by itself. When the port is already open
             # elsewhere it just says "COMx: No error" and quits with a
             # nonzero code -- translate that into something actionable.
+            self.dead = True
             code = self.proc.wait()
-            tail = " / ".join(l for l in self._lastLines if l and "vexcom utility" not in l)
+            tail =" / ".join(l for l in self._lastLines if l and "vexcom utility" not in l)
             self.error = (f"vexcom quit (exit {code}: {tail or 'no message'}). Is the PROS "
                           "terminal in VS Code (or another vexcom / remote_touch) still using "
                           f"{self.port}? Close it and restart this tool.")
@@ -1179,6 +1222,79 @@ class BrainScreen:
             self.print(FONT_SMALL, 10, 222, f"{label} // OVERSHOOT {overshoot:.2f} // SETTLE "
                                              f"{settle}ms // FINAL {final:.2f} // {dur}ms")
 
+    # -- LIFT CAL (drawAll in lift_calibration.cpp): header, BACK, the level
+    # rows and the live angle; the buttons are in the lift window.
+    def drawLiftCalScreen(self, st):
+        lift = st["lift"]
+        self.clearScreen()
+        self.set_pen(CYAN)
+        self.fill_rect(0, 0, 405, 30)
+        self.set_pen(BLACK)
+        self.print(FONT_MEDIUM, 10, 7, "LIFT CAL  >  " + st["breadcrumb"])
+        self.set_pen(BLACK)
+        self.fill_rect(410, 3, 476, 27)
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 416, 9, "BACK")
+        if not lift:
+            return
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 20, 33, "LEVEL")
+        self.print(FONT_SMALL, 112, 33, "LIFT")
+        self.set_pen(ORANGE)
+        self.print(FONT_SMALL, 176, 33, "DROP")
+        for i, (name, deg, drop) in enumerate(lift["levels"]):
+            y0 = 46 + i * 30
+            sel = i == lift["sel"]
+            self.set_pen(SEL_BG if sel else CARD)
+            self.fill_rect(10, y0, 245, y0 + 28)
+            self.set_pen(CYAN if sel else AXIS)
+            self.draw_rect(10, y0, 245, y0 + 28)
+            self.set_pen(CYAN if sel else WHITE)
+            self.print(FONT_SMALL, 20, y0 + 8, f"{i + 1} {name}")
+            self.set_pen(WHITE if sel else "#CCCCCC")
+            self.print(FONT_SMALL, 112, y0 + 8, f"{deg:6.1f}")
+            self.set_pen(ORANGE)
+            self.print(FONT_SMALL, 176, y0 + 8, f"{drop:6.1f}" if drop >= 0 else "claws open")
+        busy = lift["moving"] or lift["dropping"]
+        self.set_pen(ORANGE if busy else GREEN)
+        self.print(FONT_MEDIUM, 255, 38, f"{lift['live']:.1f}")
+        self.set_pen(ORANGE if busy else CYAN)
+        self.print(FONT_SMALL, 395, 34, "DROPPING" if lift["dropping"] else
+                   "MOVING" if lift["moving"] else "READY")
+        # the action buttons, exactly where the brain has them (they are in BTN)
+        for (x0, y0, x1, y1, label) in st["elements"]:
+            if label in ("BACK",) or label.startswith("LEVEL"):
+                continue
+            self.set_pen(CARD)
+            self.fill_rect(x0, y0, x1, y1)
+            self.set_pen(AXIS)
+            self.draw_rect(x0, y0, x1, y1)
+            self.set_pen(WHITE)
+            self.print(FONT_SMALL, x0 + 8, y0 + (y1 - y0) // 2 - 6, label)
+
+    # -- DECEL TUNE (decel_tune.cpp): the settings live in the decel window.
+    def drawDecelTuneScreen(self, st):
+        self.clearScreen()
+        self.set_pen(CYAN)
+        self.fill_rect(0, 0, 405, 30)
+        self.set_pen(BLACK)
+        self.print(FONT_MEDIUM, 10, 7, "DECEL TUNE")
+        self.fill_rect(410, 3, 476, 27)
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 416, 9, "BACK")
+        d = st.get("decel")
+        if not d:
+            return
+        v = d["values"]
+        self.set_pen(WHITE)
+        self.print(FONT_SMALL, 20, 50, f"DIST {v[0]:.0f} in   SPEED {v[1]:.0f}")
+        self.print(FONT_SMALL, 20, 74, f"RANGE {v[2]:.0f} in   END {v[3]:.0f}   STEPS "
+                                       f"{'off' if v[4] < 2 else format(v[4], '.0f')}")
+        self.set_pen(ORANGE if d["running"] else GREEN)
+        self.print(FONT_MEDIUM, 20, 110, "RUNNING" if d["running"] else "READY")
+        self.set_pen(GRAY)
+        self.print(FONT_SMALL, 10, 222, d["msg"] or "tune from the decel window")
+
     # -- AUTO PID TUNER (drawAutoUI in auto_tuner.cpp) --
     # Header, BACK, the ANGULAR / LATERAL / START-STOP buttons, the info
     # panel and the footer message as the brain draws them; the graph area
@@ -1281,6 +1397,10 @@ class BrainScreen:
             self.drawPidTunerScreen(st)
         elif tag == "AUTO_TUNER":
             self.drawAutoTunerScreen(st)
+        elif tag == "LIFT_CAL":
+            self.drawLiftCalScreen(st)
+        elif tag == "DECEL_TUNE":
+            self.drawDecelTuneScreen(st)
         elif tag == "POSE":
             self.drawPoseScreen(st)
         elif tag == "HANDOFF":
@@ -1298,9 +1418,10 @@ class BrainScreen:
 
 
 class RemoteTouchApp:
-    def __init__(self, root, link):
+    def __init__(self, root, link, connect=None):
         self.root = root
         self.link = link
+        self.connect = connect   # () -> new link; None = reconnecting unavailable
         self.elements = []  # last-drawn (x0,y0,x1,y1,label) in brain coords
 
         root.title("Remote Touch -- V5 Brain")
@@ -1329,6 +1450,7 @@ class RemoteTouchApp:
         self.entry.bind("<Return>", self.onSetValue)
         self.entry.bind("<Escape>", lambda e: self.canvas.focus_set())
         tk.Button(bar, text="Set", command=self.onSetValue).pack(side="left")
+        tk.Button(bar, text="⟳ Reconnect", command=self.reconnect).pack(side="right")
         for name, key in (("Run (A)", "A"), ("Cancel (X)", "X"), ("Reset pose (B)", "B")):
             tk.Button(bar, text=name, command=lambda k=key: self.sendKey(k)).pack(side="left",
                                                                                    padx=(6, 0))
@@ -1379,9 +1501,52 @@ class RemoteTouchApp:
         self.startedAt = time.time()
         self.gotState = False
         self.planner = None
+        self._logBacklog = []           # LOG| lines received before the planner window exists
         self.pidTuner = None
         self.autoTuner = None
+        self.liftCal = None
+        self.decelTune = None
         self.pollQueue()
+
+    def windows(self):
+        return [w for w in (self.planner, self.pidTuner, self.autoTuner, self.liftCal, self.decelTune)
+                if w is not None]
+
+    def hookWindow(self, win):
+        """Every tool window gets the same Reconnect callback."""
+        win.onReconnect = self.reconnect
+        return win
+
+    def reconnect(self):
+        """Drop the current link and open a new one, then hand it to this
+        window and every tool window. Safe to call while connected."""
+        if self.connect is None:
+            self.status.config(text="reconnect unavailable (no link factory)")
+            return
+        self.stopDrive()
+        self.status.config(text="reconnecting...")
+        self.root.update_idletasks()
+        old = self.link
+        try:
+            old.close()
+        except Exception:
+            pass
+        try:
+            new = self.connect()
+        except Exception as e:
+            self.status.config(text=f"reconnect failed: {str(e).splitlines()[0]}")
+            for w in self.windows():
+                if hasattr(w, "brainStatus"):
+                    w.brainStatus.config(text="brain: reconnect failed -- click Reconnect to retry")
+            self.link = old   # dead, but keeps the app consistent for another try
+            return
+        self.link = new
+        for w in self.windows():
+            w.link = new
+        self.lastState = None
+        self.gotState = False
+        self.startedAt = time.time()
+        self.status.config(text="reconnected -- waiting for the brain...")
 
     def pollQueue(self):
         state = None
@@ -1404,6 +1569,8 @@ class RemoteTouchApp:
             self.updatePlanner(state)
             self.updatePidTuner(state)
             self.updateAutoTuner(state)
+            self.updateLiftCal(state)
+            self.updateDecelTune(state)
         elif not self.gotState and time.time() - self.startedAt > 5:
             self.showWaitingHint()
         self.pumpPidLines()
@@ -1444,7 +1611,10 @@ class RemoteTouchApp:
             except ImportError as e:
                 self.status.config(text=f"path_planner.py failed to load: {e}")
                 return
-            self.planner = PlannerWindow(self.root, self.link)
+            self.planner = self.hookWindow(PlannerWindow(self.root, self.link))
+            for line in self._logBacklog:       # a recording that arrived before the window
+                self.planner.feedLogLine(line)
+            self._logBacklog = []
         if self.planner is not None:
             if state["screen"] == "PLANNER" and self.planner.state() == "withdrawn":
                 self.planner.deiconify()
@@ -1461,7 +1631,7 @@ class RemoteTouchApp:
             except ImportError as e:
                 self.status.config(text=f"pid_tuner.py failed to load: {e}")
                 return
-            self.pidTuner = PidTunerWindow(self.root, self.link)
+            self.pidTuner = self.hookWindow(PidTunerWindow(self.root, self.link))
         if self.pidTuner is not None:
             if state["screen"] == "PID_TUNER" and self.pidTuner.state() == "withdrawn":
                 self.pidTuner.deiconify()
@@ -1477,11 +1647,41 @@ class RemoteTouchApp:
             except ImportError as e:
                 self.status.config(text=f"auto_pid_tuner.py failed to load: {e}")
                 return
-            self.autoTuner = AutoPidTunerWindow(self.root, self.link)
+            self.autoTuner = self.hookWindow(AutoPidTunerWindow(self.root, self.link))
         if self.autoTuner is not None:
             if state["screen"] == "AUTO_TUNER" and self.autoTuner.state() == "withdrawn":
                 self.autoTuner.deiconify()
             self.autoTuner.applyState(state)
+
+    # -- laptop lift calibration window --
+    def updateLiftCal(self, state):
+        """The brain's LIFT CAL screen gets tools/lift_calibration.py."""
+        if state["screen"] == "LIFT_CAL" and self.liftCal is None:
+            try:
+                from lift_calibration import LiftCalWindow
+            except ImportError as e:
+                self.status.config(text=f"lift_calibration.py failed to load: {e}")
+                return
+            self.liftCal = self.hookWindow(LiftCalWindow(self.root, self.link))
+        if self.liftCal is not None:
+            if state["screen"] == "LIFT_CAL" and self.liftCal.state() == "withdrawn":
+                self.liftCal.deiconify()
+            self.liftCal.applyState(state)
+
+    # -- laptop decel tune window --
+    def updateDecelTune(self, state):
+        """The brain's DECEL TUNE screen gets tools/decel_tune.py."""
+        if state["screen"] == "DECEL_TUNE" and self.decelTune is None:
+            try:
+                from decel_tune import DecelTuneWindow
+            except ImportError as e:
+                self.status.config(text=f"decel_tune.py failed to load: {e}")
+                return
+            self.decelTune = self.hookWindow(DecelTuneWindow(self.root, self.link))
+        if self.decelTune is not None:
+            if state["screen"] == "DECEL_TUNE" and self.decelTune.state() == "withdrawn":
+                self.decelTune.deiconify()
+            self.decelTune.applyState(state)
 
     def pumpPidLines(self):
         """The tuners' run streams (PID|... / CSV,... for the manual one,
@@ -1496,6 +1696,12 @@ class RemoteTouchApp:
                 if line.startswith("AT|"):
                     if self.autoTuner is not None:
                         self.autoTuner.feedLine(line)
+                elif line.startswith("LOG|"):       # the robot's recording of a run (run_log.cpp)
+                    if self.planner is not None:
+                        self.planner.feedLogLine(line)
+                    else:                           # kept for when the planner window opens
+                        self._logBacklog.append(line)
+                        del self._logBacklog[:-1500]
                 elif self.pidTuner is not None:
                     self.pidTuner.feedLine(line)
         except queue.Empty:
@@ -1698,49 +1904,56 @@ def main():
                          "heartbeat anyway)")
     args = ap.parse_args()
 
-    port = args.port or guess_port()
-    if not port:
-        print("Couldn't auto-detect a serial port. Available ports:")
-        for p in serial.tools.list_ports.comports():
-            print(f"  {p.device}  -  {p.description}")
-        print("\nRe-run with the right one, e.g.: python tools/remote_touch.py COM5")
+    def connect():
+        """Open a fresh link to the brain. Used at startup and by every
+        Reconnect button; raises RuntimeError with a readable reason."""
+        port = args.port or guess_port()   # re-detected: the port can change on replug
+        if not port:
+            ports = "\n".join(f"  {p.device}  -  {p.description}"
+                              for p in serial.tools.list_ports.comports())
+            raise RuntimeError("Couldn't auto-detect a serial port. Available ports:\n"
+                               f"{ports}\n\nRe-run with the right one, e.g.: "
+                               "python tools/remote_touch.py COM5")
+        via = args.via
+        if via == "auto":
+            via = "vexcom" if is_controller_port(port) else "serial"
+
+        if via == "vexcom":
+            vexcom = args.vexcom or find_vexcom()
+            if not vexcom:
+                raise RuntimeError("This port is a V5 controller, so the brain can only be "
+                                   "reached through VEX's vexcom tool -- and I couldn't find "
+                                   "vexcom.exe.\nInstall the PROS VS Code extension, or pass "
+                                   "--vexcom PATH\\TO\\vexcom.exe")
+            print(f"Connecting to {port} through the controller's radio (vexcom --user)...")
+            print("(close the PROS terminal / any other vexcom first -- only one can use the port)")
+            link = VexcomLink(port, vexcom, debug=args.debug)
+            link.sendRate(args.rate or 300)
+        else:
+            print(f"Connecting to {port} @ {args.baud}...")
+            try:
+                link = SerialLink(port, args.baud, debug=args.debug)
+            except serial.SerialException as e:
+                ports = "\n".join(f"  {p.device}  -  {p.description}  ({p.location or ''})"
+                                  for p in serial.tools.list_ports.comports())
+                raise RuntimeError(f"Couldn't open {port}: {e}\nIs `pros terminal` (or another "
+                                   f"serial monitor) still open on this port?\n"
+                                   f"Available ports:\n{ports}")
+            link.sendRate(args.rate or 150)
+        return link
+
+    try:
+        link = connect()
+    except RuntimeError as e:
+        print(e)
         sys.exit(1)
 
-    via = args.via
-    if via == "auto":
-        via = "vexcom" if is_controller_port(port) else "serial"
-
-    if via == "vexcom":
-        vexcom = args.vexcom or find_vexcom()
-        if not vexcom:
-            print("This port is a V5 controller, so the brain can only be reached through "
-                  "VEX's vexcom tool -- and I couldn't find vexcom.exe.")
-            print("Install the PROS VS Code extension, or pass --vexcom PATH\\TO\\vexcom.exe")
-            sys.exit(1)
-        print(f"Connecting to {port} through the controller's radio (vexcom --user)...")
-        print("(close the PROS terminal / any other vexcom first -- only one can use the port)")
-        link = VexcomLink(port, vexcom, debug=args.debug)
-        rate = args.rate or 300
-    else:
-        print(f"Connecting to {port} @ {args.baud}...")
-        try:
-            link = SerialLink(port, args.baud, debug=args.debug)
-        except serial.SerialException as e:
-            print(f"Couldn't open {port}: {e}")
-            print("Is `pros terminal` (or another serial monitor) still open on this port?")
-            print("Available ports:")
-            for p in serial.tools.list_ports.comports():
-                print(f"  {p.device}  -  {p.description}  ({p.location or ''})")
-            sys.exit(1)
-        rate = args.rate or 150
-    link.sendRate(rate)
-
     root = tk.Tk()
-    app = RemoteTouchApp(root, link)
+    app = RemoteTouchApp(root, link, connect)
     try:
         root.mainloop()
     finally:
-        link.close()
+        app.link.close()
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
 #include "main.h"
 #include "autonomous.hpp"
 #include "functions.hpp"
+#include "imu_drift.hpp"
+#include "lift_calibration.hpp"
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "driver_menu.hpp"
 #include "lemlib/api.hpp"
+#include "run_log.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
 #include "pros/adi.hpp"
@@ -31,11 +34,12 @@ const bool VEXNET_ENABLED = false;
 pros::MotorGroup left_motor_group({3, 4}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
-pros::MotorGroup lift({-5, 6}, pros::MotorGears::red);
+LiftGroup lift({-5, 6}, pros::MotorGears::red);
 
 pros::adi::Pneumatics claw('B', true);
 pros::adi::Pneumatics claw2('C', true);
-pros::adi::DigitalIn liftBumper('A');
+pros::adi::DigitalIn pinSensor('D'); // IR pin sensor (Pneumatics can't read its port, so DigitalIn)
+pros::adi::DigitalIn liftLimitSwitch('A');
 
 // What the IMU reads after the robot is turned a true 360 degrees (356.05 measured on the
 // 15scrimcalibration robot). 360.0 = no correction.
@@ -66,7 +70,7 @@ lemlib::ControllerSettings angular_controller(4, 0.001, 43, 0, 1, 100, 3, 500, 0
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 
-lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttle_curve, &steer_curve);
+MotionChassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttle_curve, &steer_curve);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialize
@@ -80,6 +84,7 @@ void initialize() {
     for (int i = 0; i < 250 && imu.is_calibrating(); i++)
         pros::delay(20);
     resetPoseAfterCalibration();
+    startImuDriftCorrection(); // learns the IMU's heading creep while the robot sits still
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
 
@@ -109,13 +114,17 @@ void opcontrol() {
         pros::delay(20);
     }
 
+    pinAutoGrabEnable(false); // (the menu's plan runs stay in charge of the lift)
     if (enterMenu)
         driverMenuControl();
 
-    homeLift();
+    homeLift(); // lower the lift to the limit switch (angle 0) before driver control starts
     jawheadControl();
 }
 void autonomous() {
+    pinAutoGrabEnable(false); // autonomous only auto-grabs where the plan says so (autoGrabPin)
     homeLift();
+    runlog::begin("autonomous"); // recorded; sent to the laptop afterwards (tools/run_reports/)
     runAutonomous();
+    runlog::end("DONE");
 }

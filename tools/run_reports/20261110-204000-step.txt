@@ -1,0 +1,23 @@
+RUN REPORT  #3  step  CANCELLED  0.24 s  (14 samples every 20 ms)
+start pose (0.1, -64.0) 0.2 deg   end pose (0.3, -63.8) -16.4 deg
+
+STEPS (end error = robot vs the simulator when the next step began)
+   28 goToPin           0.00 s + 0.24 s   end error 48.6 in  +127.4 deg
+
+GO TO PIN 1: pin (-48, -48), claw reach 7.5 in, drove 51 in from (0.1, -64.0) in 0.24 s
+  straightness: max 0.3 in off the line (at -0 in along), final -0.3 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start +71.8; steering reversals 0
+  IR sensor: never saw it, 0 on/off edges; claw watch did NOT fire
+  claw tip at stop         : pin is +21.3 in ahead, -41.9 in right of the tip (47.0 in away)
+  LOOKS WRONG:
+   - It started the drive 71.8 deg off the pin (the turn before it did not finish square).
+   - The IR sensor never saw a pin during the approach; the claws closed on arrival, wherever the robot stopped.
+   - At the stop the claw tip was 41.9 in right of the pin.
+   - At the stop the claw tip was 21.3 in short of the pin.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (2,0.05,-64.02,0.2,8) (102,0.05,-64.02,-1.9,8) (202,0.22,-63.92,-11.0,8)
+
+EVENTS
+    0.00 s  step  28  step 28 begin                                (0.1, -64.0) 0.2 deg
+    0.00 s  step  28  pin target x=-48.00 y=-48.00 reach=7.50 level=2 (0.1, -64.0) 0.2 deg
+    0.24 s  step  28  cancelled                                    (0.3, -63.8) -16.4 deg

@@ -1,0 +1,151 @@
+RUN REPORT  #1  plan  DONE  21.74 s  (568 samples every 20 ms)
+start pose (-0.0, -63.9) -0.0 deg   end pose (-31.2, -49.7) -267.7 deg
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          ok
+  forward wheel (vertical rotation sensor)     ok
+  sideways wheel (horizontal rotation sensor)  ok
+  robot turning against something              LOOKS WRONG, see below
+  drive motors over the run: left 194 in, right 213 in (get_position: left 2518.5, right 7.6; encoder units 2 / 1; gearing 1 / 1)
+  IMU drift correction: +0.000 deg/s at the start, +0.000 at the end; it took +0.00 deg off the heading during this run
+  standing still: 1.1 s in total, the heading moved +0.06 deg (should be 0)
+  turning: IMU -267.7 deg in total, drive wheels -418.3 (on clean turns on the spot the IMU = 80% of the wheels: this robot's wheel scrub)
+  driving: forward tracking wheel 126.2 in, drive motors 130.0 in; most the robot tipped 4.3 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 1 moveToPoint         -27.2 /  -43.7       +17.9 /  +18.2      +0.4      4.3
+   step 3 turnToPoint         -60.8 /  -92.1        -0.3 /   +1.5      +0.9      2.2
+   step 5 moveToPoint          -9.5 /   +1.7       +10.8 /  +12.9      -0.3      3.6
+   step 7 turnToPoint          +1.4 /  +10.4        -0.1 /   -0.8      -0.0      1.6
+   step 9 shootToGoal          -0.3 /   -4.6        +0.0 /   -0.1      +0.0      0.8
+   step 10 moveToPoint         +3.9 /   +2.4       -15.8 /  -15.3      +0.2      2.7
+   step 13 goToPin            +50.4 /  +70.5       +27.0 /  +27.0      +1.1      4.2
+   step 16 turnToPoint       -128.9 / -161.6        +0.0 /   +1.6      +0.4      3.5
+   step 18 moveToPoint         -2.0 /   -1.1       +14.9 /  +15.3      -0.1      3.5
+   step 20 turnToPoint         -0.5 /   -8.0        -0.4 /   -0.1      +0.0      0.9
+   step 23 turnToHeading      -65.2 / -145.3        -5.3 /   -0.3      -5.5      2.6   <-- blocked
+   step 25 moveToPoint         +0.6 /  +10.7        -6.1 /   -5.9      +0.0      2.4
+   step 28 goToPin           +106.9 / +129.0       +11.7 /  +10.6      +1.1      3.7
+   step 31 turnToPoint       -130.0 / -157.8        -0.3 /   +1.9      +0.4      3.8
+   step 33 moveToPoint        +16.4 /   +5.6       +14.1 /  +16.1      +0.5      3.3
+   step 35 turnToPoint        -21.1 /  -42.6        -0.4 /   -1.2      -2.1      1.5   <-- blocked
+   step 37 shootToGoal         -1.3 /   +7.6        -0.2 /   -0.2      -0.2      2.1
+  LOOKS WRONG:
+   - step 23 turnToHeading: the drive wheels turned enough for -116 deg but the robot only turned -65 deg, and it slid 5.5 in sideways. It was turning against something (a goal, a pin, the wall) or its wheels were spinning: get clear before this turn.
+   - step 35 turnToPoint: the drive wheels turned enough for -34 deg but the robot only turned -21 deg, and it slid 2.1 in sideways. It was turning against something (a goal, a pin, the wall) or its wheels were spinning: get clear before this turn.
+
+STEPS (end error = robot vs the simulator when the next step began)
+    0 liftToLevel       0.00 s + 0.58 s
+    1 moveToPoint       0.58 s + 0.94 s   end error  1.0 in   +0.0 deg
+    2 waitUntilDone     1.53 s + 0.00 s
+    3 turnToPoint       1.53 s + 1.04 s   end error  0.4 in   +1.8 deg
+    4 waitUntilDone     2.57 s + 0.00 s
+    5 moveToPoint       2.57 s + 1.16 s   end error  2.3 in   -5.7 deg
+    6 waitUntilDone     3.74 s + 0.00 s
+    7 turnToPoint       3.74 s + 0.52 s   end error  2.8 in   -5.9 deg
+    8 waitUntilDone     4.26 s + 0.00 s
+    9 shootToGoal       4.27 s + 0.53 s
+   10 moveToPoint       4.80 s + 0.90 s   end error  0.9 in   -0.4 deg
+   11 waitUntilDone     5.70 s + 0.00 s
+   12 homeLift          5.71 s + 0.42 s
+   13 goToPin           6.13 s + 3.69 s   end error  2.6 in   +1.4 deg
+   14 moveToPoint       9.82 s + 0.12 s   end error  0.7 in   +1.4 deg
+   15 waitUntilDone     9.95 s + 0.00 s
+   16 turnToPoint       9.95 s + 1.08 s   end error  1.1 in   -0.3 deg
+   17 waitUntilDone    11.03 s + 0.00 s
+   18 moveToPoint      11.04 s + 0.90 s   end error  0.6 in   -3.5 deg
+   19 waitUntilDone    11.94 s + 0.00 s
+   20 turnToPoint      11.94 s + 0.52 s   end error  1.6 in   +6.0 deg
+   21 waitUntilDone    12.47 s + 0.00 s
+   22 shootToGoal      12.47 s + 0.53 s
+   23 turnToHeading    13.00 s + 1.16 s   end error  7.5 in   +4.8 deg
+   24 waitUntilDone    14.17 s + 0.00 s
+   25 moveToPoint      14.17 s + 0.64 s   end error  2.8 in  -13.5 deg
+   26 waitUntilDone    14.81 s + 0.00 s
+   27 homeLift         14.82 s + 0.32 s
+   28 goToPin          15.14 s + 2.99 s   end error  3.3 in   +3.4 deg
+   29 moveToPoint      18.13 s + 0.12 s   end error  0.5 in   +3.3 deg
+   30 waitUntilDone    18.26 s + 0.00 s
+   31 turnToPoint      18.26 s + 0.82 s   end error  0.5 in   -0.1 deg
+   32 waitUntilDone    19.09 s + 0.00 s
+   33 moveToPoint      19.09 s + 1.23 s   end error  1.9 in  +14.9 deg
+   34 waitUntilDone    20.31 s + 0.00 s
+   35 turnToPoint      20.32 s + 0.86 s   end error  3.6 in   +2.8 deg
+   36 waitUntilDone    21.18 s + 0.00 s
+   37 shootToGoal      21.18 s + 0.56 s
+
+GO TO PIN 1: pin (-24, -24), claw reach 7.5 in, drove 32 in from (-1.7, -47.2) in 3.09 s
+  straightness: max 0.8 in off the line (at 17 in along), final +0.7 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start -48.7, 20 in out -1.8, 10 in out -1.6, 4 in out -1.2; steering reversals 0
+  IR sensor: never saw it, 0 on/off edges; claw watch did NOT fire
+  claw tip at stop         : pin is -2.2 in ahead, +0.6 in right of the tip (2.3 in away)
+  LOOKS WRONG:
+   - It started the drive 48.7 deg off the pin (the turn before it did not finish square).
+   - The IR sensor never saw a pin during the approach; the claws closed on arrival, wherever the robot stopped.
+   - At the stop the claw tip was 2.2 in past the pin.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (4,-1.68,-47.21,-92.6,40) (104,-1.68,-47.19,-90.4,40) (204,-1.69,-47.22,-78.8,40) (304,-1.72,-47.39,-63.4,40) (404,-1.7,-47.53,-52.7,40) (504,-1.71,-47.67,-49.4,40) (604,-1.7,-47.66,-49.1,40) (704,-1.68,-47.69,-46.4,40) (804,-1.74,-47.76,-43.0,40) (904,-1.76,-47.77,-43.4,40) (1004,-1.75,-47.76,-43.1,40) (1104,-2.14,-47.37,-43.5,40) (1204,-3.02,-46.48,-44.2,40) (1304,-4.55,-44.93,-44.6,40) (1404,-6.64,-42.83,-45.0,40) (1504,-9.06,-40.46,-45.6,40) (1604,-11.27,-38.29,-45.5,40) (1704,-12.76,-36.73,-42.4,40) (1804,-13.89,-35.65,-40.4,40) (1904,-14.73,-34.77,-40.4,40) (2004,-15.4,-34.07,-40.6,40) (2104,-15.99,-33.44,-40.9,40) (2204,-16.58,-32.79,-41.2,40) (2304,-17.18,-32.17,-41.3,40) (2404,-17.77,-31.56,-41.4,40) (2504,-18.32,-30.99,-41.5,40) (2604,-18.91,-30.39,-41.6,40) (2704,-19.44,-29.82,-42.0,40) (2804,-19.93,-29.3,-42.0,40) (2904,-20.4,-28.82,-42.2,40) (3004,-20.75,-28.45,-42.2,32)
+
+GO TO PIN 2: pin (-48, -48), claw reach 7.5 in, drove 16 in from (-36.3, -37.5) in 2.37 s
+  straightness: max 0.5 in off the line (at 11 in along), final +0.5 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start -106.6, 20 in out -106.6, 10 in out -106.6, 4 in out -3.3; steering reversals 0
+  IR sensor: never saw it, 0 on/off edges; claw watch did NOT fire
+  claw tip at stop         : pin is -2.7 in ahead, +0.5 in right of the tip (2.8 in away)
+  LOOKS WRONG:
+   - With 10 in to go the robot was pointing 106.6 deg left of the pin.
+   - It started the drive 106.6 deg off the pin (the turn before it did not finish square).
+   - The IR sensor never saw a pin during the approach; the claws closed on arrival, wherever the robot stopped.
+   - At the stop the claw tip was 2.7 in past the pin.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (12,-36.29,-37.47,-238.6,40) (112,-36.23,-37.49,-234.9,40) (212,-36.16,-37.36,-221.3,40) (312,-36.08,-37.14,-199.3,40) (412,-35.87,-36.92,-172.3,40) (512,-35.72,-36.83,-147.5,40) (612,-35.63,-36.83,-134.6,40) (712,-35.59,-36.88,-135.6,40) (812,-35.61,-36.86,-135.2,40) (912,-35.61,-36.86,-133.9,40) (1012,-35.6,-36.87,-133.6,40) (1112,-35.57,-36.86,-132.7,40) (1212,-35.56,-36.87,-132.4,40) (1312,-35.55,-36.88,-132.8,40) (1412,-35.73,-37.01,-132.1,40) (1512,-36.45,-37.71,-132.9,40) (1612,-37.64,-38.89,-133.4,40) (1712,-38.93,-40.24,-133.4,40) (1812,-40.1,-41.43,-133.5,40) (1912,-41.15,-42.45,-133.3,40) (2012,-42.1,-43.37,-133.1,40) (2112,-42.88,-44.08,-132.3,40) (2212,-43.49,-44.63,-131.7,32) (2312,-43.98,-45.08,-131.7,32)
+
+EVENTS
+    0.00 s  step   0  step 0 begin                                 (-0.0, -63.9) -0.0 deg
+    0.58 s  step   1  step 1 begin                                 (0.0, -63.9) 0.1 deg
+    1.53 s  step   2  step 2 begin                                 (-6.2, -47.1) -27.1 deg
+    1.53 s  step   3  step 3 begin                                 (-6.2, -47.0) -27.0 deg
+    2.57 s  step   4  step 4 begin                                 (-6.6, -48.0) -87.9 deg
+    2.57 s  step   5  step 5 begin                                 (-6.6, -48.0) -87.9 deg
+    3.74 s  step   6  step 6 begin                                 (-17.4, -48.0) -97.4 deg
+    3.74 s  step   7  step 7 begin                                 (-17.4, -48.0) -97.4 deg
+    4.26 s  step   8  step 8 begin                                 (-17.3, -48.0) -96.0 deg
+    4.27 s  step   9  step 9 begin                                 (-17.3, -48.0) -96.0 deg
+    4.80 s  step  10  step 10 begin                                (-17.3, -48.0) -96.3 deg
+    5.70 s  step  11  step 11 begin                                (-1.5, -47.2) -92.4 deg
+    5.71 s  step  12  step 12 begin                                (-1.5, -47.2) -92.4 deg
+    6.13 s  step  13  step 13 begin                                (-1.7, -47.2) -92.6 deg
+    6.13 s  step  13  pin target x=-24.00 y=-24.00 reach=7.50 level=1 (-1.7, -47.2) -92.6 deg
+    7.01 s  step  13  pin line: brg -43.1 dist 32.6 face 0.2 was 5.9 (-1.8, -47.8) -43.3 deg
+    7.62 s  step  13  pin decel zone: along 10.3 of 25.1  command 38 (-9.1, -40.5) -45.5 deg
+    9.05 s  step  13  pin line end: along 26.7 of 27.1 off line 0.67 heading  (-20.5, -28.7) -42.2 deg
+    9.22 s  step  13  pin drive ended seen=0                       (-20.9, -28.3) -42.4 deg
+    9.22 s  step  13  pin claws closed                             (-20.9, -28.3) -42.4 deg
+    9.82 s  step  14  step 14 begin                                (-20.9, -28.4) -42.2 deg
+    9.95 s  step  15  step 15 begin                                (-20.9, -28.4) -42.2 deg
+    9.95 s  step  16  step 16 begin                                (-20.9, -28.4) -42.2 deg
+   11.03 s  step  17  step 17 begin                                (-21.2, -28.6) -171.1 deg
+   11.04 s  step  18  step 18 begin                                (-21.2, -28.6) -171.1 deg
+   11.94 s  step  19  step 19 begin                                (-23.6, -43.3) -173.0 deg
+   11.94 s  step  20  step 20 begin                                (-23.6, -43.3) -173.1 deg
+   12.47 s  step  21  step 21 begin                                (-23.5, -42.9) -173.5 deg
+   12.47 s  step  22  step 22 begin                                (-23.5, -42.9) -173.5 deg
+   13.00 s  step  23  step 23 begin                                (-23.5, -42.9) -173.5 deg
+   14.17 s  step  24  step 24 begin                                (-30.7, -41.0) -238.7 deg
+   14.17 s  step  25  step 25 begin                                (-30.7, -41.0) -238.7 deg
+   14.81 s  step  26  step 26 begin                                (-36.0, -37.7) -238.1 deg
+   14.82 s  step  27  step 27 begin                                (-36.0, -37.7) -238.1 deg
+   15.14 s  step  28  step 28 begin                                (-36.3, -37.5) -238.5 deg
+   15.14 s  step  28  pin target x=-48.00 y=-48.00 reach=7.50 level=1 (-36.3, -37.5) -238.6 deg
+   16.39 s  step  28  pin line: brg -131.8 dist 16.7 face 0.8 was 3.6 (-35.5, -36.9) -132.6 deg
+   16.77 s  step  28  pin decel zone: along 3.3 of 9.2  command 36 (-37.9, -39.2) -133.4 deg
+   17.33 s  step  28  pin line end: along 10.9 of 11.2 off line 0.49 heading  (-43.4, -44.5) -131.8 deg
+   17.51 s  step  28  pin drive ended seen=0                       (-44.2, -45.3) -131.8 deg
+   17.51 s  step  28  pin claws closed                             (-44.2, -45.3) -131.8 deg
+   18.13 s  step  29  step 29 begin                                (-44.3, -45.4) -131.6 deg
+   18.26 s  step  30  step 30 begin                                (-44.3, -45.4) -131.7 deg
+   18.26 s  step  31  step 31 begin                                (-44.3, -45.4) -131.7 deg
+   19.09 s  step  32  step 32 begin                                (-44.0, -45.3) -261.3 deg
+   19.09 s  step  33  step 33 begin                                (-44.0, -45.3) -261.3 deg
+   20.31 s  step  34  step 34 begin                                (-30.1, -47.5) -245.3 deg
+   20.32 s  step  35  step 35 begin                                (-30.1, -47.5) -245.3 deg
+   21.18 s  step  36  step 36 begin                                (-30.9, -49.5) -266.7 deg
+   21.18 s  step  37  step 37 begin                                (-30.9, -49.5) -266.7 deg

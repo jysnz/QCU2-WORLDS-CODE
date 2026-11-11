@@ -137,6 +137,8 @@ class AutoPidTunerWindow(tk.Toplevel):
         self.brainStatus.pack(side="left", fill="x", expand=True, padx=10, pady=(8, 2))
         tk.Label(top, text="Esc = stop", bg=BG, fg=GRAY, font=("Segoe UI", 8)).pack(
             side="right", padx=10)
+        from reconnect_button import add_reconnect_button
+        add_reconnect_button(self, top, status=self.brainStatus, side="right", pady=(6, 0))
 
         body = tk.Frame(self, bg=BG)
         body.pack(side="top", fill="both", expand=True)

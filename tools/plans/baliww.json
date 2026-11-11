@@ -1,0 +1,127 @@
+{
+  "start": [
+    -0.1,
+    -63.9,
+    359.0
+  ],
+  "blocks": [
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "GROUND",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 800
+    },
+    {
+      "kind": "wait",
+      "ms": 300
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -0.4,
+      "y": -48.7,
+      "timeout": 1000,
+      "forwards": true,
+      "maxSpeed": 127.0,
+      "minSpeed": 0.0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 270.0,
+      "timeout": 1000,
+      "direction": "AUTO",
+      "maxSpeed": 127.0,
+      "minSpeed": 0.0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -17.8,
+      "y": -48.1,
+      "timeout": 1000,
+      "forwards": true,
+      "maxSpeed": 100.0,
+      "minSpeed": 0.0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "PIN",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "wait",
+      "ms": 500
+    },
+    {
+      "kind": "claw",
+      "clawWhich": "BOTH",
+      "clawState": "OFF"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -0.4,
+      "y": -48.1,
+      "timeout": 1000,
+      "forwards": false,
+      "maxSpeed": 127.0,
+      "minSpeed": 0.0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 317.45,
+      "timeout": 1000,
+      "direction": "CW",
+      "maxSpeed": 127.0,
+      "minSpeed": 0.0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "goToPin",
+      "x": -24,
+      "y": -24,
+      "level": "PIN",
+      "timeout": 3000,
+      "forwards": true,
+      "maxSpeed": 127,
+      "reach": 7.5,
+      "decelRange": 10.0,
+      "decelSpeed": 40
+    }
+  ],
+  "waypoints": []
+}
