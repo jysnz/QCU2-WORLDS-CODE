@@ -39,6 +39,14 @@ void moveToPointSmooth(float x, float y, int timeoutMs, lemlib::MoveToPointParam
 // reach <= 0, driving backwards, or already within reach of the pin: no stop-short / no turn.
 // The last `decelRange` inches are driven at `decelSpeed` (0-127) so the robot settles on the pin
 // instead of arriving at full speed (see moveToPointDecel); decelRange <= 0 turns that off.
+// Pin grab trigger. false (fast grab): the claws shut by themselves a moment before the claw tip
+// reaches the pin -- early enough (speed x kPinClawLatencyMs) that they are closed as it arrives --
+// so the robot keeps its speed through the grab and never stops for a sensor or a square-up.
+// true: the old way (IR sensor shuts the claws, vision stop, square-up and creep-in).
+constexpr bool kPinGrabByIR = true;
+// Time from the shut command to the claws gripping (solenoid + air + travel). CALIBRATE: film the
+// claws in slow motion; raise it if the pin is missed, lower it if the claws close too early.
+constexpr int kPinClawLatencyMs = 130;
 void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, float reach,
                   float decelRange, float decelSpeed);
 

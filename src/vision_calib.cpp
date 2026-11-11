@@ -155,6 +155,13 @@ struct EdgeKey {
 
 } // namespace
 
+bool visionEnsureYellow() {
+  if (vision_sensor.get_object_count() == PROS_ERR)
+    return false;
+  installDefaultYellow();
+  return true;
+}
+
 void visionCalibControl() {
   pros::delay(100); // let the HUD task finish its current frame
   controller.rumble("--");

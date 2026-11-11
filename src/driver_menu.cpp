@@ -1433,7 +1433,8 @@ static bool runPlanStep(const PlanStep &st) {
     runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", st.x, st.y, st.earlyExit,
                   st.dirIdx);
     liftOpenClaws();
-    pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
+    if (kPinGrabByIR)
+      pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
   }
   startStep(st);
   pros::delay(10);

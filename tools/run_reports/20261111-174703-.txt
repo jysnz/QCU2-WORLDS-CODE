@@ -1,0 +1,54 @@
+RUN REPORT  #1  ?  INCOMPLETE  17.04 s  (40 samples every 20 ms)
+start pose (0.4, -48.0) -52.8 deg   end pose (-44.9, -43.3) -134.9 deg
+WARNING: only 25 of ? lines of this recording arrived, even after asking the robot again (0 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          LOOKS WRONG, see below
+  forward wheel (vertical rotation sensor)     no totals arrived; only 4 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 4 step(s) checked (the rest did not arrive)
+  standing still: 0.2 s in total, the heading moved +0.12 deg (should be 0)
+  turning: IMU +78.1 deg in total, drive wheels +152.4  [only the steps that arrived]
+  driving: forward tracking wheel 25.3 in, drive motors 20.7 in; most the robot tipped 3.3 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 16                    -21.1 /  +20.2       +12.4 /   +9.4      -0.9      2.7   <-- turn
+   step 24                    +98.8 / +133.9       +12.9 /  +10.6      +1.9      3.3
+  LOOKS WRONG:
+   - step 16: the IMU turned -21.1 deg but the drive wheels turned the robot about +20.2 deg (-41.3 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+
+GO TO PIN 1: pin (-24, -24), claw reach 6 in, drove 34 in from (0.4, -48.0) in 2.93 s
+  straightness: max 0.2 in off the line (at -0 in along), final +0.2 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start -7.3; steering reversals 0
+  IR sensor: never saw it, 0 on/off edges; claw watch did NOT fire
+  claw tip at stop         : pin is +28.2 in ahead, +2.4 in right of the tip (28.3 in away)
+  LOOKS WRONG:
+   - It started the drive 7.3 deg off the pin (the turn before it did not finish square).
+   - The IR sensor never saw a pin during the approach; the claws closed on arrival, wherever the robot stopped.
+   - At the stop the claw tip was 2.4 in left of the pin.
+   - At the stop the claw tip was 28.2 in short of the pin.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (396,0.43,-47.99,-52.8,40)
+
+GO TO PIN 2: pin (-48, -48), claw reach 7 in, drove 19 in from (-35.7, -33.6) in 3.17 s
+  straightness: max 0.8 in off the line (at 10 in along), final -0.7 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start +0.0, 20 in out +0.0, 10 in out +0.2, 4 in out -20.3; steering reversals 1
+  IR sensor: never saw it, 0 on/off edges; claw watch did NOT fire
+  claw tip at stop         : pin is -1.5 in ahead, -1.1 in right of the tip (1.8 in away)
+  LOOKS WRONG:
+   - The IR sensor never saw a pin during the approach; the claws closed on arrival, wherever the robot stopped.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (991,-35.7,-33.64,-139.4,40) (1591,-39.3,-37.49,-140.2,40) (2091,-42.79,-41.02,-163.6,40) (2591,-43.14,-41.05,-150.6,40) (3091,-44.56,-42.98,-140.2,40)
+
+EVENTS
+    5.98 s  step  13  pin target x=-24.00 y=-24.00 reach=6.00 level=1 (1.0, -47.6) -90.3 deg
+    6.98 s  step  13  pin line: brg -45.0 dist 34.3 face 0.2 was 4.1 (0.3, -48.2) -45.2 deg
+    8.34 s  step  13  pin vision: squared up at -6 px              (-18.6, -30.6) -32.3 deg
+    8.91 s  step  13  pin drive ended seen=1                       (-19.4, -29.2) -45.4 deg
+    8.91 s  step  13  pin claws closed                             (-19.4, -29.2) -45.4 deg
+   11.22 s  step  17  step 17 begin                                (-23.2, -40.9) -178.5 deg
+   11.22 s  step  18  step 18 begin                                (-23.2, -40.9) -178.5 deg
+   13.86 s  step  24  step 24 begin                                (-36.2, -34.2) -232.3 deg
+   13.86 s  step  24  pin target x=-48.00 y=-48.00 reach=7.00 level=2 (-36.2, -34.2) -232.3 deg
+   16.96 s  step  24  pin line end: along 13.0 of 11.9 off line -0.64 heading (-44.6, -43.1) -139.4 deg
+   17.14 s  step  24  pin drive ended seen=0                       (-44.9, -43.5) -133.0 deg
+   21.46 s  step  34  step 34 begin                                (-45.3, -42.9) -251.5 deg
+   22.46 s  step  35  step 35 begin                                (-44.6, -43.8) -314.0 deg

@@ -11,3 +11,8 @@
 // the selected color centered in view while the element is moved around
 // by hand.
 void visionCalibControl();
+
+// Makes sure signature slot 1 (the yellow pin) is stored on the sensor, installing the team's
+// default capture if the slot is empty. goToPin calls it, so the yellow follow works without
+// ever opening the VISION screen. Returns false if the sensor does not answer.
+bool visionEnsureYellow();
