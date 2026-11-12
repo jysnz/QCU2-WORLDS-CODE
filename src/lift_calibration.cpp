@@ -190,22 +190,23 @@ int pinGrabCount() { return pinGrabs; }
 bool pinAutoGrabTry() {
   if (pinGrabMoving || pros::millis() - pinGrabAtMs < 600) // one grab at a time
     return false;
-  if (!pinDetected())
+  if (!pinDetected()) // the cheap checks first, so the claw shuts the instant the sensor sees the pin
     return false;
   // Only an open claw grabs: once it has shut on the pin the sensor keeps seeing it, and that must
   // not re-trigger until the claws have been opened again.
   const bool clawOpenNow = claw.is_extended() != LIFT_CLAW_OPEN_RETRACTED;
   if (!clawOpenNow)
     return false;
+  if (!liftAtStart()) // auto claw only works with the lift in its starting position (angle 0.0)
+    return false;
   clawsClose(); // shut the instant the sensor sees the pin: mid-drive, mid-turn, lift anywhere
   runlog::event("auto-grab: pin seen, claws closed");
   pinGrabAtMs = pros::millis();
   pinGrabs = pinGrabs + 1;
-  if (liftAtStart()) { // from the start position it also carries the pin up to the PIN level
-    pinGrabMoving = true;
-    pinGrabFast = true;
-    lift.move_voltage(12000); // full power up; pinGrabUpdate() takes over near the PIN angle
-  }
+  // the lift is at its start position (checked above): carry the pin up to the PIN level
+  pinGrabMoving = true;
+  pinGrabFast = true;
+  lift.move_voltage(12000); // full power up; pinGrabUpdate() takes over near the PIN angle
   return true;
 }
 
@@ -214,7 +215,7 @@ static void pinAutoGrabTask(void *) {
     if (pinAutoOn)
       pinAutoGrabTry();
     pinGrabUpdate();
-    pros::delay(5);
+    pros::delay(2); // fast poll: the claw shuts within a couple of ms of the sensor seeing the pin
   }
 }
 
@@ -237,10 +238,8 @@ static volatile bool pinWatchOn = false;
 static volatile bool pinWatchHit = false;
 
 static void pinWatchTask(void *) {
-  int hits = 0; // consecutive detections: one noisy read must not shut the claws
   while (true) {
-    hits = (pinWatchOn && !pinWatchHit && pinDetected()) ? hits + 1 : 0;
-    if (hits >= 3) {
+    if (pinWatchOn && !pinWatchHit && pinDetected()) {
       clawsClose();
       pinWatchHit = true;
       runlog::event("pin seen: claws closing");

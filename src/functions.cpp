@@ -60,7 +60,6 @@ void jawheadControl() {
   static double targetHeading = 0.0;
   static bool headingLocked = false;
   static bool wasAHeld = false;
-  static bool clawsOn = true; // both claws are built extended (on) in main.cpp
   static uint32_t lastClawToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
   int seenPinGrabs = pinGrabCount();
@@ -75,7 +74,7 @@ void jawheadControl() {
 
     if (pinGrabCount() != seenPinGrabs) { // the sensor closed the claws: B now opens them
       seenPinGrabs = pinGrabCount();
-      clawsOn = true;
+      controller.rumble("."); // the IR sensor shut the claw on a pin
     }
     if (armLiftUp || armLiftDown)
       pinGrabCancel(); // the driver takes the lift over
@@ -89,12 +88,12 @@ void jawheadControl() {
     wasAHeld = clawToggleHeld;
     if (clawToggleTapped && (nowMs - lastClawToggleMs >= BUTTON_DEBOUNCE_MS)) {
       lastClawToggleMs = nowMs;
-      clawsOn = !clawsOn;
-      if (clawsOn) {
-        clawsClose(); // shuts the claw
-      } else {
-        claw.retract();
-      }
+      // toggle from the claw's real state (a flag kept here drifted whenever a plan, the IR auto-grab
+      // or the menu moved the claw, so the first press did nothing)
+      if (claw.is_extended() != LIFT_CLAW_OPEN_RETRACTED)
+        clawsClose();   // it is open: shut it
+      else
+        liftOpenClaws(); // it is shut: open it
     }
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
