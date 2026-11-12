@@ -200,6 +200,8 @@ struct StraightPinArgs {
     float decelRange;  // inches
     float decelSpeed;  // 0-127
     bool straight;     // wallPin: face the pin, then drive straight through it (no camera, no re-aiming)
+    bool useVision;    // false: the camera never steers or stops the drive
+    bool useIR;        // false: the IR sensor is not used; the claws shut on a timed fast grab instead
 };
 // Steering on the line. (Run 2026-11-11: with 1.5 deg/in and 1.5 power/deg a 3.6 deg facing error
 // was still there 12 in later and the robot ended 1.2 in off the line -- 5 power of steering does
@@ -332,6 +334,7 @@ float wrap180(float a) { return std::fmod(a + 540.0f, 360.0f) - 180.0f; }
 void straightPinTask(void *p) {
     const StraightPinArgs a = *static_cast<StraightPinArgs *>(p);
     delete static_cast<StraightPinArgs *>(p);
+    const bool byIR = kPinGrabByIR && a.useIR; // IR sensor closes the claws (else the timed fast grab)
 
     // wallPin (a.straight): turn to face the pin as usual, then drive straight through to it -- the camera
     // is not used (visionOk below), so nothing re-aims on the way; the IR closes the claws.
@@ -450,7 +453,7 @@ void straightPinTask(void *p) {
     float visErrSmooth = 0; // the EMA behind lastVisErrPx (close in the raw px jitters)
     bool visErrInit = false;
     bool loggedZone = false, loggedSeen = false;
-    const bool visionOk = !a.straight && vision_sensor.get_object_count() != PROS_ERR; // (wall pin: no camera)
+    const bool visionOk = a.useVision && !a.straight && vision_sensor.get_object_count() != PROS_ERR; // (wall pin: no camera)
     bool visionStopped = false; // did the drive end at the vision stop?
     // every sighting of the pin goes through this: the raw px is folded into
     // an exponential average, then shifted by pinVisionCenterPx, so the
@@ -563,7 +566,7 @@ void straightPinTask(void *p) {
     // 2b. a far pin: correct the heading on the camera BEFORE driving (the pin's coordinates are only as good
     // as odometry, and a few degrees here is several inches at the pin). Near pins skip this.
     bool farAimed = false; // the camera aimed the line before the drive: nothing re-aims it afterwards
-    if (kFarPreAim && dist > kFarPinIn && visionOk && pinVisionSig > 0 && kPinGrabByIR) {
+    if (kFarPreAim && dist > kFarPinIn && visionOk && pinVisionSig > 0 && byIR) {
         lastVisSeenMs = 0; // only sightings made from here count
         squareUp();
         pose = chassis.getPose();
@@ -590,7 +593,7 @@ void straightPinTask(void *p) {
         const float remaining = stopAt - along;
         speedIn = kSpeedSmooth * speedIn + (1.0f - kSpeedSmooth) * (along - prevAlong) * 100.0f;
         prevAlong = along;
-        if (!kPinGrabByIR && !fired) {
+        if (!byIR && !fired) {
             // the sweet spot: far enough ahead of the pin that the claws are shut as the tip arrives
             const float lead = std::max(
                 kLineTol, std::max(0.0f, speedIn) * (float)kPinClawLatencyMs / 1000.0f + kGrabBiasIn);
@@ -601,7 +604,7 @@ void straightPinTask(void *p) {
             }
         }
         // IR mode: the sensor saw the pin. Fast grab: the claws were shut by the prediction above.
-        const bool seen = kPinGrabByIR ? pinCloseWatchHit() : fired;
+        const bool seen = byIR ? pinCloseWatchHit() : fired;
         if (seen && seenAt == 0)
             seenAt = pros::millis();
 
@@ -639,7 +642,7 @@ void straightPinTask(void *p) {
         // the vision pivot: with the pin in view but off-centre, stop, turn
         // in place onto the corrected heading, settle 50 ms, then drive on
         // -- far more accurate than arcing the correction over at speed
-        if (kVisionPivot && kPinGrabByIR && visionOn && visionFresh && seenAt == 0 &&
+        if (kVisionPivot && byIR && visionOn && visionFresh && seenAt == 0 &&
             remaining > pinVisionRangeIn && std::abs(lastVisErrPx) > kVisionAlignedPx) {
             runlog::event("pin vision: pivot %.1f in out, err %+d px", remaining, lastVisErrPx);
             squareUp();
@@ -651,7 +654,7 @@ void straightPinTask(void *p) {
         // here (pin in view or not) -- no deceleration, no braking: full
         // speed right up to this point, a hard stop, then the square-up and
         // the creep-in put the claw on the pin slowly
-        if (kStopForVision && kPinGrabByIR && visionAssist && remaining <= pinVisionRangeIn && seenAt == 0) {
+        if (kStopForVision && byIR && visionAssist && remaining <= pinVisionRangeIn && seenAt == 0) {
             runlog::event("pin vision: stopped %.1f in short, aligning", remaining);
             visionStopped = true;
             break;
@@ -660,7 +663,7 @@ void straightPinTask(void *p) {
         float mag;
         if (seen) {
             // fast grab: keep the speed until the claws have gripped, then ease to a stop
-            const uint32_t hold = kPinGrabByIR ? 0u : (uint32_t)kPinClawLatencyMs;
+            const uint32_t hold = byIR ? 0u : (uint32_t)kPinClawLatencyMs;
             const uint32_t since = pros::millis() - seenAt;
             if (since >= hold + kSeenStopMs)
                 break;
@@ -675,7 +678,7 @@ void straightPinTask(void *p) {
             // (the IR beam sits a little deeper than the claw tip), so shut the claws NOW instead of
             // creeping on for the IR (run 2026-11-11: the pin was in the claw, the robot crept 1-2 s
             // and the claws closed only when the drive timed out).
-            if (kPinGrabByIR) {
+            if (byIR) {
                 clawsClose();
                 runlog::event("pin arrived, IR silent: claws closed");
             }
@@ -688,14 +691,14 @@ void straightPinTask(void *p) {
             // carry it past the stop, too close for the camera to square up)
             float target = a.maxSpeed;
             const float toVisStop = remaining - kVisionWindowIn; // slow by the time the camera window starts
-            if (kPinGrabByIR && visionAssist && toVisStop < kVisionBrakeIn) {
+            if (byIR && visionAssist && toVisStop < kVisionBrakeIn) {
                 target = kVisionApproach + (a.maxSpeed - kVisionApproach) *
                                                 std::max(toVisStop, 0.0f) / kVisionBrakeIn;
                 if (!visBraked) {
                     visBraked = true;
                     runlog::event("pin vision: braking %.1f in out, power %.0f", toVisStop, target);
                 }
-            } else if ((!visionAssist || !kPinGrabByIR) && a.decelRange > 0 && a.decelSpeed < a.maxSpeed) {
+            } else if ((!visionAssist || !byIR) && a.decelRange > 0 && a.decelSpeed < a.maxSpeed) {
                 if (remaining <= a.decelRange)
                     target = a.decelSpeed;
                 else if (remaining < a.decelRange + kBrakeLeadIn)
@@ -819,11 +822,11 @@ void straightPinTask(void *p) {
 } // namespace
 
 void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, float reach,
-                  float decelRange, float decelSpeed, bool wallPin) {
+                  float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR) {
     const float speed = (float)(maxSpeed > 0 ? maxSpeed : kDefaultPathSpeed);
     // the camera follows the yellow pin whenever it sees it, so the yellow signature has to be on
     // the sensor (it used to be installed only by opening the VISION screen)
-    if (!visionEnsureYellow())
+    if (useVision && !visionEnsureYellow())
         runlog::event("pin vision: sensor not answering");
     const lemlib::Pose p = chassis.getPose();
     const float dx = x - p.x, dy = y - p.y;
@@ -836,7 +839,7 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
         // face the pin, then drive a straight line to it (see straightPinTask)
         // (the arrival speed is the same for every pin: decelSpeed from the call is not used here)
         auto *a = new StraightPinArgs{x, y, reach, timeoutMs, speed, decelRange,
-                                      std::min(kPinArrivalSpeed, speed), wallPin};
+                                      std::min(kPinArrivalSpeed, speed), wallPin, useVision, useIR};
         pros::Task task(straightPinTask, a, "pin straight drive");
         pros::delay(20); // the turn has begun: isInMotion() is true from here
         return;
@@ -848,13 +851,14 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
 }
 
 void goToPin(float x, float y, int level, int timeoutMs, int maxSpeed, bool forwards, float reach,
-             float decelRange, float decelSpeed, bool wallPin) {
+             float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR) {
     runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", x, y, reach, level);
     liftOpenClaws();
     // IR mode: the sensor closes the claws the moment it sees the pin, even mid-drive or mid-turn
-    if (kPinGrabByIR)
+    if (kPinGrabByIR && useIR)
         pinCloseWatch(true);
-    goToPinDrive(x, y, timeoutMs, maxSpeed, forwards, reach, decelRange, decelSpeed, wallPin);
+    goToPinDrive(x, y, timeoutMs, maxSpeed, forwards, reach, decelRange, decelSpeed, wallPin, useVision,
+                 useIR);
     pros::delay(10);
     // wait for the motion; it counts as finished only after it stays idle (queued moves have gaps)
     int idleMs = 0;
