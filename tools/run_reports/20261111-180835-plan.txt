@@ -1,0 +1,63 @@
+RUN REPORT  #8  plan  DONE  13.61 s  (70 samples every 20 ms)
+WARNING: the link dropped data: 70/774 samples, 21/60 events arrived.
+start pose (-0.9, -47.0) -89.3 deg   end pose (-23.1, -40.2) -175.8 deg
+WARNING: only 45 of 244 lines of this recording arrived, even after asking the robot again (9 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          LOOKS WRONG, see below
+  forward wheel (vertical rotation sensor)     no totals arrived; only 9 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 9 step(s) checked (the rest did not arrive)
+  standing still: 0.5 s in total, the heading moved +0.03 deg (should be 0)
+  turning: IMU -177.3 deg in total, drive wheels +30.2 (on clean turns on the spot the IMU = 110% of the wheels: this robot's wheel scrub)  [only the steps that arrived]
+  driving: forward tracking wheel 70.6 in, drive motors 61.9 in; most the robot tipped 4.0 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 4 turnToHeading       -89.0 /  -89.4        +0.1 /   -0.5      -1.8      3.4
+   step 6 moveToPoint          +2.3 /  +50.5       +15.2 /  +14.5      +0.2      4.0   <-- turn
+   step 13 goToPin            +49.6 / +125.0       +28.5 /  +22.7      +2.3      3.5   <-- turn
+   step 14 turnToHeading     -119.4 / -108.6        +0.1 /   -2.3      -2.4      3.4
+   step 16 moveToPoint        -17.7 /  +15.4       +11.7 /   +9.6      -0.6      2.9   <-- turn
+   step 27 moveToPoint         -3.0 /  +37.5       +14.2 /  +12.2      -0.0      3.1   <-- turn
+  LOOKS WRONG:
+   - On its cleanest turns the IMU turned 110% of what the drive wheels say (60-100% is normal, wheels scrub in a turn): check the IMU scale (INERTIAL_SCALE in main.cpp, ODOM SETUP > spin calibration) and that the IMU is mounted flat and tight.
+   - step 6 moveToPoint: the IMU turned +2.3 deg but the drive wheels turned the robot about +55.6 deg (-53.2 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+   - step 13 goToPin: the IMU turned +49.6 deg but the drive wheels turned the robot about +137.4 deg (-87.8 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+   - step 16 moveToPoint: the IMU turned -17.7 deg but the drive wheels turned the robot about +17.0 deg (-34.7 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+   - step 27 moveToPoint: the IMU turned -3.0 deg but the drive wheels turned the robot about +41.2 deg (-44.3 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+
+STEPS (end error = robot vs the simulator when the next step began)
+    4 turnToHeading     1.95 s + 1.02 s   end error 15.8 in   +4.0 deg
+    5 waitUntilDone     2.97 s + 2.17 s
+   10 claw              5.15 s + 0.00 s
+   11 moveToPoint       5.15 s + 0.90 s   end error 27.4 in  +51.6 deg
+   12 waitUntilDone     6.05 s + 5.82 s
+   14 turnToHeading    11.87 s + 1.91 s   end error 12.3 in  -17.6 deg
+   18 liftToLevel      13.78 s + 0.53 s
+   19 turnToHeading    14.32 s + 1.71 s   end error 14.9 in   +4.5 deg
+   22 waitUntilDone    16.03 s + 0.00 s
+   23 homeLift         16.03 s + 5.53 s
+   27 moveToPoint      21.56 s + 0.91 s   end error  9.8 in  +76.0 deg
+   28 waitUntilDone    22.46 s + 4.92 s
+   37 waitUntilDone    27.39 s +-13.77 s
+
+EVENTS
+    1.95 s  step   4  step 4 begin                                 (-0.4, -46.8) -0.8 deg
+    2.97 s  step   5  step 5 begin                                 (-0.9, -47.0) -89.8 deg
+    5.15 s  step  10  step 10 begin                                (-16.0, -47.7) -87.5 deg
+    5.15 s  step  11  step 11 begin                                (-16.0, -47.7) -87.5 deg
+    6.05 s  step  12  step 12 begin                                (0.9, -48.0) -88.6 deg
+    7.22 s  step  13  pin line: brg -44.6 dist 34.7 face 0.4 was 3.7 (0.4, -48.7) -45.1 deg
+    7.89 s  step  13  pin vision: camera steering on  sig 1        (-7.0, -41.5) -45.7 deg
+    8.47 s  step  13  pin vision: stopped 4.9 in short  aligning   (-16.5, -32.0) -44.2 deg
+    9.10 s  step  13  pin vision: squared up at +5 px              (-18.1, -30.8) -38.5 deg
+   11.15 s  step  13  pin line end: along 28.5 of 28.7 off line 0.19 heading  (-19.8, -28.6) -39.2 deg
+   11.33 s  step  13  pin claws closed                             (-19.7, -28.6) -39.2 deg
+   11.87 s  step  14  step 14 begin                                (-19.8, -28.6) -39.0 deg
+   13.78 s  step  18  step 18 begin                                (-23.1, -40.2) -176.1 deg
+   14.32 s  step  19  step 19 begin                                (-23.1, -40.2) -176.2 deg
+   16.03 s  step  22  step 22 begin                                (-35.4, -34.0) -234.3 deg
+   16.03 s  step  23  step 23 begin                                (-35.4, -34.0) -234.3 deg
+   19.59 s  step  24  pin line end: along 10.5 of 12.3 off line 0.18 heading  (-41.9, -41.6) -139.4 deg
+   19.77 s  step  24  pin drive ended seen=1                       (-42.0, -41.8) -136.4 deg
+   21.56 s  step  27  step 27 begin                                (-43.6, -42.6) -252.8 deg
+   22.46 s  step  28  step 28 begin                                (-30.1, -46.6) -255.8 deg
+   27.39 s  step  37  step 37 begin                                (-7.9, -5.3) -302.6 deg

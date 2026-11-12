@@ -1,0 +1,110 @@
+{
+  "start": [
+    0.0,
+    -64.3,
+    0.0
+  ],
+  "blocks": [
+    {
+      "kind": "liftToLevel",
+      "level": "LOW",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "RIGHT",
+      "push": 5.0,
+      "drive": "SMOOTH",
+      "isPin": "YES",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -4.2,
+      "y": -47.7,
+      "timeout": 1200,
+      "forwards": false,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "goToPin",
+      "x": -24.0,
+      "y": -24.0,
+      "level": "MID",
+      "timeout": 2150,
+      "forwards": true,
+      "maxSpeed": 127,
+      "reach": 7.5,
+      "decelRange": 8.0,
+      "decelSpeed": 30.0
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "TOP",
+      "push": 5.0,
+      "drive": "SMOOTH",
+      "isPin": "NO",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    },
+    {
+      "kind": "swingToHeading",
+      "theta": 61.7,
+      "side": "RIGHT",
+      "timeout": 2000,
+      "forwards": false,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "goToPin",
+      "x": -48.0,
+      "y": -48.0,
+      "level": "MID",
+      "timeout": 2200,
+      "forwards": true,
+      "maxSpeed": 127,
+      "reach": 7.5,
+      "decelRange": 6.0,
+      "decelSpeed": 30.0
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "LEFT",
+      "push": 3.0,
+      "drive": "SMOOTH",
+      "isPin": "NO",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    }
+  ],
+  "waypoints": []
+}

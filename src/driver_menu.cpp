@@ -2,7 +2,8 @@
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
-//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for the last two)
+//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for
+//           ODOM SETUP | DISTANCE | LIFT CAL | IR TEST | DECEL TUNE | VISION)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -20,6 +21,12 @@
 #include "auto_tuner.hpp"
 #include "odom_setup.hpp"
 #include "distance_diag.hpp"
+#include "pin_sensor_diag.hpp"
+#include "decel_tune.hpp"
+#include "lift_calibration.hpp"
+#include "run_log.hpp"
+#include "vision_calib.hpp"
+#include "functions.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
@@ -244,6 +251,18 @@ enum class StepKind {
   SET_POSE,        // chassis.setPose(x, y, theta)
   WAIT_UNTIL_DONE, // chassis.waitUntilDone() -- lemlib motions are async by
                    // default, so exported code needs one after each move
+  // Robot functions (the planner's "robot functions" section). They reuse
+  // PlanStep fields: dirIdx / sideIdx carry the choice indexes.
+  LIFT_TO_LEVEL,   // liftGoToLevel(dirIdx = level, sideIdx == 0 ? wait : no wait, timeoutMs,
+                   //               drift > 0.5 ? DROP angle : LIFT angle)
+  CLAW,            // dirIdx: 0 both, 1 claw, 2 claw2; sideIdx: 0 extend (on), 1 retract (off)
+  HOME_LIFT,       // homeLift()
+  GO_TO_PIN,       // goToPin(x, y, dirIdx = lift level, timeoutMs, maxSpeed, forwards; sideIdx == 1 = wallPin)
+  SHOOT_TO_GOAL,   // shootToGoal(timeoutMs): drop at whatever level the lift is at now
+  AUTO_GRAB_PIN,   // pinAutoGrabEnable(sideIdx == 0): the IR sensor closes the claws on a pin
+  RELOCALIZE,      // relocalizeFromWall(dirIdx = wall 0 bottom / 1 top / 2 left / 3 right, earlyExit =
+                   //   edge (centre to the wall-side edge, in), !forwards = back to the wall,
+                   //   timeoutMs, maxSpeed = power, sideIdx == 0 ? set heading : leave it)
 };
 struct PlanStep {
   StepKind kind = StepKind::MOVE_TO_POINT;
@@ -300,12 +319,23 @@ static void startStep(const PlanStep &st) {
                          true);
     break;
   case StepKind::MOVE_TO_POINT:
-    chassis.moveToPoint(st.x, st.y, st.timeoutMs,
+    // for a moveToPoint the otherwise unused PLAN ADD fields carry the slow-down:
+    // drift = decelRange (in, 0 = off), lead = decelSpeed
+    // sideIdx >= 2 = ramp the slow-down over that many stages (moveToPointSmooth)
+    if (st.sideIdx >= 2)
+      moveToPointSmooth(st.x, st.y, st.timeoutMs,
                         {.forwards = st.forwards,
                          .maxSpeed = st.maxSpeed,
                          .minSpeed = st.minSpeed,
                          .earlyExitRange = st.earlyExit},
-                        true);
+                        st.drift, st.lead, true, st.sideIdx);
+    else
+      moveToPointDecel(st.x, st.y, st.timeoutMs,
+                       {.forwards = st.forwards,
+                        .maxSpeed = st.maxSpeed,
+                        .minSpeed = st.minSpeed,
+                        .earlyExitRange = st.earlyExit},
+                       st.drift, st.lead, true);
     break;
   case StepKind::MOVE_TO_POSE:
     chassis.moveToPose(st.x, st.y, st.theta, st.timeoutMs,
@@ -317,9 +347,21 @@ static void startStep(const PlanStep &st) {
                         .earlyExitRange = st.earlyExit},
                        true);
     break;
+  case StepKind::GO_TO_PIN: // the drive part; runPlanStep() does the claws and lift around it
+    // otherwise unused PLAN ADD fields carry the rest: earlyExit = reach (centre to claw tip, in),
+    // drift = decelRange (in), lead = decelSpeed
+    goToPinDrive(st.x, st.y, st.timeoutMs, (int)st.maxSpeed, st.forwards, st.earlyExit, st.drift,
+                 st.lead, st.sideIdx == 1); // (the side slot carries wallPin)
+    break;
   case StepKind::WAIT:
   case StepKind::SET_POSE:
   case StepKind::WAIT_UNTIL_DONE:
+  case StepKind::LIFT_TO_LEVEL:
+  case StepKind::CLAW:
+  case StepKind::HOME_LIFT:
+  case StepKind::SHOOT_TO_GOAL:
+  case StepKind::AUTO_GRAB_PIN:
+  case StepKind::RELOCALIZE:
     break;
   }
 }
@@ -382,6 +424,53 @@ static void formatStepCode(const PlanStep &st, char lines[3][80]) {
     break;
   case StepKind::WAIT_UNTIL_DONE:
     snprintf(lines[0], 80, "chassis.waitUntilDone();");
+    break;
+  case StepKind::LIFT_TO_LEVEL:
+    if (st.drift > 0.5f) // DROP: lift to the drop angle, then open the claws
+      snprintf(lines[0], 80, "liftDropAtLevel(%d, %d);  // %s", st.dirIdx, st.timeoutMs,
+               liftLevelName(st.dirIdx));
+    else
+      snprintf(lines[0], 80, "liftGoToLevel(%d, %s, %d);  // %s", st.dirIdx,
+               st.sideIdx == 0 ? "true" : "false", st.timeoutMs, liftLevelName(st.dirIdx));
+    break;
+  case StepKind::CLAW: {
+    const char *fn = st.sideIdx == 0 ? "extend" : "retract";
+    if (st.sideIdx == 0) { // shutting: also lifts the lift slightly
+      if (st.dirIdx == 0)
+        snprintf(lines[0], 80, "clawsClose();");
+      else
+        snprintf(lines[0], 80, st.dirIdx == 1 ? "clawsClose(true, false);" : "clawsClose(false, true);");
+      break;
+    }
+    int n = 0;
+    if (st.dirIdx != 2)
+      snprintf(lines[n++], 80, "claw.%s();", fn);
+    if (st.dirIdx != 1)
+      snprintf(lines[n++], 80, "claw2.%s();", fn);
+    break;
+  }
+  case StepKind::HOME_LIFT:
+    snprintf(lines[0], 80, "homeLift();");
+    break;
+  case StepKind::GO_TO_PIN:
+    snprintf(lines[0], 80, "goToPin(%.2f, %.2f, %d, %d, %.0f, %s,", st.x, st.y, st.dirIdx,
+             st.timeoutMs, st.maxSpeed, fwdLbl);
+    snprintf(lines[1], 80, "  %.2f, %.2f, %.0f);  // reach, decel range, speed", st.earlyExit,
+             st.drift, st.lead);
+    snprintf(lines[2], 80, "  // lift level %s", liftLevelName(st.dirIdx));
+    break;
+  case StepKind::SHOOT_TO_GOAL:
+    snprintf(lines[0], 80, "shootToGoal(%d);  // drop at the lift's current level", st.timeoutMs);
+    break;
+  case StepKind::AUTO_GRAB_PIN:
+    snprintf(lines[0], 80, "pinAutoGrabEnable(%s);", st.sideIdx == 0 ? "true" : "false");
+    snprintf(lines[1], 80, "  // IR sensor: pin + lift at start -> claws on, lift to PIN");
+    break;
+  case StepKind::RELOCALIZE:
+    snprintf(lines[0], 80, "relocalizeFromWall(%d, %.2f, %s, %d, %.0f, %s%s);", st.dirIdx,
+             st.earlyExit, st.forwards ? "false" : "true", st.timeoutMs, st.maxSpeed,
+             st.sideIdx == 0 ? "true" : "false", st.y > 0.5f ? ", wallAt" : "");
+    snprintf(lines[1], 80, "  // push into the wall, then set the position (and heading) from it");
     break;
   }
 }
@@ -627,7 +716,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[10] = {
+static const GridItem kHomeItems[14] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -638,8 +727,12 @@ static const GridItem kHomeItems[10] = {
     {"AUTO PID TUNE"},
     {"ODOM SETUP"},
     {"DISTANCE"},
+    {"LIFT CAL"},
+    {"IR TEST"},
+    {"DECEL TUNE"},
+    {"VISION"},
 };
-static const int kHomeItemCount = 10;
+static const int kHomeItemCount = 14;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -1235,6 +1328,81 @@ static bool runPlanStep(const PlanStep &st) {
     }
     return true;
   }
+  if (st.kind == StepKind::SHOOT_TO_GOAL) { // a drop at whichever level the lift is at right now
+    PlanStep drop = st;
+    drop.kind = StepKind::LIFT_TO_LEVEL;
+    drop.dirIdx = liftCurrentLevel();
+    drop.drift = 1;
+    return runPlanStep(drop);
+  }
+  if (st.kind == StepKind::LIFT_TO_LEVEL) {
+    const bool drop = st.drift > 0.5f;
+    if (drop && !liftHasDrop(st.dirIdx)) { // first stage: nothing to lower to, just open
+      liftOpenClaws();
+      return true;
+    }
+    if (drop) { // a drop is the controlled move, and always waits (the claws open on arrival)
+      const double target = std::clamp(liftDropAngles[st.dirIdx], 0.0, LIFT_UPPER_LIMIT);
+      double vel = 0;
+      uint32_t until = pros::millis() + st.timeoutMs;
+      while (pros::millis() < until) {
+        if (waitForCancel()) {
+          lift.move_velocity(0);
+          return false;
+        }
+        if (liftControlledStep(target, vel, 10))
+          break;
+        sendRemoteUiState();
+        pros::delay(10);
+      }
+      lift.move_velocity(0); // arrived or out of time: hold
+    } else {
+      liftGoToLevel(st.dirIdx, false, 0, false);
+      if (st.sideIdx == 0) { // wait for it, still cancellable
+        uint32_t until = pros::millis() + st.timeoutMs;
+        while (!liftAtLevel(st.dirIdx, false) && pros::millis() < until) {
+          if (waitForCancel()) {
+            lift.move_velocity(0);
+            return false;
+          }
+          sendRemoteUiState();
+          pros::delay(20);
+        }
+      }
+    }
+    if (drop)
+      liftOpenClaws(); // reached the drop angle
+    return true;
+  }
+  if (st.kind == StepKind::CLAW) {
+    bool extend = st.sideIdx == 0;
+    if (extend) {
+      clawsClose(st.dirIdx != 2, st.dirIdx != 1);
+      return true;
+    }
+    if (st.dirIdx != 2)
+      claw.retract();
+    if (st.dirIdx != 1)
+      claw2.retract();
+    return true;
+  }
+  if (st.kind == StepKind::HOME_LIFT) {
+    homeLift();
+    return true;
+  }
+  if (st.kind == StepKind::AUTO_GRAB_PIN) {
+    pinAutoGrabEnable(st.sideIdx == 0);
+    return true;
+  }
+  if (st.kind == StepKind::RELOCALIZE) {
+    // x = where the surface is, when y > 0.5 (otherwise the field wall); theta = max correction, in
+    relocalizeFromWall(st.dirIdx, st.earlyExit, !st.forwards, st.timeoutMs, (int)st.maxSpeed,
+                       st.sideIdx == 0, st.y > 0.5f ? st.x : NAN, st.theta);
+    remoteTrail.clear();
+    planPath.clear();
+    drawPlannerScreen();
+    return true;
+  }
   if (st.kind == StepKind::SET_POSE) {
     chassis.setPose(st.x, st.y, st.theta);
     remoteTrail.clear();
@@ -1261,11 +1429,25 @@ static bool runPlanStep(const PlanStep &st) {
   if (planPath.empty())
     planPath.push_back({start.x, start.y});
 
+  if (st.kind == StepKind::GO_TO_PIN) { // same order as goToPin(): open, drive, grab, then lift
+    runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", st.x, st.y, st.earlyExit,
+                  st.dirIdx);
+    liftOpenClaws();
+    if (kPinGrabByIR)
+      pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
+  }
   startStep(st);
   pros::delay(10);
-  while (chassis.isInMotion()) {
-    if (waitForCancel())
+  // A pin grab queues a cruise stage and then a decel approach; the chassis is briefly idle between
+  // them, so it only counts as finished after staying idle for 150 ms (like goToPin()).
+  const bool isPinStep = st.kind == StepKind::GO_TO_PIN;
+  int idleMs = 0;
+  while (chassis.isInMotion() || (isPinStep && idleMs < 150)) {
+    idleMs = chassis.isInMotion() ? 0 : idleMs + 20;
+    if (waitForCancel()) {
+      pinCloseWatch(false);
       return false;
+    }
     lemlib::Pose pose = chassis.getPose();
     int px, py;
     toPixel(pose.x, pose.y, px, py);
@@ -1281,6 +1463,22 @@ static bool runPlanStep(const PlanStep &st) {
   }
   // (no chassis.waitUntilDone() here -- see WAIT_UNTIL_DONE above; the
   // isInMotion() loop above is the wait)
+  if (st.kind == StepKind::GO_TO_PIN) { // on the pin: grab it, then raise the lift
+    runlog::event("pin drive ended seen=%d", pinCloseWatchHit() ? 1 : 0);
+    pinCloseWatch(false);
+    clawsClose();
+    runlog::event("pin claws closed");
+    pros::delay(80); // let the claws shut before lifting
+    liftGoToLevel(st.dirIdx, false);
+    const uint32_t until = pros::millis() + 1500;
+    while (!liftAtLevel(st.dirIdx) && pros::millis() < until) {
+      if (waitForCancel())
+        return false;
+      sendRemoteUiState();
+      pros::delay(20);
+    }
+    clawsClose();
+  }
   return true;
 }
 
@@ -1295,13 +1493,21 @@ static void runPlan(int only) {
     planPath.clear();
   }
   planStatus = PlanStatus::RUNNING;
+  liftHold(); // (the last whole-plan run left the lift relaxed)
   takeRemoteKey(RK_X); // don't let a stale stop cancel the first step
   printf("PLAN START %d..%d\n", from, to);
+  runlog::begin(only < 0 ? "plan" : "step"); // recorded; sent to the laptop when the run ends
   for (int i = from; i <= to; i++) {
     planStepIdx = i;
+    runlog::setStep(i);
+    runlog::event("step %d begin", i);
     drawPlannerScreen();
     sendRemoteUiState(true);
     if (!runPlanStep(plan[i])) {
+      runlog::event("cancelled");
+      runlog::end("CANCELLED");
+      if (only < 0)
+        liftRelax(); // stopped: nothing should keep working, the lift included
       planStatus = PlanStatus::CANCELLED;
       controller.rumble("-");
       drawPlannerScreen();
@@ -1309,6 +1515,14 @@ static void runPlan(int only) {
       printf("PLAN CANCELLED at %d\n", i);
       return;
     }
+  }
+  runlog::end("DONE");
+  if (only < 0) {
+    // The routine is over. A lift left raised (a plan that ends with a shot) would be held there
+    // by its motors, humming, until something else moved it: let it settle instead. A single
+    // step run from the planner keeps holding -- that is usually a lift move being tried out.
+    pros::delay(300); // the last drop / claws finish first
+    liftRelax();
   }
   planStatus = PlanStatus::DONE;
   controller.rumble(".");
@@ -1325,7 +1539,7 @@ static void runPlan(int only) {
 // temperatures without leaving the menu.
 static const int kTempRowH = 66;   // one section: its label plus a row of tiles
 static const int kTempTileH = 46;
-static const int kTempSections = 4;
+static const int kTempSections = 3;
 static int tempsScroll = 0;        // pixels, <= 0 (content scrolled up)
 
 struct TempSection {
@@ -1335,24 +1549,21 @@ struct TempSection {
   int tilesPerRow;
 };
 
-// The four groups, in the order the HUD lists them.
+// The three groups (the claws are pneumatic -- nothing to read), in the order the HUD lists them.
 static void collectTemps(std::vector<double> temps[kTempSections],
                          std::vector<std::int8_t> ports[kTempSections]) {
   temps[0] = left_motor_group.get_temperature_all();
   ports[0] = left_motor_group.get_port_all();
   temps[1] = right_motor_group.get_temperature_all();
   ports[1] = right_motor_group.get_port_all();
-  temps[2] = {lift.get_temperature()};
-  ports[2] = {lift.get_port()};
-  temps[3] = {claw.get_temperature()};
-  ports[3] = {claw.get_port()};
+  temps[2] = lift.get_temperature_all();
+  ports[2] = lift.get_port_all();
 }
 
 static const TempSection kTempSectionInfo[kTempSections] = {
     {"LEFT DRIVETRAIN", ui::CYAN, "L", 5},
     {"RIGHT DRIVETRAIN", ui::ORANGE, "R", 5},
     {"LIFT", ui::CYAN, "Lift", 2},
-    {"CLAW", ui::GREEN, "Claw", 2},
 };
 
 // Cyan up to 45C, orange to 55C, red past it -- the HUD's thresholds.
@@ -1474,6 +1685,8 @@ static void drawTempsScreen() {
 //   PLAN RUN [i]         run the whole plan, or just step i
 //   PLAN STOP            cancel a running plan (same as controller X)
 //   POSE x y th          chassis.setPose(x, y, th) right now
+//   ROBOT HOME           claws on (extended) and homeLift() -- the starting
+//                        configuration; sent by the planner's Reset robot
 //   PID SET m g v        PID tuner: set gain g (0 kP, 1 kI, 2 kD) of
 //                        controller m (0 angular, 1 lateral) to v
 //   PID MODE m           PID tuner: which controller UP/DOWN edit
@@ -1508,10 +1721,13 @@ struct RemoteInput {
   int planRun = -2;           // -2 = none pending, -1 = all, >= 0 = that step
   bool poseSet = false;
   float poseX = 0, poseY = 0, poseTheta = 0;
+  bool robotHome = false;     // ROBOT HOME: claws on (extended), lift homed
   int driveL = 0, driveR = 0;     // laptop WASD driving, see applyRemoteDrive()
   uint32_t driveAt = 0;           // when that command arrived (pros::millis)
   bool driveActive = false;
   std::vector<RemotePidCommand> pidCmds;   // PID tuner commands, oldest first
+  std::vector<RemoteLiftCommand> liftCmds; // lift calibration commands, oldest first
+  std::vector<RemoteDecelCommand> decelCmds; // decel tune commands, oldest first
   bool pidStop = false;
 };
 static RemoteInput remoteInput;
@@ -1537,7 +1753,7 @@ static void remoteTouchListenerTask(void *) {
       } else if (sscanf(rest, "ADD %d %f %f %f %d %d %d %d %f %f %f %f %f", &k, &st.x, &st.y,
                         &st.theta, &st.timeoutMs, &fwd, &st.dirIdx, &st.sideIdx, &st.maxSpeed,
                         &st.minSpeed, &st.earlyExit, &st.lead, &st.drift) == 13) {
-        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::WAIT_UNTIL_DONE);
+        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::RELOCALIZE);
         st.forwards = fwd != 0;
         remoteTouchMutex.take();
         if (remoteInput.planAdds.size() < kMaxPlanSteps)
@@ -1552,6 +1768,66 @@ static void remoteTouchListenerTask(void *) {
       } else if (strncmp(rest, "STOP", 4) == 0) {
         remoteTouchMutex.take();
         remoteInput.key[RK_X] = true;
+        remoteTouchMutex.give();
+      }
+    } else if (strncmp(line, "LOG NEED ", 9) == 0) {
+      runlog::resend(line + 9); // the laptop wants lines of the run recording again
+    } else if (strncmp(line, "DECEL ", 6) == 0) {
+      const char *rest = line + 6;
+      RemoteDecelCommand c;
+      bool ok = true;
+      if (sscanf(rest, "SET %d %f", &c.index, &c.value) == 2) {
+        c.kind = RemoteDecelCommand::SET;
+      } else if (strncmp(rest, "RUN", 3) == 0) {
+        c.kind = RemoteDecelCommand::RUN;
+      } else if (strncmp(rest, "RETURN", 6) == 0) {
+        c.kind = RemoteDecelCommand::RETURN;
+      } else if (strncmp(rest, "STOP", 4) == 0) {
+        c.kind = RemoteDecelCommand::STOP;
+      } else {
+        ok = false;
+      }
+      if (ok) {
+        remoteTouchMutex.take();
+        if (remoteInput.decelCmds.size() < 32)
+          remoteInput.decelCmds.push_back(c);
+        remoteTouchMutex.give();
+      }
+    } else if (strncmp(line, "LIFT ", 5) == 0) {
+      const char *rest = line + 5;
+      RemoteLiftCommand c;
+      bool ok = true;
+      if (sscanf(rest, "SEL %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::SEL;
+      } else if (sscanf(rest, "SAVED %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::SAVED;
+      } else if (sscanf(rest, "SETDROP %d %f", &c.index, &c.value) == 2) {
+        c.kind = RemoteLiftCommand::SET_DROP;
+      } else if (sscanf(rest, "GODROP %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::GO_DROP;
+      } else if (sscanf(rest, "SAVEDROP %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::SAVE_DROP;
+      } else if (sscanf(rest, "SET %d %f", &c.index, &c.value) == 2) {
+        c.kind = RemoteLiftCommand::SET;
+      } else if (sscanf(rest, "GO %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::GO;
+      } else if (sscanf(rest, "SAVE %d", &c.index) == 1) {
+        c.kind = RemoteLiftCommand::SAVE;
+      } else if (sscanf(rest, "JOG %f", &c.value) == 1) {
+        c.kind = RemoteLiftCommand::JOG;
+      } else if (sscanf(rest, "CLAW %d %f", &c.index, &c.value) == 2) {
+        c.kind = RemoteLiftCommand::CLAW;
+      } else if (strncmp(rest, "HOME", 4) == 0) {
+        c.kind = RemoteLiftCommand::HOME;
+      } else if (strncmp(rest, "STOP", 4) == 0) {
+        c.kind = RemoteLiftCommand::STOP;
+      } else {
+        ok = false;
+      }
+      if (ok) {
+        remoteTouchMutex.take();
+        if (remoteInput.liftCmds.size() < 32)
+          remoteInput.liftCmds.push_back(c);
         remoteTouchMutex.give();
       }
     } else if (strncmp(line, "PID ", 4) == 0) {
@@ -1590,6 +1866,10 @@ static void remoteTouchListenerTask(void *) {
           remoteInput.pidCmds.push_back(c);
         remoteTouchMutex.give();
       }
+    } else if (strncmp(line, "ROBOT HOME", 10) == 0) {
+      remoteTouchMutex.take();
+      remoteInput.robotHome = true;
+      remoteTouchMutex.give();
     } else if (sscanf(line, "POSE %f %f %f", &fx, &fy, &ft) == 3) {
       remoteTouchMutex.take();
       remoteInput.poseSet = true;
@@ -1683,6 +1963,32 @@ bool takeRemotePidCommand(RemotePidCommand &out) {
   if (!remoteInput.pidCmds.empty()) {
     out = remoteInput.pidCmds.front();
     remoteInput.pidCmds.erase(remoteInput.pidCmds.begin());
+    got = true;
+  }
+  remoteTouchMutex.give();
+  return got;
+}
+
+// Oldest queued "DECEL ..." command, if any (see decel_tune.cpp).
+bool takeRemoteDecelCommand(RemoteDecelCommand &out) {
+  bool got = false;
+  remoteTouchMutex.take();
+  if (!remoteInput.decelCmds.empty()) {
+    out = remoteInput.decelCmds.front();
+    remoteInput.decelCmds.erase(remoteInput.decelCmds.begin());
+    got = true;
+  }
+  remoteTouchMutex.give();
+  return got;
+}
+
+// Oldest queued "LIFT ..." command, if any (see lift_calibration.cpp).
+bool takeRemoteLiftCommand(RemoteLiftCommand &out) {
+  bool got = false;
+  remoteTouchMutex.take();
+  if (!remoteInput.liftCmds.empty()) {
+    out = remoteInput.liftCmds.front();
+    remoteInput.liftCmds.erase(remoteInput.liftCmds.begin());
     got = true;
   }
   remoteTouchMutex.give();
@@ -1946,10 +2252,12 @@ static void resetPose() {
 // Applies pending PLAN */POSE commands. Returns true if a run was
 // requested (the caller decides whether/where to run it).
 static bool applyRemotePlanCommands(int &runWhich) {
-  bool clear, poseSet;
+  bool clear, poseSet, robotHome;
   float px, py, pt;
   std::vector<PlanStep> adds;
   remoteTouchMutex.take();
+  robotHome = remoteInput.robotHome;
+  remoteInput.robotHome = false;
   clear = remoteInput.planClear;
   adds.swap(remoteInput.planAdds);
   runWhich = remoteInput.planRun;
@@ -1978,6 +2286,14 @@ static bool applyRemotePlanCommands(int &runWhich) {
     chassis.setPose(px, py, pt);
     remoteTrail.clear();
     planPath.clear();
+    changed = true;
+  }
+  if (robotHome) {
+    // Back to the starting configuration: both claws on (extended, as built
+    // in main.cpp) and the lift homed down onto its limit switch.
+    claw.extend();
+    claw2.extend();
+    homeLift();
     changed = true;
   }
   if (changed && screen == Screen::PLANNER)
@@ -2031,6 +2347,8 @@ static void sendRemoteUiState(bool force) {
   remoteTouchMutex.take();
   uint32_t interval = remoteInput.sendIntervalMs;
   remoteTouchMutex.give();
+  if (runlog::sending()) // a run recording is going out: leave it most of the (slow) link
+    interval = std::max<uint32_t>(interval, 300);
   if (!force && pros::millis() - lastSend < interval)
     return;
   lastSend = pros::millis();
@@ -2430,6 +2748,20 @@ void driverMenuControl() {
           goHome();
         } else if (hit == 9) {
           distanceDiagControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 10) {
+          liftCalibrationControl(); // returns on its own BACK; sends
+                                    // RUI|LIFT_CAL lines meanwhile
+          goHome();
+        } else if (hit == 11) {
+          pinSensorDiagControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 12) {
+          decelTuneControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 13) {
+          visionCalibControl(); // returns on its own BACK; sends RUI|VISION
+                                // lines meanwhile
           goHome();
         }
         break;

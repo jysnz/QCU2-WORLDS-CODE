@@ -1,0 +1,124 @@
+{
+  "start": [
+    0.0,
+    -63.9,
+    0.0
+  ],
+  "blocks": [
+    {
+      "kind": "liftToLevel",
+      "level": "LOW",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "RIGHT",
+      "push": 6.0,
+      "drive": "SMOOTH",
+      "isPin": "NO",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -2.3,
+      "y": -47.4,
+      "timeout": 1200,
+      "forwards": false,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "goToPin",
+      "x": -24.0,
+      "y": -24.0,
+      "level": "LOW",
+      "timeout": 2600,
+      "forwards": true,
+      "maxSpeed": 127,
+      "reach": 7.5,
+      "decelRange": 15.0,
+      "decelSpeed": 30.0
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "TOP",
+      "push": 6.0,
+      "drive": "SMOOTH",
+      "isPin": "NO",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 116.29,
+      "timeout": 1150,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -34.3,
+      "y": -35.4,
+      "timeout": 1150,
+      "forwards": false,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40,
+      "decelSteps": 1
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "goToPin",
+      "x": -48.0,
+      "y": -48.0,
+      "level": "LOW",
+      "timeout": 2050,
+      "forwards": true,
+      "maxSpeed": 127,
+      "reach": 7.5,
+      "decelRange": 6.0,
+      "decelSpeed": 30.0
+    },
+    {
+      "kind": "shootAtGoal",
+      "x": -24,
+      "y": -48,
+      "goalSide": "LEFT",
+      "push": 6.0,
+      "drive": "SMOOTH",
+      "isPin": "NO",
+      "shootLevel": "CURRENT",
+      "timeout": 2000
+    }
+  ],
+  "waypoints": []
+}

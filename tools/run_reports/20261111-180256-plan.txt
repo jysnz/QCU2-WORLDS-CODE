@@ -1,0 +1,45 @@
+RUN REPORT  #6  plan  DONE  8.75 s  (20 samples every 20 ms)
+WARNING: the link dropped data: 20/650 samples, 14/60 events arrived.
+start pose (-0.3, -47.0) -0.3 deg   end pose (-18.1, -30.4) -42.3 deg
+WARNING: only 24 of 218 lines of this recording arrived, even after asking the robot again (0 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          LOOKS WRONG, see below
+  forward wheel (vertical rotation sensor)     no totals arrived; only 5 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 5 step(s) checked (the rest did not arrive)
+  standing still: 0.2 s in total, the heading moved +0.08 deg (should be 0)
+  turning: IMU +2.2 deg in total, drive wheels +33.7  [only the steps that arrived]
+  driving: forward tracking wheel 15.9 in, drive motors 15.1 in; most the robot tipped 2.9 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 6 moveToPoint          +2.3 /  +36.1       +15.0 /  +14.6      +0.3      2.9   <-- turn
+  LOOKS WRONG:
+   - step 6 moveToPoint: the IMU turned +2.3 deg but the drive wheels turned the robot about +36.1 deg (-33.8 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+
+STEPS (end error = robot vs the simulator when the next step began)
+    3 waitUntilDone     1.97 s + 0.00 s
+    4 turnToHeading     1.97 s + 0.72 s   end error 15.7 in   +3.7 deg
+    5 waitUntilDone     2.69 s + 2.19 s
+   10 claw              4.88 s + 0.00 s
+   11 moveToPoint       4.89 s + 5.38 s   end error 25.0 in  -67.3 deg
+   15 waitUntilDone    10.27 s + 0.00 s
+   16 moveToPoint      10.27 s + 1.36 s   end error  0.2 in   -2.0 deg
+   19 turnToHeading    11.63 s + 1.02 s   end error  9.0 in  -14.6 deg
+   20 waitUntilDone    12.66 s + 7.17 s
+   29 liftToLevel      19.83 s + 0.39 s
+   30 waitUntilDone    20.22 s +-11.47 s
+
+EVENTS
+    1.97 s  step   3  step 3 begin                                 (-0.3, -47.1) -0.3 deg
+    1.97 s  step   4  step 4 begin                                 (-0.3, -47.0) -0.3 deg
+    2.69 s  step   5  step 5 begin                                 (-1.0, -47.9) -90.3 deg
+    4.88 s  step  10  step 10 begin                                (-15.9, -48.1) -87.8 deg
+    4.89 s  step  11  step 11 begin                                (-15.9, -48.1) -87.8 deg
+    7.55 s  step  13  pin vision: camera steering on  sig 1        (-7.0, -41.7) -45.3 deg
+    7.55 s  step  13  pin vision: braking 13.5 in out  power 68    (-7.0, -41.7) -45.3 deg
+    8.49 s  step  13  pin line end: along 26.4 of 29.1 off line 0.24 heading  (-18.1, -30.4) -42.4 deg
+   10.27 s  step  15  step 15 begin                                (-18.3, -30.6) -157.9 deg
+   10.27 s  step  16  step 16 begin                                (-18.3, -30.6) -157.9 deg
+   11.63 s  step  19  step 19 begin                                (-22.8, -41.1) -170.9 deg
+   12.66 s  step  20  step 20 begin                                (-29.6, -39.0) -236.7 deg
+   19.83 s  step  29  step 29 begin                                (-30.2, -46.8) -253.4 deg
+   20.22 s  step  30  step 30 begin                                (-30.5, -46.7) -253.4 deg

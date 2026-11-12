@@ -1,0 +1,263 @@
+{
+  "start": [
+    -0.9,
+    -63.6,
+    0.0
+  ],
+  "blocks": [
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "claw",
+      "clawWhich": "BOTH",
+      "clawState": "ON"
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "LOW",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "swingToHeading",
+      "theta": 299.4,
+      "side": "LEFT",
+      "timeout": 2000,
+      "forwards": true,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -18.8,
+      "y": -50.8,
+      "timeout": 2000,
+      "forwards": true,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 20.0,
+      "decelSpeed": 40
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "GROUND",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "wait",
+      "ms": 800
+    },
+    {
+      "kind": "claw",
+      "clawWhich": "BOTH",
+      "clawState": "OFF"
+    },
+    {
+      "kind": "swingToHeading",
+      "theta": 151.2,
+      "side": "RIGHT",
+      "timeout": 2000,
+      "forwards": false,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "homeLift"
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 327.96,
+      "timeout": 2000,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -21.3,
+      "y": -28.9,
+      "timeout": 3000,
+      "forwards": true,
+      "maxSpeed": 127.0,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 10.0,
+      "decelSpeed": 30.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "wait",
+      "ms": 1000
+    },
+    {
+      "kind": "claw",
+      "clawWhich": "BOTH",
+      "clawState": "ON"
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "LOW",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 189.2,
+      "timeout": 3000,
+      "direction": "AUTO",
+      "maxSpeed": 70.0,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -23.7,
+      "y": -43.3,
+      "timeout": 2000,
+      "forwards": true,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "wait",
+      "ms": 500
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "LOW",
+      "position": "DROP",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "swingToHeading",
+      "theta": 75.7,
+      "side": "RIGHT",
+      "timeout": 2000,
+      "forwards": false,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 241.87,
+      "timeout": 2000,
+      "direction": "AUTO",
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -43.8,
+      "y": -45.2,
+      "timeout": 2000,
+      "forwards": true,
+      "maxSpeed": 70.0,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 20.0,
+      "decelSpeed": 40
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "wait",
+      "ms": 1000
+    },
+    {
+      "kind": "claw",
+      "clawWhich": "BOTH",
+      "clawState": "ON"
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "MID",
+      "position": "LIFT",
+      "waitLift": "YES",
+      "timeout": 2000
+    },
+    {
+      "kind": "turnToHeading",
+      "theta": 100.6,
+      "timeout": 2000,
+      "direction": "AUTO",
+      "maxSpeed": 40.0,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "moveToPoint",
+      "x": -29.7,
+      "y": -47.3,
+      "timeout": 2000,
+      "forwards": true,
+      "maxSpeed": 127,
+      "minSpeed": 0,
+      "earlyExitRange": 0.0,
+      "decelRange": 0.0,
+      "decelSpeed": 40
+    },
+    {
+      "kind": "waitUntilDone"
+    },
+    {
+      "kind": "wait",
+      "ms": 500
+    },
+    {
+      "kind": "liftToLevel",
+      "level": "MID",
+      "position": "DROP",
+      "waitLift": "YES",
+      "timeout": 2000
+    }
+  ],
+  "waypoints": []
+}

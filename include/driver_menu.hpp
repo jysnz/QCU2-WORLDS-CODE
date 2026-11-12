@@ -15,6 +15,8 @@
 //     - TEST MOTORS     spins every drivetrain motor one at a time and
 //                       reports, per port, whether it's configured as
 //                       reversed ("Negative") or not ("Positive").
+//     - VISION          the vision sensor screen (see vision_calib.hpp):
+//                       pick a signature slot, tweak exposure, FOLLOW mode.
 //     - DRIVE           dismisses the menu; opcontrol() falls through to
 //                       normal joystick driving.
 //     - ROBOT POSE      odometry's live x / y / heading with the robot on
@@ -81,3 +83,22 @@ struct RemotePidCommand {
 bool takeRemotePidCommand(RemotePidCommand &out);
 // "PID STOP": true once per request. Checked mid-motion by both tuners.
 bool takeRemotePidStop();
+
+// "LIFT <verb> ..." lines from tools/lift_calibration.py, queued in arrival
+// order. Consumed by liftCalibrationControl() (see lift_calibration.hpp).
+struct RemoteLiftCommand {
+  enum Kind { SEL, SET, GO, SAVE, JOG, HOME, STOP, CLAW, SET_DROP, GO_DROP, SAVE_DROP, SAVED } kind;
+  int index = 0;    // level (SEL / SET / GO / SAVE); CLAW: 0 both, 1 claw, 2 claw2;
+                    // SAVED: 1 the laptop wrote the code, 0 it failed
+  float value = 0;  // SET: angle in degrees, JOG: relative degrees, CLAW: 0 on, 1 off, 2 toggle
+};
+bool takeRemoteLiftCommand(RemoteLiftCommand &out);
+
+// "DECEL <verb> ..." lines from tools/decel_tune.py, queued in arrival order. Consumed by
+// decelTuneControl() (see decel_tune.hpp).
+struct RemoteDecelCommand {
+  enum Kind { SET, RUN, RETURN, STOP } kind;
+  int index = 0;    // SET: which setting (0 dist, 1 speed, 2 range, 3 end, 4 steps)
+  float value = 0;  // SET: the new value
+};
+bool takeRemoteDecelCommand(RemoteDecelCommand &out);
