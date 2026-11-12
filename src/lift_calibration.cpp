@@ -129,24 +129,18 @@ void liftGoToLevel(int level, bool wait, int timeoutMs, bool drop) {
 void liftOpenClaws() {
   if (LIFT_CLAW_OPEN_RETRACTED) {
     claw.retract();
-    claw2.retract();
   } else {
     claw.extend();
-    claw2.extend();
   }
 }
 
-void clawsClose(bool useClaw, bool useClaw2) {
-  auto shut = [&](pros::adi::Pneumatics &c) {
-    if (LIFT_CLAW_OPEN_RETRACTED)
-      c.extend();
-    else
-      c.retract();
-  };
-  if (useClaw)
-    shut(claw);
-  if (useClaw2)
-    shut(claw2);
+void clawsClose(bool useClaw) {
+  if (!useClaw)
+    return;
+  if (LIFT_CLAW_OPEN_RETRACTED)
+    claw.extend();
+  else
+    claw.retract();
 }
 
 // ─── IR pin sensor ───────────────────────────────────────────────────────────
@@ -200,8 +194,7 @@ bool pinAutoGrabTry() {
     return false;
   // Only an open claw grabs: once it has shut on the pin the sensor keeps seeing it, and that must
   // not re-trigger until the claws have been opened again.
-  const bool clawOpenNow = claw.is_extended() != LIFT_CLAW_OPEN_RETRACTED ||
-                           claw2.is_extended() != LIFT_CLAW_OPEN_RETRACTED;
+  const bool clawOpenNow = claw.is_extended() != LIFT_CLAW_OPEN_RETRACTED;
   if (!clawOpenNow)
     return false;
   clawsClose(); // shut the instant the sensor sees the pin: mid-drive, mid-turn, lift anywhere
@@ -341,9 +334,7 @@ const Box kSaveDropBtn = {368, 118, 470, 142};
 const Box kJogUpBtn = {255, 146, 362, 170};
 const Box kJogDownBtn = {368, 146, 470, 170};
 const Box kHomeBtn = {255, 174, 310, 198};
-const Box kClaw1Btn = {315, 174, 367, 198};
-const Box kClaw2Btn = {372, 174, 424, 198};
-const Box kClawAllBtn = {429, 174, 470, 198};
+const Box kClaw1Btn = {315, 174, 470, 198};
 const Box kSaveCodeBtn = {372, 208, 470, 234}; // in the footer, right of the message
 
 void setMsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -371,8 +362,7 @@ struct Button {
 const Button kButtons[] = {{&kGoBtn, "GO TO"},         {&kSaveBtn, "SAVE LIFT"},
                            {&kDropBtn, "DROP"},        {&kSaveDropBtn, "SAVE DROP"},
                            {&kJogUpBtn, "JOG UP"},     {&kJogDownBtn, "JOG DOWN"},
-                           {&kHomeBtn, "HOME"},        {&kClaw1Btn, "C1"},
-                           {&kClaw2Btn, "C2"},         {&kClawAllBtn, "ALL"},
+                           {&kHomeBtn, "HOME"},        {&kClaw1Btn, "CLAW"},
                            {&kSaveCodeBtn, "SAVE CODE"}};
 
 void sendState(bool force = false) {
@@ -408,7 +398,7 @@ void sendState(bool force = false) {
            "|LIFT:%d,%.1f,%d,%d,%.1f,%d,%d,%d,%d~%s|MSG:%s",
            liftLevelName(selected), btns, selected, selected, liveAngle(),
            (goingTo || jogHeld) ? 1 : 0, liftLimitSwitch.get_value() ? 1 : 0, LIFT_UPPER_LIMIT,
-           claw.is_extended() ? 1 : 0, claw2.is_extended() ? 1 : 0, dropping ? 1 : 0, saveReq, levels, msg);
+           claw.is_extended() ? 1 : 0, 0 /* (claw2 was removed) */, dropping ? 1 : 0, saveReq, levels, msg);
   // Skip an unchanged line except for a 1 s heartbeat.
   bool changed = strcmp(line, lastLine) != 0;
   if (!force && !changed && pros::millis() - lastActual < 1000)
@@ -528,10 +518,9 @@ void drawLiveAngle() {
   pros::screen::print(pros::E_TEXT_LARGE, 255, 34, "%.1f", liveAngle());
   pros::screen::set_pen(busy ? ORANGE : CYAN);
   pros::screen::print(pros::E_TEXT_SMALL, 395, 34, "%s", stateWord());
-  bool o1 = clawOpen(claw), o2 = clawOpen(claw2);
-  pros::screen::set_pen(o1 && o2 ? GREEN : (o1 || o2) ? ORANGE : GRAY);
-  pros::screen::print(pros::E_TEXT_SMALL, 395, 47, "claws %s",
-                      o1 && o2 ? "open" : (o1 || o2) ? "mixed" : "shut");
+  const bool o1 = clawOpen(claw);
+  pros::screen::set_pen(o1 ? GREEN : GRAY);
+  pros::screen::print(pros::E_TEXT_SMALL, 395, 47, "claw %s", o1 ? "open" : "shut");
   pros::screen::set_pen(liftLimitSwitch.get_value() ? GREEN : GRAY);
   pros::screen::print(pros::E_TEXT_SMALL, 395, 60, "limit switch %s", liftLimitSwitch.get_value() ? "on" : "off");
   drawGauge();
@@ -539,10 +528,8 @@ void drawLiveAngle() {
 
 void drawClawButtons() {
   using namespace ui;
-  bool o1 = clawOpen(claw), o2 = clawOpen(claw2);
-  drawButton(kClaw1Btn, "C1", o1 ? 0x143a1e : CARD, o1 ? GREEN : GRAY);
-  drawButton(kClaw2Btn, "C2", o2 ? 0x143a1e : CARD, o2 ? GREEN : GRAY);
-  drawButton(kClawAllBtn, "ALL", CARD, 0xFFFFFF);
+  bool o1 = clawOpen(claw);
+  drawButton(kClaw1Btn, "CLAW", o1 ? 0x143a1e : CARD, o1 ? GREEN : GRAY);
 }
 
 void drawActionButtons() {
@@ -693,7 +680,7 @@ void jogBy(double deg) {
   setMsg("jog to %.1f", goTarget);
 }
 
-// which: 0 both, 1 claw, 2 claw2. state: 0 extend, 1 retract, 2 toggle.
+// which is ignored (the robot has one claw; the laptop tools still send 0 / 1). state: 0 extend, 1 retract, 2 toggle.
 void setClaw(int which, int state) {
   auto apply = [&](pros::adi::Pneumatics &c) {
     bool extend = state == 2 ? !c.is_extended() : state == 0;
@@ -702,17 +689,15 @@ void setClaw(int which, int state) {
     else
       c.retract();
   };
-  if (which != 2)
-    apply(claw);
-  if (which != 1)
-    apply(claw2);
-  setMsg("claw %s, claw2 %s", clawOpen(claw) ? "open" : "shut", clawOpen(claw2) ? "open" : "shut");
+  (void)which;
+  apply(claw);
+  setMsg("claw %s", clawOpen(claw) ? "open" : "shut");
   drawClawButtons();
 }
 
 void toggleAllClaws() {
   // all open -> shut them; otherwise open them
-  if (clawOpen(claw) && clawOpen(claw2))
+  if (clawOpen(claw))
     setClaw(0, LIFT_CLAW_OPEN_RETRACTED ? 0 : 1);
   else
     setClaw(0, LIFT_CLAW_OPEN_RETRACTED ? 1 : 0);
@@ -795,10 +780,6 @@ void liftCalibrationControl() {
         doHome = true;
       else if (inBox(kClaw1Btn, x, y))
         setClaw(1, 2);
-      else if (inBox(kClaw2Btn, x, y))
-        setClaw(2, 2);
-      else if (inBox(kClawAllBtn, x, y))
-        toggleAllClaws();
       else if (inBox(kSaveCodeBtn, x, y))
         requestSaveCode();
     }

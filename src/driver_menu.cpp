@@ -255,7 +255,7 @@ enum class StepKind {
   // PlanStep fields: dirIdx / sideIdx carry the choice indexes.
   LIFT_TO_LEVEL,   // liftGoToLevel(dirIdx = level, sideIdx == 0 ? wait : no wait, timeoutMs,
                    //               drift > 0.5 ? DROP angle : LIFT angle)
-  CLAW,            // dirIdx: 0 both, 1 claw, 2 claw2; sideIdx: 0 extend (on), 1 retract (off)
+  CLAW,            // dirIdx unused (one claw); sideIdx: 0 extend (on), 1 retract (off)
   HOME_LIFT,       // homeLift()
   GO_TO_PIN,       // goToPin(x, y, dirIdx = lift level, timeoutMs, maxSpeed, forwards; sideIdx == 1 = wallPin)
   SHOOT_TO_GOAL,   // shootToGoal(timeoutMs): drop at whatever level the lift is at now
@@ -433,22 +433,12 @@ static void formatStepCode(const PlanStep &st, char lines[3][80]) {
       snprintf(lines[0], 80, "liftGoToLevel(%d, %s, %d);  // %s", st.dirIdx,
                st.sideIdx == 0 ? "true" : "false", st.timeoutMs, liftLevelName(st.dirIdx));
     break;
-  case StepKind::CLAW: {
-    const char *fn = st.sideIdx == 0 ? "extend" : "retract";
-    if (st.sideIdx == 0) { // shutting: also lifts the lift slightly
-      if (st.dirIdx == 0)
-        snprintf(lines[0], 80, "clawsClose();");
-      else
-        snprintf(lines[0], 80, st.dirIdx == 1 ? "clawsClose(true, false);" : "clawsClose(false, true);");
-      break;
-    }
-    int n = 0;
-    if (st.dirIdx != 2)
-      snprintf(lines[n++], 80, "claw.%s();", fn);
-    if (st.dirIdx != 1)
-      snprintf(lines[n++], 80, "claw2.%s();", fn);
+  case StepKind::CLAW:
+    if (st.sideIdx == 0) // shutting: clawsClose() (the robot has one claw)
+      snprintf(lines[0], 80, "clawsClose();");
+    else
+      snprintf(lines[0], 80, "claw.retract();");
     break;
-  }
   case StepKind::HOME_LIFT:
     snprintf(lines[0], 80, "homeLift();");
     break;
@@ -1377,13 +1367,10 @@ static bool runPlanStep(const PlanStep &st) {
   if (st.kind == StepKind::CLAW) {
     bool extend = st.sideIdx == 0;
     if (extend) {
-      clawsClose(st.dirIdx != 2, st.dirIdx != 1);
+      clawsClose();
       return true;
     }
-    if (st.dirIdx != 2)
-      claw.retract();
-    if (st.dirIdx != 1)
-      claw2.retract();
+    claw.retract();
     return true;
   }
   if (st.kind == StepKind::HOME_LIFT) {
@@ -2292,7 +2279,6 @@ static bool applyRemotePlanCommands(int &runWhich) {
     // Back to the starting configuration: both claws on (extended, as built
     // in main.cpp) and the lift homed down onto its limit switch.
     claw.extend();
-    claw2.extend();
     homeLift();
     changed = true;
   }

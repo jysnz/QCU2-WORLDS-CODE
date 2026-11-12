@@ -80,7 +80,7 @@ void jawheadControl() {
     if (armLiftUp || armLiftDown)
       pinGrabCancel(); // the driver takes the lift over
 
-    // Tap DOWN to switch claw and claw2 on (extend) and off (retract) together.
+    // Tap DOWN to switch the claw on (extend) and off (retract).
     // Edge-detected (so holding it doesn't rapid-fire) and debounced so switch
     // bounce on the physical button can't register as two rapid taps that cancel out.
     // (DOWN no longer reverses the drivetrain.)
@@ -91,10 +91,9 @@ void jawheadControl() {
       lastClawToggleMs = nowMs;
       clawsOn = !clawsOn;
       if (clawsOn) {
-        clawsClose(); // shuts both claws
+        clawsClose(); // shuts the claw
       } else {
         claw.retract();
-        claw2.retract();
       }
     }
 

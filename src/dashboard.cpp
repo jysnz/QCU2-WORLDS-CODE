@@ -31,6 +31,13 @@ const int BATT_X1 = 250;
 const int MODE_X0 = 258, MODE_X1 = 352;
 const int SWITCH_X0 = 360, SWITCH_X1 = 474;
 const int PILL_Y0 = 7, PILL_Y1 = 33;
+// Tab buttons in the header, right of the logo
+const int TAB0_X0 = 46, TAB0_X1 = 108, TAB1_X0 = 112, TAB1_X1 = 174;
+
+// SENSORS tab: two columns of tall tiles
+const int SENS_X0 = 6, SENS_X1 = 474, SENS_Y0 = 48, SENS_GAP = 6;
+const int SENS_TILE_H = 42, SENS_ROW_GAP = 4;
+const size_t SENS_MAX = 8;
 
 const int TILE_H = 31, TILE_GAP = 3;
 const int SIDE_W = 88;
@@ -92,9 +99,7 @@ static const Canvas &background() {
     bg.fillRect(0, HEADER_H, Canvas::W, HEADER_H + 1, DIVIDER);
 
     bg.image(LOGO_SMALL, 8, (HEADER_H - LOGO_SMALL.h + 1) / 2);
-    const int nameX = 8 + LOGO_SMALL.w + 8;
-    bg.text(FONT_MEDIUM, nameX, 3, "QCU ROBOTICS", TEXT);
-    bg.text(FONT_SMALL, nameX, 21, "MOTOR THERMALS", TEXT_DIM);
+    // (the tab buttons next to the logo are drawn per frame)
     return bg;
 }
 
@@ -109,6 +114,39 @@ static void drawLegend() {
         frame.fillCircle(x + 3, LEGEND_Y + 9, 3, l.color);
         frame.text(FONT_SMALL, x + 10, LEGEND_Y, l.label, TEXT_DIM);
         x += 10 + frame.textWidth(FONT_SMALL, l.label) + 12;
+    }
+}
+
+static void drawTabs(Tab active) {
+    struct { int x0, x1; const char *label; Tab tab; } tabs[] = {
+        {TAB0_X0, TAB0_X1, "THERMALS", TAB_THERMALS}, {TAB1_X0, TAB1_X1, "SENSORS", TAB_SENSORS}};
+    for (auto &t : tabs) {
+        bool on = t.tab == active;
+        frame.card(t.x0, PILL_Y0, t.x1, PILL_Y1, 13, on ? mixColor(HEADER, INFO, 45) : TILE, on ? INFO : TILE_EDGE);
+        frame.text(FONT_SMALL, (t.x0 + t.x1) / 2, PILL_Y0 + 6, t.label, on ? TEXT : TEXT_DIM, Canvas::CENTER);
+    }
+}
+
+// SENSORS tab: one tile per sensor -- name and where it is plugged in on the left, live reading on the right.
+static void drawSensors(const State &s) {
+    if (s.sensors.empty()) {
+        frame.text(FONT_MEDIUM, Canvas::W / 2, 110, "NO SENSORS", TEXT_DIM, Canvas::CENTER);
+        return;
+    }
+    const int colW = (SENS_X1 - SENS_X0 - SENS_GAP) / 2;
+    const size_t n = std::min(s.sensors.size(), SENS_MAX);
+    for (size_t i = 0; i < n; i++) {
+        const SensorReading &r = s.sensors[i];
+        const int x0 = SENS_X0 + (int)(i % 2) * (colW + SENS_GAP);
+        const int y0 = SENS_Y0 + (int)(i / 2) * (SENS_TILE_H + SENS_ROW_GAP);
+        const int x1 = x0 + colW, y1 = y0 + SENS_TILE_H;
+        const uint32_t col = r.connected ? OK : TEXT_MUTED;
+        frame.card(x0, y0, x1, y1, 6, TILE, TILE_EDGE);
+        frame.fillRoundRect(x0 + 4, y0 + 7, x0 + 7, y1 - 7, 1, col);
+        frame.text(FONT_MEDIUM, x0 + 14, y0 + 3, r.label, r.connected ? TEXT : TEXT_MUTED);
+        frame.text(FONT_SMALL, x0 + 14, y0 + 24, r.port, INFO);
+        frame.text(FONT_MEDIUM, x1 - 10, y0 + 12, r.connected ? r.value : "N/C", r.connected ? col : TEXT_MUTED,
+                   Canvas::RIGHT);
     }
 }
 
@@ -329,6 +367,10 @@ void render(const State &s) {
         drawBattery(s.battery);
         drawFieldMode(s.fieldMode);
         drawVexnetSwitch(s.vexnet);
+        drawTabs(s.tab);
+      if (s.tab == TAB_SENSORS) {
+        drawSensors(s);
+      } else {
         drawSummary(s);
 
         drawColumn(COL_LEFT_DRIVE, SIDE_TITLE_Y, SIDE_TILES_Y, SIDE_W, SIDE_MAX_TILES, s.leftDrive);
@@ -353,6 +395,7 @@ void render(const State &s) {
             legend = autonCardY0 + AUTON_CARD_H + 2 <= LEGEND_Y;
         }
         if (legend) drawLegend();
+      }
     }
 
     if (s.stressModalOpen) drawStressModal(s.stressedMotors); // last, so it sits on top
@@ -362,6 +405,13 @@ void render(const State &s) {
 
 bool hitVexnetSwitch(int x, int y) {
     return pickerCount == 0 && inRect(x, y, {SWITCH_X0, 0, SWITCH_X1, PILL_Y1}, TOUCH_SLOP);
+}
+
+int hitTab(int x, int y) {
+    if (pickerCount != 0) return -1;
+    if (inRect(x, y, {TAB0_X0, 0, TAB0_X1, HEADER_H}, 4)) return TAB_THERMALS;
+    if (inRect(x, y, {TAB1_X0, 0, TAB1_X1, HEADER_H}, 4)) return TAB_SENSORS;
+    return -1;
 }
 
 bool hitStressDismiss(int x, int y) { return inRect(x, y, {DISMISS_X0, DISMISS_Y0, DISMISS_X1, DISMISS_Y1}, TOUCH_SLOP); }

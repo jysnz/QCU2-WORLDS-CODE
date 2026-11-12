@@ -39,7 +39,6 @@ extern LiftGroup lift; // ports 5 / 6 (either one alone is enough)
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics claw;  // ADI B, on = extended
-extern pros::adi::Pneumatics claw2; // ADI C, on = extended
 extern pros::adi::DigitalIn pinSensor; // ADI D, the IR sensor that sees a pin
 extern pros::adi::DigitalIn liftLimitSwitch; // port A
 

@@ -66,8 +66,8 @@ void liftOpenClaws();
 void liftRelax();
 void liftHold();
 
-// Shuts the claws (claw / claw2 independently). Does not move the lift.
-void clawsClose(bool useClaw = true, bool useClaw2 = true);
+// Shuts the claw. Does not move the lift.
+void clawsClose(bool useClaw = true);
 
 // Upper travel limit in motor degrees from the limit switch home position. The lower
 // end is stopped by the limit switch itself.

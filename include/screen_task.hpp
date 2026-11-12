@@ -17,6 +17,8 @@ MotorReading readMotor(const pros::AbstractMotor &motor, const char *label, cons
 struct ScreenConfig {
     // Fills leftDrive / rightDrive / centerLeft / centerRight with fresh readings.
     std::function<void(State &)> readMotors;
+    // Fills state.sensors (the SENSORS tab) with fresh readings, each with its port / ADI port.
+    std::function<void(State &)> readSensors = [](State &) {};
     // True while something else (PID tuner, point planner) owns the brain screen.
     std::function<bool()> screenBusy = [] { return false; };
 

@@ -18,6 +18,17 @@ struct MotorReading {
     bool atCurrentLimit; // the motor reports it is drawing as much current as it's allowed
 };
 
+// One sensor on the SENSORS tab. `port` says where it is plugged in ("PORT 9" or "ADI D").
+struct SensorReading {
+    char label[16]; // e.g. "IMU"
+    char port[12];  // smart port or ADI port
+    char value[16]; // live reading, e.g. "181.4°" / "PRESSED"
+    bool connected; // false: shown as N/C (the device does not answer)
+};
+
+// The two tabs of the dashboard (THERMALS is the default).
+enum Tab { TAB_THERMALS = 0, TAB_SENSORS = 1 };
+
 struct Column {
     const char *title;
     std::vector<MotorReading> motors;
@@ -33,6 +44,9 @@ struct State {
     // one of them is empty the other spans the whole middle.
     Column leftDrive{"LEFT DRIVE", {}}, rightDrive{"RIGHT DRIVE", {}};
     Column centerLeft{"", {}}, centerRight{"", {}};
+
+    Tab tab = TAB_THERMALS;
+    std::vector<SensorReading> sensors; // shown on the SENSORS tab
 
     int battery = 0; // percent
     FieldMode fieldMode = PRACTICE;
@@ -58,6 +72,8 @@ void render(const State &state);
 // Touch targets (screen coordinates), with a little slop for fingers. These use
 // the layout from the most recent render().
 bool hitVexnetSwitch(int x, int y);
+// The header's tab buttons: the tab tapped, or -1.
+int hitTab(int x, int y);
 bool hitStressDismiss(int x, int y);
 bool hitAutonCard(int x, int y);
 constexpr int PICKER_BACK = -2;

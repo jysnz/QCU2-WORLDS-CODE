@@ -80,6 +80,9 @@ void startScreenTask(ScreenConfig config) {
         bool lastStressModalOpen = false;
         bool lastPickerOpen = false;
         int lastAuton = -1;
+        Tab tab = TAB_THERMALS; // the default screen is the thermals
+        int lastTab = -1;
+        std::string lastSensorKey;
         std::string lastStressKey;
         std::vector<int> lastTemps; // rounded to nearest 0.5C so tiny sensor jitter doesn't trigger redraws
         uint32_t lastTelemetryRedraw = 0;
@@ -114,6 +117,8 @@ void startScreenTask(ScreenConfig config) {
                         cfg.onAutonSelected();
                     }
                     if (hit != -1) autonPickerOpen = false;
+                } else if (int t = hitTab(touch.x, touch.y); t >= 0) {
+                    tab = (Tab)t;
                 } else if (hitVexnetSwitch(touch.x, touch.y)) {
                     // VEXNET switch: on = robot waits disabled for the VEXNET gamemaster,
                     // off = normal driving (practice).
@@ -129,6 +134,13 @@ void startScreenTask(ScreenConfig config) {
             // ── Gather live data once per frame ──
             State state;
             cfg.readMotors(state);
+            state.tab = tab;
+            std::string sensorKey;
+            if (tab == TAB_SENSORS) {
+                cfg.readSensors(state);
+                for (const SensorReading &r : state.sensors)
+                    sensorKey += std::string(r.value) + (r.connected ? "+" : "-") + "|";
+            }
             state.battery = (int)pros::battery::get_capacity();
             state.vexnet = fieldctl::vexnet();
             state.fieldMode = !state.vexnet               ? PRACTICE
@@ -188,8 +200,8 @@ void startScreenTask(ScreenConfig config) {
             // throttled to a few times a second -- while driving it changes almost every loop.
             bool interactiveChanged = forceRedraw || state.vexnet != lastVexnet || state.fieldMode != lastFieldMode ||
                                       stressModalOpen != lastStressModalOpen || stressKey != lastStressKey ||
-                                      autonPickerOpen != lastPickerOpen || state.selectedAuton != lastAuton;
-            bool telemetryChanged = state.battery != lastBattery || tempsNow != lastTemps;
+                                      autonPickerOpen != lastPickerOpen || state.selectedAuton != lastAuton || (int)tab != lastTab;
+            bool telemetryChanged = state.battery != lastBattery || tempsNow != lastTemps || sensorKey != lastSensorKey;
             bool telemetryDue = telemetryChanged && (nowMs - lastTelemetryRedraw >= TELEMETRY_REDRAW_INTERVAL_MS);
 
             if (!interactiveChanged && !telemetryDue) {
@@ -209,6 +221,8 @@ void startScreenTask(ScreenConfig config) {
             lastStressKey = stressKey;
             lastPickerOpen = autonPickerOpen;
             lastAuton = state.selectedAuton;
+            lastTab = (int)tab;
+            lastSensorKey = sensorKey;
             forceRedraw = false;
 
             pros::delay(35);

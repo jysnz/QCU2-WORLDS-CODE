@@ -88,7 +88,7 @@ bool takeRemotePidStop();
 // order. Consumed by liftCalibrationControl() (see lift_calibration.hpp).
 struct RemoteLiftCommand {
   enum Kind { SEL, SET, GO, SAVE, JOG, HOME, STOP, CLAW, SET_DROP, GO_DROP, SAVE_DROP, SAVED } kind;
-  int index = 0;    // level (SEL / SET / GO / SAVE); CLAW: 0 both, 1 claw, 2 claw2;
+  int index = 0;    // level (SEL / SET / GO / SAVE); CLAW: unused (one claw);
                     // SAVED: 1 the laptop wrote the code, 0 it failed
   float value = 0;  // SET: angle in degrees, JOG: relative degrees, CLAW: 0 on, 1 off, 2 toggle
 };

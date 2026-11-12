@@ -31,7 +31,7 @@ struct Sample {
   uint32_t ms;
   float x, y, th;
   int16_t step;
-  uint8_t flags; // 1 pin sensor sees a pin, 2 claw out, 4 claw2 out, 8 a motion is running,
+  uint8_t flags; // 1 pin sensor sees a pin, 2 claw out, 8 a motion is running,
                  // 16 the claw watch has closed the claws, 32 inside a goToPin approach
 };
 
@@ -111,7 +111,7 @@ void takeSample() {
   s.th = p.theta;
   s.step = (int16_t)curStep;
   s.flags = (uint8_t)((pinDetected() ? 1 : 0) | (claw.is_extended() ? 2 : 0) |
-                      (claw2.is_extended() ? 4 : 0) | (chassis.isInMotion() ? 8 : 0) |
+                      (chassis.isInMotion() ? 8 : 0) |
                       (pinCloseWatchHit() ? 16 : 0) | (pinWindow ? 32 : 0));
   nSamples = n + 1;
 }

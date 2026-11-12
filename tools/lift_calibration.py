@@ -101,7 +101,7 @@ class LiftCalWindow(tk.Toplevel):
         self.moving = False
         self.dropping = False
         self.bumper = False
-        self.claw1 = self.claw2 = True        # extended?
+        self.claw1 = True        # extended?
         self.onBrainScreen = False
         self.lastSaveReq = None   # brain's SAVE CODE counter; a new value means "write the code"
         self.codeShown = None
@@ -206,9 +206,7 @@ class LiftCalWindow(tk.Toplevel):
         claws.pack(fill="x", pady=(8, 0))
         cr = tk.Frame(claws, bg=CARD)
         cr.pack(fill="x", padx=10, pady=(0, 8))
-        self.clawBtns = [self._btn(cr, "CLAW 1", lambda: self.send("LIFT CLAW 1 2")),
-                         self._btn(cr, "CLAW 2", lambda: self.send("LIFT CLAW 2 2")),
-                         self._btn(cr, "BOTH", self.allClaws)]
+        self.clawBtns = [self._btn(cr, "CLAW", lambda: self.send("LIFT CLAW 1 2"))]
         for b in self.clawBtns:
             b.pack(side="left", fill="x", expand=True, padx=(0, 3))
 
@@ -465,7 +463,7 @@ class LiftCalWindow(tk.Toplevel):
 
     def allClaws(self):
         # all open -> shut them; otherwise open them (0 = extend, 1 = retract)
-        both_open = claw_is_open(self.claw1) and claw_is_open(self.claw2)
+        both_open = claw_is_open(self.claw1)
         extend = both_open == CLAW_OPEN_RETRACTED
         self.send(f"LIFT CLAW 0 {0 if extend else 1}")
 
@@ -489,7 +487,7 @@ class LiftCalWindow(tk.Toplevel):
         self.live, self.moving, self.bumper = lift["live"], lift["moving"], lift["bumper"]
         self.dropping = lift.get("dropping", False)
         self.upper = lift["upper"]
-        self.claw1, self.claw2 = lift["claw"], lift["claw2"]
+        self.claw1 = lift["claw"]
         newSel = lift["sel"]
 
         names = [lv[0] for lv in lift["levels"]]
@@ -509,13 +507,10 @@ class LiftCalWindow(tk.Toplevel):
         self.chipState.config(text=word, fg=ORANGE if self.moving or self.dropping else GREEN)
         self.chipBumper.config(text=f"bumper {'ON' if self.bumper else 'off'}",
                                fg=GREEN if self.bumper else GRAY)
-        for b, name, ext in ((self.clawBtns[0], "CLAW 1", self.claw1),
-                             (self.clawBtns[1], "CLAW 2", self.claw2)):
+        for b, name, ext in ((self.clawBtns[0], "CLAW", self.claw1),):
             o = claw_is_open(ext)
             b.config(text=f"{name}  {'OPEN' if o else 'SHUT'}", bg=GO_BG if o else BTN,
                      fg=GREEN if o else GRAY)
-        both = claw_is_open(self.claw1) and claw_is_open(self.claw2)
-        self.clawBtns[2].config(text="SHUT BOTH" if both else "OPEN BOTH")
         self.drawGauge()
         req = lift.get("saveReq")
         if req is not None:
@@ -573,7 +568,7 @@ class _FakeLink:
                        ["HIGH", 360.0, 340.0], ["MAX", 500.0, 460.0],
                        ["PIN", 60.0, 60.0]]
         self.sel, self.live, self.msg = 0, 0.0, "fake lift"
-        self.claw, self.claw2, self.dropping = True, True, False
+        self.claw, self.dropping = True, False
 
     def _send(self, line):
         print("->", line)
@@ -590,7 +585,7 @@ class _FakeLink:
             lv = self.levels[int(f[2])]
             if lv[2] >= 0:
                 self.live = lv[2]
-            self.claw = self.claw2 = not CLAW_OPEN_RETRACTED      # the claws open
+            self.claw = not CLAW_OPEN_RETRACTED      # the claws open
             self.msg = f"{lv[0]}: claws open"
         elif f[1] == "SAVE":
             self.levels[int(f[2])][1] = self.live
@@ -602,14 +597,14 @@ class _FakeLink:
             self.live = 0.0
         elif f[1] == "CLAW":
             which, st = int(f[2]), int(f[3])
-            for i, name in ((1, "claw"), (2, "claw2")):
+            for i, name in ((1, "claw"),):
                 if which in (0, i):
                     setattr(self, name, (not getattr(self, name)) if st == 2 else st == 0)
 
     def state(self):
         return {"screen": "LIFT_CAL", "lift": {
             "sel": self.sel, "live": self.live, "moving": False, "bumper": self.live == 0,
-            "upper": 500.0, "claw": self.claw, "claw2": self.claw2, "dropping": self.dropping,
+            "upper": 500.0, "claw": self.claw, "claw2": False, "dropping": self.dropping,
             "levels": [tuple(lv) for lv in self.levels], "msg": self.msg}}
 
 

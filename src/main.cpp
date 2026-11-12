@@ -13,6 +13,7 @@
 #include "pros/adi.hpp"
 #include "pros/motors.hpp"
 #include "pros/rtos.hpp"
+#include <cmath>
 #include <cstdint> 
 #include <cstdio>
 #include <string>
@@ -37,16 +38,16 @@ pros::MotorGroup right_motor_group({-1, -2}, pros::MotorGears::green);
 
 LiftGroup lift({-5, 6}, pros::MotorGears::red);
 
-pros::adi::Pneumatics claw('B', true);
-pros::adi::Pneumatics claw2('C', true);
-pros::adi::DigitalIn pinSensor('D'); // IR pin sensor (Pneumatics can't read its port, so DigitalIn)
-pros::adi::DigitalIn liftLimitSwitch('A');
+constexpr char PIN_SENSOR_ADI = 'D', LIFT_LIMIT_ADI = 'A', CLAW_ADI = 'B'; // ADI ports
+pros::adi::Pneumatics claw(CLAW_ADI, true);
+pros::adi::DigitalIn pinSensor(PIN_SENSOR_ADI); // IR pin sensor (Pneumatics can't read its port, so DigitalIn)
+pros::adi::DigitalIn liftLimitSwitch(LIFT_LIMIT_ADI);
 
 // What the IMU reads after the robot is turned a true 360 degrees (356.05 measured on the
 // 15scrimcalibration robot). 360.0 = no correction.
 constexpr double INERTIAL_SCALE = 356.05;
 ScaledImu imu(16, INERTIAL_SCALE);
-pros::Rotation verticalRotation(15);
+pros::Rotation verticalRotation(15);    
 pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing right reads positive
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
@@ -99,6 +100,43 @@ void initialize() {
         s.leftDrive.motors = dashboard::readMotors(left_motor_group, "L");
         s.rightDrive.motors = dashboard::readMotors(right_motor_group, "R");
         s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
+    };
+    // SENSORS tab: every sensor with the smart port / ADI port it is plugged into
+    screen.readSensors = [](dashboard::State &s) {
+        auto add = [&](const char *label, const char *port, bool connected, const char *fmt, double v = 0) {
+            dashboard::SensorReading r{};
+            snprintf(r.label, sizeof(r.label), "%s", label);
+            snprintf(r.port, sizeof(r.port), "%s", port);
+            r.connected = connected;
+            snprintf(r.value, sizeof(r.value), fmt, v);
+            s.sensors.push_back(r);
+        };
+        auto smart = [](int port, char *buf) { snprintf(buf, 12, "PORT %d", std::abs(port)); };
+        auto adi = [](char port, char *buf) { snprintf(buf, 12, "ADI %c", port); };
+        char port[12];
+
+        const double heading = imu.get_heading();
+        smart(imu.get_port(), port);
+        if (imu.is_calibrating()) add("IMU", port, true, "CALIBRATING");
+        else add("IMU", port, std::isfinite(heading), "%.1fÂ°", heading);
+
+        const int32_t vPos = verticalRotation.get_position(), hPos = horizontalRotation.get_position();
+        smart(verticalRotation.get_port(), port);
+        add("VERTICAL ROT", port, vPos != PROS_ERR, "%.0fÂ°", vPos / 100.0);
+        smart(horizontalRotation.get_port(), port);
+        add("HORIZONTAL ROT", port, hPos != PROS_ERR, "%.0fÂ°", hPos / 100.0);
+
+        const int32_t seen = vision_sensor.get_object_count();
+        smart(vision_sensor.get_port(), port);
+        add("VISION", port, seen != PROS_ERR, "%.0f seen", (double)seen);
+
+        // ADI digital inputs can't report that they are unplugged: they always read as connected
+        adi(PIN_SENSOR_ADI, port);
+        add("IR PIN SENSOR", port, true, pinDetected() ? "PIN" : "clear");
+        adi(LIFT_LIMIT_ADI, port);
+        add("LIFT LIMIT", port, true, liftLimitSwitch.get_value() ? "PRESSED" : "open");
+        adi(CLAW_ADI, port);
+        add("CLAW", port, true, claw.is_extended() ? "EXTENDED" : "RETRACTED");
     };
     // The PID tuner / auto tuner / driver menu own the brain screen while active
     screen.screenBusy = [] { return pidTunerActive || autoTunerActive || driverMenuActive; };

@@ -212,7 +212,7 @@ def _lift_level_names():
 
 
 LIFT_LEVELS = _lift_level_names()
-CLAW_WHICH = ["BOTH", "CLAW 1", "CLAW 2"]     # claw + claw2 on the robot
+CLAW_WHICH = ["CLAW"]     # the robot has one claw (older plans may still say BOTH / CLAW 1 / CLAW 2)
 CLAW_STATES = ["ON", "OFF"]                   # ON = extended, OFF = retracted
 
 DIRECTIONS = ["AUTO", "CW", "CCW"]
@@ -240,7 +240,7 @@ PARAM_SPEC = {
     "push": (GOAL_PRESS_IN, "num"),               # shootAtGoal: inches the front is driven past touching the goal
     "shootLevel": ("CURRENT", ["CURRENT"] + LIFT_LEVELS),
     "grab": ("ON", ["ON", "OFF"]),                 # autoGrabPin: the IR sensor closes the claws
-    "clawWhich": ("BOTH", CLAW_WHICH), "clawState": ("ON", CLAW_STATES),
+    "clawWhich": ("CLAW", CLAW_WHICH), "clawState": ("ON", CLAW_STATES),
 }
 KIND_PARAMS = {
     "turnToHeading": ["theta", "timeout", "direction", "maxSpeed", "minSpeed", "earlyExitRange"],
@@ -331,11 +331,8 @@ def block_code(b):
         return f"liftGoToLevel({level_index(b)}, {wait}, {int(b['timeout'])});"
     if k == "claw":
         if b["clawState"] == "ON":      # shut the claws; clawsClose() also lifts the lift slightly
-            return {"BOTH": "clawsClose();", "CLAW 1": "clawsClose(true, false);",
-                    "CLAW 2": "clawsClose(false, true);"}.get(b["clawWhich"], "clawsClose();")
-        fn = "retract"
-        calls = {"BOTH": ["claw", "claw2"], "CLAW 1": ["claw"], "CLAW 2": ["claw2"]}
-        return " ".join(f"{c}.{fn}();" for c in calls.get(b["clawWhich"], ["claw", "claw2"]))
+            return "clawsClose();"
+        return "claw.retract();"
     if k == "homeLift":
         return "homeLift();"
     if k == "shootAtGoal":      # (shown while it is placed; Apply turns it into the blocks below)
@@ -422,7 +419,7 @@ def block_summary(b):
                 + (" (open claws)" if level_index(b) == 0 else " (+ open claws)")
         return f"liftToLevel {b['level']} LIFT" + (" (wait)" if b["waitLift"] == "YES" else "")
     if k == "claw":
-        return f"claw {b['clawWhich']} {b['clawState']}"
+        return f"claw {b['clawState']}"
     if k == "homeLift":
         return "homeLift"
     if k == "shootToGoal":
@@ -460,7 +457,7 @@ def block_to_plan_add(b):
             1 if b["position"] == "DROP" else 0)
     if b["kind"] == "claw":             # dirIdx = which claw, sideIdx = 0 extend / 1 retract
         return "PLAN ADD {} 0 0 0 0 1 {} {} 127 0 0 0.6 0".format(
-            k, CLAW_WHICH.index(b["clawWhich"]), CLAW_STATES.index(b["clawState"]))
+            k, (CLAW_WHICH.index(b["clawWhich"]) if b["clawWhich"] in CLAW_WHICH else 0), CLAW_STATES.index(b["clawState"]))
     if b["kind"] == "autoGrabPin":      # sideIdx = 0 on / 1 off
         return "PLAN ADD {} 0 0 0 0 1 0 {} 127 0 0 0.6 0".format(k, 0 if b["grab"] == "ON" else 1)
     if b["kind"] == "shootToGoal":      # only the timeout matters
@@ -793,16 +790,12 @@ def parse_auto_line(line):
     code = code.strip()
     if not code:
         return None
-    m = re.fullmatch(r"clawsClose\((?:(true|false),\s*(true|false))?\);", code)
-    if m:
-        which = {None: "BOTH", ("true", "true"): "BOTH", ("true", "false"): "CLAW 1",
-                 ("false", "true"): "CLAW 2"}.get(m.group(1) and (m.group(1), m.group(2)), "BOTH")
-        return new_block("claw", clawWhich=which, clawState="ON")
+    m = re.fullmatch(r"clawsClose\((?:(true|false)(?:,\s*(true|false))?)?\);", code)
+    if m:   # (older plans may pass which claws -- there is only one now)
+        return new_block("claw", clawWhich="CLAW", clawState="ON")
     if re.fullmatch(r"(claw2?\.(extend|retract)\(\);\s*)+", code):
         calls = re.findall(r"(claw2?)\.(extend|retract)\(\)", code)
-        used = {c for c, _ in calls}
-        which = "BOTH" if used == {"claw", "claw2"} else "CLAW 1" if used == {"claw"} else "CLAW 2"
-        return new_block("claw", clawWhich=which,
+        return new_block("claw", clawWhich="CLAW",
                          clawState="ON" if calls[0][1] == "extend" else "OFF")
     if re.fullmatch(r"while\s*\(\s*chassis\.isInMotion\(\)\s*\)\s*pros::delay\(10\);", code):
         return new_block("waitUntilDone")
@@ -1371,7 +1364,7 @@ def shoot_blocks(b, pose, ctx=None):
                                                     else LIFT_LEVELS[0])
         seq.append(new_block("liftToLevel", level=level, position="LIFT", waitLift="YES",
                              timeout=2000))
-        seq.append(new_block("claw", clawWhich="BOTH", clawState="OFF"))
+        seq.append(new_block("claw", clawWhich="CLAW", clawState="OFF"))
     else:
         if b["shootLevel"] != "CURRENT":
             seq.append(new_block("liftToLevel", level=b["shootLevel"], position="LIFT",
