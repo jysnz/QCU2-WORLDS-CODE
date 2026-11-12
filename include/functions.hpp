@@ -6,6 +6,13 @@ void jawheadControl();
 
 // Drives the lift counter-clockwise until the limit switch is pressed, then stops and
 // zeroes the lift position there. Blocks until done (or a timeout).
+// Moves the lift from two buttons: up = raise (R1), down = lower (R2). Call every loop.
+void liftManualControl(bool up, bool down);
+
+// Ratchet claw (port 3), ported from the 24 branch. Call every loop. Tap L1 = spin clockwise,
+// tap L2 = spin counter-clockwise; it keeps spinning until it stalls (or the button is tapped again).
+void ratchetClawControl();
+
 void homeLift(); // lowers the lift until the limit switch is touched, then sets the angle to 0
 
 // Why the last stretch of moveToPointDecel / moveToPointSmooth is driven by our own controller:

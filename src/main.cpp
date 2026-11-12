@@ -37,6 +37,7 @@ pros::MotorGroup right_motor_group({17, -18, 19, -20}, pros::MotorGears::green);
 
 LiftGroup lift({-5, 6}, pros::MotorGears::red);
 
+pros::Motor ratchetClaw(3); // port 3, green gearset (ratchet claw from the 24 branch)
 pros::adi::Pneumatics claw('B', true);
 pros::adi::Pneumatics claw2('C', true);
 pros::adi::DigitalIn pinSensor('D'); // IR pin sensor (Pneumatics can't read its port, so DigitalIn)
@@ -88,6 +89,7 @@ void initialize() {
     resetPoseAfterCalibration();
     startImuDriftCorrection(); // learns the IMU's heading creep while the robot sits still
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+    ratchetClaw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
 
     dashboard::ScreenConfig screen;

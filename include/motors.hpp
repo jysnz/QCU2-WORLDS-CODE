@@ -37,6 +37,8 @@ public:
 };
 extern LiftGroup lift; // ports 5 / 6 (either one alone is enough)
 
+extern pros::Motor ratchetClaw; // port 3, the ratchet claw motor
+
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics claw;  // ADI B, on = extended
 extern pros::adi::Pneumatics claw2; // ADI C, on = extended

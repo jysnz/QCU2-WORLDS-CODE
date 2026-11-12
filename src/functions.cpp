@@ -47,6 +47,74 @@ void homeLift() {
   lift.tare_position_all();
 }
 
+// Drives the lift motors from two buttons: `up` raises it (R1), `down` lowers it (R2).
+// Call every loop. Up stops at LIFT_UPPER_LIMIT; down stops at the limit switch (which also
+// re-zeroes the angle). With neither pressed the lift holds (unless an auto-grab is moving it).
+void liftManualControl(bool up, bool down) {
+  // The limit switch is the home position: whenever it's pressed the lift angle is 0.
+  const bool limitDown = liftLimitPressed(); // debounced: 30 ms of steady contact
+  if (limitDown) {
+    lift.tare_position_all();
+  }
+
+  if (up && lift.get_position() < LIFT_UPPER_LIMIT) {
+    lift.move_velocity(100);
+  } else if (down && !limitDown) { // down until the switch is touched, whatever the angle reads
+    lift.move_velocity(-100);
+  } else if (!pinGrabLiftMoving()) { // (an auto-grab is carrying it up to the PIN level)
+    lift.move_velocity(0);
+  }
+}
+
+// Tap L1 to spin the ratchet claw clockwise, tap L2 to spin it counter-clockwise. One tap
+// keeps it spinning (no holding) until it stalls (e.g. against a hardstop or a gripped
+// object), then it holds there. Tapping the same button again stops it; tapping the other
+// button reverses it.
+void ratchetClawControl() {
+  const int CLAW_SPEED = 200;               // green gearset max velocity (rpm)
+  const uint32_t CLAW_STALL_GRACE_MS = 250; // ignore stall while spinning up
+  const double CLAW_STALL_VELOCITY = 5.0;   // rpm - below this counts as stalled
+  const int CLAW_STALL_TICKS = 5;           // consecutive slow ticks to confirm
+
+  static bool wasL1Held = false;
+  static bool wasL2Held = false;
+  static int direction = 0; // +1 clockwise, -1 counter-clockwise, 0 stopped
+  static uint32_t startMs = 0;
+  static int slowTicks = 0;
+
+  bool l1Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
+  bool l2Held = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+  bool l1Tapped = l1Held && !wasL1Held;
+  bool l2Tapped = l2Held && !wasL2Held;
+  wasL1Held = l1Held;
+  wasL2Held = l2Held;
+  uint32_t nowMs = pros::millis();
+
+  int tapped = l1Tapped ? 1 : (l2Tapped ? -1 : 0);
+  if (tapped != 0) {
+    direction = (direction == tapped) ? 0 : tapped; // same button again = stop
+    startMs = nowMs;
+    slowTicks = 0;
+  }
+
+  if (direction != 0) {
+    ratchetClaw.move_velocity(direction * CLAW_SPEED);
+    if (nowMs - startMs >= CLAW_STALL_GRACE_MS &&
+        std::abs(ratchetClaw.get_actual_velocity()) < CLAW_STALL_VELOCITY) {
+      slowTicks++;
+    } else {
+      slowTicks = 0;
+    }
+    if (slowTicks >= CLAW_STALL_TICKS) {
+      direction = 0;
+    }
+  }
+
+  if (direction == 0) {
+    ratchetClaw.move_velocity(0); // brake mode HOLD keeps it in place
+  }
+}
+
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
   liftHold(); // (a finished plan run leaves the lift relaxed)
@@ -139,18 +207,8 @@ void jawheadControl() {
     }
 
     // The limit switch is the home position: whenever it's pressed the lift angle is 0.
-    const bool limitDown = liftLimitPressed(); // debounced: 30 ms of steady contact
-    if (limitDown) {
-      lift.tare_position_all();
-    }
-
-    if (armLiftUp && lift.get_position() < LIFT_UPPER_LIMIT) {
-      lift.move_velocity(100);
-    } else if (armLiftDown && !limitDown) { // down until the switch is touched, whatever the angle reads
-      lift.move_velocity(-100);
-    } else if (!pinGrabLiftMoving()) { // (an auto-grab is carrying it up to the PIN level)
-      lift.move_velocity(0);
-    }
+    liftManualControl(armLiftUp, armLiftDown);
+    ratchetClawControl();
   }
 }
 
