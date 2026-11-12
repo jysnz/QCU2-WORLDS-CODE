@@ -3926,6 +3926,7 @@ class PlannerWindow(tk.Toplevel):
         for w in self.paramFrame.winfo_children():
             w.destroy()
         self.paramWidgets = {}
+        self.paramBools = {}    # name -> its Checkbutton (the label follows the value)
         if self.pending:        # a motion still being placed: tune it before Apply
             b = self.pending[0]
             self.paramFrame.config(text=f" new {b['kind']}  (not applied yet) ")
@@ -3946,11 +3947,12 @@ class PlannerWindow(tk.Toplevel):
                      font=("Segoe UI", 8)).grid(row=(col // 5) * 2, column=col % 5, sticky="w",
                                                 padx=6)
             if kind == "bool":
-                var = tk.BooleanVar(value=bool(b[name]))
+                var = tk.BooleanVar(value=bool(b.get(name, default)))
                 w = tk.Checkbutton(self.paramFrame, variable=var, bg=PANEL_BG,
-                                   text="forwards" if var.get() else "backwards",
+                                   text=bool_label(name, var.get()),
                                    fg="#ddd", selectcolor=INPUT_BG,
                                    command=lambda n=name: self.paramChanged(n))
+                self.paramBools[name] = w
             elif isinstance(kind, list):
                 var = tk.StringVar(value=str(b[name]))
                 w = ttk.Combobox(self.paramFrame, textvariable=var, values=kind, width=7,
@@ -3975,14 +3977,13 @@ class PlannerWindow(tk.Toplevel):
         b = self.pending[0]
         for name, var in self.paramWidgets.items():
             if isinstance(var, tk.BooleanVar):
-                var.set(bool(b[name]))
+                var.set(bool(b.get(name, PARAM_SPEC[name][0])))
             elif PARAM_SPEC[name][1] in ("num", "int"):
                 var.set(fmt(b[name]))
             else:
                 var.set(str(b[name]))
-        for w in self.paramFrame.winfo_children():
-            if isinstance(w, tk.Checkbutton) and "forwards" in b:
-                w.config(text="forwards" if b["forwards"] else "backwards")
+        for name, w in getattr(self, "paramBools", {}).items():
+            w.config(text=bool_label(name, bool(b.get(name, PARAM_SPEC[name][0]))))
         self.codeLabel.config(text=block_code(b))
 
     def paramChanged(self, name):
@@ -4004,7 +4005,7 @@ class PlannerWindow(tk.Toplevel):
                 new = float(var.get())
         except (ValueError, tk.TclError):
             return
-        if new == b[name]:
+        if new == b.get(name, PARAM_SPEC[name][0]):
             return          # FocusOut fires on every tab through a field: nothing changed
         self.pushUndo()
         b[name] = new
@@ -4022,10 +4023,8 @@ class PlannerWindow(tk.Toplevel):
             self.autoSide(self.selected)
             self.paramWidgets["side"].set(b["side"])
         # forwards checkbox text follows its value
-        if kind == "bool":
-            for w in self.paramFrame.winfo_children():
-                if isinstance(w, tk.Checkbutton):
-                    w.config(text="forwards" if b[name] else "backwards")
+        if kind == "bool" and name in getattr(self, "paramBools", {}):
+            self.paramBools[name].config(text=bool_label(name, b[name]))
         self.refreshList()
 
     def pendingParamChanged(self, name):
@@ -4046,7 +4045,7 @@ class PlannerWindow(tk.Toplevel):
                 new = float(var.get())
         except (ValueError, tk.TclError):
             return
-        if new == b[name]:
+        if new == b.get(name, PARAM_SPEC[name][0]):
             return
         b[name] = new
         if name == "forwards":

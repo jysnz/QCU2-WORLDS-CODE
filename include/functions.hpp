@@ -48,15 +48,18 @@ constexpr bool kPinGrabByIR = true;
 // claws in slow motion; raise it if the pin is missed, lower it if the claws close too early.
 constexpr int kPinClawLatencyMs = 130;
 void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, float reach,
-                  float decelRange, float decelSpeed);
+                  float decelRange, float decelSpeed, bool wallPin = false);
 
 // Fetches the pin at (x, y) (field inches): opens the claws, raises the lift to `level` (an index into
 // the LIFT CAL table, e.g. LIFT_PIN_LEVEL) while driving, drives so the FRONT TIP of the robot (the
 // claw, `reach` inches ahead of its centre) is on the pin, makes sure the lift got to the level, then
 // closes the claws. Blocking. timeoutMs caps the drive, maxSpeed 0 = default (120). The path
 // planner's goToPin block exports as a call to this.
+// wallPin: the robot turns to face the pin, then drives STRAIGHT THROUGH to it -- no camera, no
+// re-aiming -- and the IR closes the claws (on arrival, if it never fires).
 void goToPin(float x, float y, int level, int timeoutMs = 3000, int maxSpeed = 0, bool forwards = true,
-             float reach = 0, float decelRange = 10, float decelSpeed = 40);
+             float reach = 0, float decelRange = 10, float decelSpeed = 40, bool wallPin = false);
+
 
 // ─── Vision-assisted pin grab (the straight pin drive in functions.cpp) ───
 // The MOMENT the camera sees the pin -- however far out -- the drive steers

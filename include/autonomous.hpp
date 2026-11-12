@@ -35,6 +35,7 @@ void upgrade();
 void savesave();
 void workinggg();
 void workingslow();
+void otherpath();
 void runAutonomous();
 void scrimmageAutoAWP();
 void skills();

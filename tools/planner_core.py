@@ -229,6 +229,7 @@ PARAM_SPEC = {
     "lead": (0.6, "num"), "horizontalDrift": (0.0, "num"),
     "decelRange": (0.0, "num"), "decelSpeed": (40, "num"), "decelSteps": (1, "int"),
     "reach": (DEFAULT_ROBOT_IN / 2, "num"),     # goToPin: centre -> claw tip, inches
+    "wallPin": (False, "bool"),                 # goToPin: face the pin, then drive straight through (no camera)
     "ms": (500, "int"),
     "level": (LIFT_LEVELS[0], LIFT_LEVELS), "position": ("LIFT", ["LIFT", "DROP"]),
     "waitLift": ("YES", ["YES", "NO"]),
@@ -268,7 +269,7 @@ KIND_PARAMS = {
     # The claw tip -- `reach` inches ahead of the robot's centre -- ends on the pin, and the last
     # decelRange inches are driven at decelSpeed.
     "goToPin": ["x", "y", "level", "timeout", "forwards", "maxSpeed", "reach", "decelRange",
-                "decelSpeed"],
+                "decelSpeed", "wallPin"],
     # drop at whatever level the lift is at when it runs (GROUND: just opens the claws)
     "shootToGoal": ["timeout"],
     # the IR sensor closes the claws by itself whenever it sees a pin (pinAutoGrabEnable)
@@ -277,6 +278,13 @@ KIND_PARAMS = {
     # inches from this one, faces it, raises the lift to shootLevel and drops
     "shootAtGoal": ["x", "y", "goalSide", "push", "drive", "isPin", "shootLevel", "timeout"],
 }
+def bool_label(name, value):
+    """The text of a yes/no parameter's checkbox: it follows the value."""
+    if name == "wallPin":
+        return "wall pin: face it, straight through" if value else "no wall"
+    return "forwards" if value else "backwards"
+
+
 HAS_POINT = {"turnToPoint", "swingToPoint", "moveToPoint", "moveToPose", "setPose", "goToPin"}
 HAS_HEADING = {"turnToHeading", "swingToHeading", "moveToPose", "setPose"}
 
@@ -343,7 +351,8 @@ def block_code(b):
     if k == "goToPin":
         return (f"goToPin({b['x']:.2f}, {b['y']:.2f}, {level_index(b)}, {int(b['timeout'])}, "
                 f"{b['maxSpeed']:.0f}, {fwd}, {b.get('reach', 0.0):.2f}, "
-                f"{b.get('decelRange', 0.0):.2f}, {b.get('decelSpeed', 40):.0f});")
+                f"{b.get('decelRange', 0.0):.2f}, {b.get('decelSpeed', 40):.0f}"
+                f"{', true' if b.get('wallPin') else ''});")
     opts = []
     if k in ("turnToPoint", "swingToPoint", "moveToPoint", "moveToPose"):
         opts.append(f".forwards = {fwd}")
@@ -425,7 +434,8 @@ def block_summary(b):
                 + (" PIN" if b.get("isPin") == "YES" else ""))
     if k == "goToPin":
         return (f"goToPin ({b['x']:.1f}, {b['y']:.1f}) lift {b['level']}"
-                + ("" if b.get("forwards", True) else " BWD") + f" {int(b['timeout'])}ms")
+                + ("" if b.get("forwards", True) else " BWD") + (" WALL" if b.get("wallPin") else "")
+                + f" {int(b['timeout'])}ms")
     parts = []
     if k in HAS_POINT:
         parts.append(f"({b['x']:.1f}, {b['y']:.1f})")
@@ -457,8 +467,10 @@ def block_to_plan_add(b):
         return "PLAN ADD {} 0 0 0 {} 1 0 0 127 0 0 0.6 0".format(k, t)
     if b["kind"] == "goToPin":          # dirIdx = lift level; the rest as a moveToPoint
         # exit = reach (centre -> claw tip), lead = decelSpeed, drift = decelRange
-        return "PLAN ADD {} {:.2f} {:.2f} 0 {} {} {} 0 {:.1f} 0 {:.2f} {:.1f} {:.2f}".format(
+        # (the side slot carries wallPin: 1 = square to the nearest wall first)
+        return "PLAN ADD {} {:.2f} {:.2f} 0 {} {} {} {} {:.1f} 0 {:.2f} {:.1f} {:.2f}".format(
             k, b["x"], b["y"], t, 1 if b.get("forwards", True) else 0, level_index(b),
+            1 if b.get("wallPin") else 0,
             b.get("maxSpeed", 127), b.get("reach", 0.0), b.get("decelSpeed", 40),
             b.get("decelRange", 0.0))
     lead, drift = b.get("lead", 0.6), b.get("horizontalDrift", 0.0)
@@ -826,6 +838,7 @@ def parse_auto_line(line):
                     timeout=int(pos[3]), maxSpeed=float(pos[4]), forwards=pos[5] == "true")
         if len(pos) >= 9:   # older exports stop at forwards: reach 0, no slow-down
             vals.update(reach=float(pos[6]), decelRange=float(pos[7]), decelSpeed=float(pos[8]))
+            vals["wallPin"] = len(pos) >= 10 and pos[9] == "true"
         else:
             vals.update(reach=0.0, decelRange=0.0)
         return new_block("goToPin", **vals)
