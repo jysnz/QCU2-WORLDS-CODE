@@ -124,12 +124,13 @@ void opcontrol() {
     if (enterMenu)
         driverMenuControl();
 
-    homeLift(); // lower the lift to the limit switch (angle 0) before driver control starts
+    // (no homeLift() here: it drove the lift down for up to 5 s and held driver control back. The lift
+    // zeroes itself whenever the limit switch is pressed -- see jawheadControl -- or use the HOME button.)
     jawheadControl();
 }
 void autonomous() {
     pinAutoGrabEnable(false); // autonomous only auto-grabs where the plan says so (autoGrabPin)
-    homeLift();
+    // (a plan that wants the lift homed has its own homeLift step)
     runlog::begin("autonomous"); // recorded; sent to the laptop afterwards (tools/run_reports/)
     runAutonomous();
     runlog::end("DONE");
