@@ -1,0 +1,43 @@
+RUN REPORT  #7  ?  INCOMPLETE  25.59 s  (76 samples every 20 ms)
+start pose (-1.4, -47.0) -17.4 deg   end pose (-7.4, -5.8) -305.9 deg
+WARNING: only 29 of 237 lines of this recording arrived, even after asking the robot again (0 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          no totals arrived; only 4 step(s) checked (the rest did not arrive)
+  forward wheel (vertical rotation sensor)     no totals arrived; only 4 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  LOOKS WRONG, see below
+  robot turning against something              LOOKS WRONG, see below
+  standing still: 0.4 s in total, the heading moved -0.21 deg (should be 0)
+  turning: IMU -77.5 deg in total, drive wheels -106.4 (on clean turns on the spot the IMU = 100% of the wheels: this robot's wheel scrub)  [only the steps that arrived]
+  driving: forward tracking wheel 15.3 in, drive motors 15.1 in; most the robot tipped 3.2 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 19                    -59.9 / -112.0        -4.4 /   -3.4      -6.5      3.2   <-- blocked
+   step 24                    +94.7 / +116.9       +10.3 /   +9.4      +3.5      3.2   <-- sideways
+   step 25                   -112.0 / -111.9        +0.2 /   -2.2      -4.3      3.1   <-- sideways
+  LOOKS WRONG:
+   - step 19: the drive wheels turned enough for -112 deg but the robot only turned -60 deg, and it slid 6.5 in sideways. It was turning against something (a goal, a pin, the wall) or its wheels were spinning: get clear before this turn.
+   - step 24: odometry took 3.5 in of sideways travel from the sideways tracking wheel. A tank drive cannot do that on its own: the robot slid, or the wheel bounced.
+   - step 25: odometry took 4.3 in of sideways travel from the sideways tracking wheel. A tank drive cannot do that on its own: the robot slid, or the wheel bounced.
+
+GO TO PIN 1: pin (-24, -24), claw reach 6 in, drove 35 in from (0.5, -48.9) in 19.51 s
+  straightness: max 27.9 in off the line (at 35 in along), final -24.6 in (+ = left)
+  heading vs the pin (deg, + = pointing right of it): start -0.5, 20 in out -2.7, 10 in out -2.7, 4 in out -2.7; steering reversals 2
+  IR sensor: first saw the pin at 12.63 s, 1 on/off edges; claw watch did NOT fire
+  claw tip at first sensor : pin is -32.0 in ahead, -2.5 in right of the tip (32.1 in away)
+  claw tip at stop         : pin is -30.1 in ahead, +5.0 in right of the tip (30.5 in away)
+  LOOKS WRONG:
+   - Not straight: it got 27.9 in off the straight line to the pin, 35 in into a 35 in drive.
+   - At the stop the claw tip was 5.0 in left of the pin.
+   - At the stop the claw tip was 30.1 in past the pin.
+  trace (ms, x, y, heading, flags 1=IR 8=moving):
+   (809,0.49,-48.87,-45.1,40) (4289,-21.24,-27.56,-40.5,6) (8789,-36.31,-34.51,-235.4,0) (9349,-36.18,-34.08,-183.2,40) (9849,-35.59,-34.13,-140.4,40) (10349,-35.54,-34.17,-139.1,40) (10949,-38.88,-38.21,-139.1,40) (11449,-41.31,-40.77,-149.0,40) (12049,-41.43,-41.3,-139.7,40) (12629,-42.41,-42.51,-140.7,23) (14029,-44.03,-43.46,-252.4,23) (15349,-30.51,-47.11,-255.9,17) (19229,-12.38,-10.96,-315.1,24) (19511,-7.37,-5.81,-305.9,16)
+
+EVENTS
+    6.08 s  step  13  pin target x=-24.00 y=-24.00 reach=6.00 level=1 (0.9, -48.2) -89.8 deg
+    7.00 s  step  13  pin line: brg -44.5 dist 34.9 face 0.5 was 2.8 (0.5, -48.9) -45.0 deg
+    8.04 s  step  13  pin vis: err +13 raw +13                     (-14.2, -34.4) -45.4 deg
+    8.17 s  step  13  pin vision: stopped 5.0 in short  aligning   (-16.6, -32.1) -45.4 deg
+    9.73 s  step  13  pin line end: along 29.9 of 28.9 off line 0.56 heading  (-20.9, -27.9) -40.5 deg
+   21.43 s  step  31  step 31 begin                                (-30.5, -47.1) -255.9 deg
+   21.94 s  step  32  step 32 begin                                (-30.7, -47.0) -256.0 deg
+   22.84 s  step  33  step 33 begin                                (-44.9, -42.9) -253.3 deg

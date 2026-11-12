@@ -19,6 +19,7 @@
 #include <vector>
 #include "fieldctl/fieldctl.hpp"
 #include "screen_task.hpp"
+#include "vision.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VEXNET field control
@@ -48,6 +49,11 @@ ScaledImu imu(16, INERTIAL_SCALE);
 pros::Rotation verticalRotation(15);
 pros::Rotation horizontalRotation(-14); // negative port = reversed, so pushing right reads positive
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
+
+pros::Vision vision_sensor(20, pros::E_VISION_ZERO_CENTER);
+// Filled at runtime by the driver menu's VISION screen from the signature
+// slot stored on the sensor (captured with the VEX Vision Utility on a PC).
+pros::vision_signature_s_t GOAL_SIG{};
 
 // ─── LemLib Setup ───
 lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 10.25, lemlib::Omniwheel::NEW_325, 350, 2);
@@ -112,6 +118,8 @@ void opcontrol() {
             break;
         }
         pros::delay(20);
+        pros::lcd::print(0, "Press DPAD-LEFT to enter menu");
+        
     }
 
     pinAutoGrabEnable(false); // (the menu's plan runs stay in charge of the lift)

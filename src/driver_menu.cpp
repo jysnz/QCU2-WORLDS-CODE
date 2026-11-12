@@ -2,7 +2,8 @@
 // DRIVER MENU — see include/driver_menu.hpp for the full controls reference.
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
-//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for the last two)
+//           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for
+//           ODOM SETUP | DISTANCE | LIFT CAL | IR TEST | DECEL TUNE | VISION)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -24,6 +25,7 @@
 #include "decel_tune.hpp"
 #include "lift_calibration.hpp"
 #include "run_log.hpp"
+#include "vision_calib.hpp"
 #include "functions.hpp"
 #include "driver_menu.hpp"
 #include "motors.hpp"
@@ -255,7 +257,7 @@ enum class StepKind {
                    //               drift > 0.5 ? DROP angle : LIFT angle)
   CLAW,            // dirIdx: 0 both, 1 claw, 2 claw2; sideIdx: 0 extend (on), 1 retract (off)
   HOME_LIFT,       // homeLift()
-  GO_TO_PIN,       // goToPin(x, y, dirIdx = lift level, timeoutMs, maxSpeed, forwards)
+  GO_TO_PIN,       // goToPin(x, y, dirIdx = lift level, timeoutMs, maxSpeed, forwards; sideIdx == 1 = wallPin)
   SHOOT_TO_GOAL,   // shootToGoal(timeoutMs): drop at whatever level the lift is at now
   AUTO_GRAB_PIN,   // pinAutoGrabEnable(sideIdx == 0): the IR sensor closes the claws on a pin
   RELOCALIZE,      // relocalizeFromWall(dirIdx = wall 0 bottom / 1 top / 2 left / 3 right, earlyExit =
@@ -349,7 +351,7 @@ static void startStep(const PlanStep &st) {
     // otherwise unused PLAN ADD fields carry the rest: earlyExit = reach (centre to claw tip, in),
     // drift = decelRange (in), lead = decelSpeed
     goToPinDrive(st.x, st.y, st.timeoutMs, (int)st.maxSpeed, st.forwards, st.earlyExit, st.drift,
-                 st.lead);
+                 st.lead, st.sideIdx == 1); // (the side slot carries wallPin)
     break;
   case StepKind::WAIT:
   case StepKind::SET_POSE:
@@ -714,7 +716,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[13] = {
+static const GridItem kHomeItems[14] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -728,8 +730,9 @@ static const GridItem kHomeItems[13] = {
     {"LIFT CAL"},
     {"IR TEST"},
     {"DECEL TUNE"},
+    {"VISION"},
 };
-static const int kHomeItemCount = 13;
+static const int kHomeItemCount = 14;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -1430,7 +1433,8 @@ static bool runPlanStep(const PlanStep &st) {
     runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", st.x, st.y, st.earlyExit,
                   st.dirIdx);
     liftOpenClaws();
-    pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
+    if (kPinGrabByIR)
+      pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
   }
   startStep(st);
   pros::delay(10);
@@ -2754,6 +2758,10 @@ void driverMenuControl() {
           goHome();
         } else if (hit == 12) {
           decelTuneControl(); // returns on its own BACK
+          goHome();
+        } else if (hit == 13) {
+          visionCalibControl(); // returns on its own BACK; sends RUI|VISION
+                                // lines meanwhile
           goHome();
         }
         break;

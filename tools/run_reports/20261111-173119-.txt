@@ -1,0 +1,27 @@
+RUN REPORT  #1  ?  INCOMPLETE  7.63 s  (10 samples every 20 ms)
+start pose (0.1, -48.6) -44.9 deg   end pose (-3.6, -45.1) -46.1 deg
+WARNING: only 17 of ? lines of this recording arrived, even after asking the robot again (0 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          LOOKS WRONG, see below
+  forward wheel (vertical rotation sensor)     no totals arrived; only 5 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 5 step(s) checked (the rest did not arrive)
+  turning: IMU -11.2 deg in total, drive wheels +17.8  [only the steps that arrived]
+  driving: forward tracking wheel 27.7 in, drive motors 24.4 in; most the robot tipped 3.1 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 16                    -23.6 /  +14.4       +11.8 /  +10.3      -1.3      3.1   <-- turn
+   step 32                    +12.8 /   +3.7       -15.8 /  -14.1      +0.0      2.7
+  LOOKS WRONG:
+   - step 16: the IMU turned -23.6 deg but the drive wheels turned the robot about +14.4 deg (-38.0 deg apart). Either the IMU mis-read this or a wheel spun / the robot was knocked round.
+
+EVENTS
+    0.00 s  step   0  step 0 begin                                 (-0.1, -63.9) 0.0 deg
+    0.50 s  step   1  step 1 begin                                 (-0.1, -63.6) -0.5 deg
+    2.98 s  step   6  step 6 begin                                 (-1.0, -47.1) -89.5 deg
+    4.24 s  step   7  step 7 begin                                 (-15.7, -48.0) -89.4 deg
+    8.20 s  step  13  pin vis: err +49 raw +49                     (-16.8, -31.9) -44.1 deg
+    8.44 s  step  13  pin line end: along 28.1 of 28.4 off line 0.24 heading  (-19.8, -28.7) -37.5 deg
+   10.37 s  step  15  step 15 begin                                (-19.9, -28.9) -157.5 deg
+   10.38 s  step  16  step 16 begin                                (-19.9, -28.9) -157.5 deg
+   14.30 s  step  24  step 24 begin                                (-35.9, -34.1) -231.6 deg
+   14.31 s  step  24  pin target x=-48.00 y=-48.00 reach=7.00 level=2 (-35.9, -34.1) -231.7 deg
