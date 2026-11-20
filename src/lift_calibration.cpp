@@ -37,7 +37,7 @@ const char *liftLevelName(int level) {
   return level >= 0 && level < LIFT_LEVEL_COUNT ? kLevelNames[level] : "?";
 }
 
-static double clampAngle(double deg) { return std::clamp(deg, 0.0, LIFT_UPPER_LIMIT); }
+static double clampAngle(double deg) { return std::max(deg, 0.0); }
 
 static constexpr double kArriveTolDeg = 3.0;
 
@@ -405,7 +405,7 @@ void sendState(bool force = false) {
            "|FOOTC:0|PLOT:|TRAIL:|SEL:%d|ACTIVE:-1,-1|PLAN:|PATH:"
            "|LIFT:%d,%.1f,%d,%d,%.1f,%d,%d,%d,%d~%s|MSG:%s",
            liftLevelName(selected), btns, selected, selected, liveAngle(),
-           (goingTo || jogHeld) ? 1 : 0, liftLimitSwitch.get_value() ? 1 : 0, LIFT_UPPER_LIMIT,
+           (goingTo || jogHeld) ? 1 : 0, liftLimitSwitch.get_value() ? 1 : 0, LIFT_GAUGE_SPAN,
            claw.is_extended() ? 1 : 0, claw2.is_extended() ? 1 : 0, dropping ? 1 : 0, saveReq, levels, msg);
   // Skip an unchanged line except for a 1 s heartbeat.
   bool changed = strcmp(line, lastLine) != 0;
@@ -489,7 +489,7 @@ void drawTable() {
 void drawGauge() {
   using namespace ui;
   const int w = PANEL_X1 - 255;
-  auto xOf = [&](double deg) { return 255 + (int)(w * clampAngle(deg) / LIFT_UPPER_LIMIT); };
+  auto xOf = [&](double deg) { return 255 + (int)(w * std::min(clampAngle(deg), LIFT_GAUGE_SPAN) / LIFT_GAUGE_SPAN); };
   pros::screen::set_pen(AXIS);
   pros::screen::fill_rect(255, GAUGE_Y0 + 2, PANEL_X1, GAUGE_Y1 - 2);
   pros::screen::set_pen(goingTo || jogHeld ? ORANGE : GREEN);
@@ -891,7 +891,7 @@ void liftCalibrationControl() {
     bool down = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
     if (liftLimitPressed())
       lift.tare_position_all(); // the limit switch is home: angle 0
-    if (up && liveAngle() < LIFT_UPPER_LIMIT) {
+    if (up) {
       goingTo = false;
       dropping = false;
       jogHeld = true;

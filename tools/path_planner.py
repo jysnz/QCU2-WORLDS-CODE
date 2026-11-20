@@ -848,6 +848,84 @@ class PlannerWindow(tk.Toplevel):
         self.drawInfo = tk.Label(mapFrame, text="", fg="#777", bg=FIELD_BG, font=("Segoe UI", 8),
                                  anchor="w")
         self.drawInfo.pack(fill="x", pady=(4, 0))
+        # Simulation: a robot driving the whole plan on the map with a running clock.
+        self._simJob = None
+        self._simTimeline = None
+        self._simT = 0.0
+        self._simSpeed = 1.0
+        row3 = tk.Frame(mapFrame, bg=FIELD_BG)
+        row3.pack(fill="x", pady=(6, 0))
+        self.simBtn = tk.Button(row3, text="▶ Simulate", command=self.toggleSim)
+        self.simBtn.pack(side="left")
+        self.simSpeedBtn = tk.Button(row3, text="1x", width=3, command=self.cycleSimSpeed)
+        self.simSpeedBtn.pack(side="left", padx=(6, 0))
+        self.simLabel = tk.Label(row3, text="", fg="#ddd", bg=FIELD_BG, font=("Consolas", 10),
+                                 anchor="w")
+        self.simLabel.pack(side="left", padx=(10, 0))
+
+    SIM_FRAME_MS = 33
+
+    def cycleSimSpeed(self):
+        self._simSpeed = {1.0: 2.0, 2.0: 4.0, 4.0: 0.5, 0.5: 1.0}[self._simSpeed]
+        self.simSpeedBtn.config(text=f"{self._simSpeed:g}x")
+
+    def toggleSim(self):
+        """Play the whole plan as the planner's simulator sees it (the estimate's timings), or stop."""
+        if self._simJob is not None or self._simTimeline is not None:
+            self.stopSim()
+            return
+        if not self.blocks:
+            self.simLabel.config(text="add blocks first", fg=MUTED)
+            return
+        self._syncCtx()
+        flat = self.flatPlan()[0]
+        self._simTimeline = plan_timeline(flat, tuple(self.start))
+        last = self._simTimeline[-1]
+        self._simTotal = last[0] + last[1]
+        self._simT = 0.0
+        self._simLast = time.monotonic()
+        self.simBtn.config(text="■ Stop")
+        self._simTick()
+
+    def stopSim(self):
+        if self._simJob is not None:
+            self.after_cancel(self._simJob)
+        self._simJob = None
+        self._simTimeline = None
+        self.map.delete("sim")
+        self.simBtn.config(text="▶ Simulate")
+        self.simLabel.config(text="")
+
+    def _simTick(self):
+        self._simJob = None
+        if self._simTimeline is None:
+            return
+        now = time.monotonic()
+        self._simT = min(self._simTotal, self._simT + (now - self._simLast) * self._simSpeed)
+        self._simLast = now
+        pose, trail = timeline_pose(self._simTimeline, self._simT)
+        c = self.map
+        c.delete("sim")
+        if len(trail) > 1:
+            self.drawPolyline([v for x, y in trail for v in self.toMap(x, y)], "#FFD23F", 3)
+        if pose:
+            self.drawRobotMarker(pose, "#FFD23F", "", robot=True)
+        for item in c.find_withtag("!field&&!ui&&!dyn&&!live&&!sim"):
+            c.addtag_withtag("sim", item)
+        c.tag_raise("sim")
+        c.tag_raise("ui")
+        done = self._simT >= self._simTotal
+        over = self._simT > AUTO_PERIOD_S
+        self.simLabel.config(
+            text=f"t = {self._simT:5.1f} s / {self._simTotal:.1f} s"
+                 + (f"   ({self._simTotal - AUTO_PERIOD_S:.1f} s OVER {AUTO_PERIOD_S:.0f} s)"
+                    if done and self._simTotal > AUTO_PERIOD_S else
+                    "   done" if done else ""),
+            fg="#FF6B81" if over else "#2ECC71")
+        if not done:
+            self._simJob = self.after(self.SIM_FRAME_MS, self._simTick)
+        else:
+            self.simBtn.config(text="■ Clear")
 
     def _buildSidePanel(self, side):
         # header: brain status and the hide button -- always on screen
@@ -1561,6 +1639,7 @@ class PlannerWindow(tk.Toplevel):
         self._paintLive()
         self._tagNew("live")
         c.tag_raise("live")
+        c.tag_raise("sim")
         c.tag_raise("ui")
 
     def modeHint(self):
@@ -1610,7 +1689,7 @@ class PlannerWindow(tk.Toplevel):
     def _tagNew(self, tag):
         """Tag the items just drawn: the ones not yet in any layer."""
         c = self.map
-        for item in c.find_withtag("!field&&!ui&&!dyn&&!live"):
+        for item in c.find_withtag("!field&&!ui&&!dyn&&!live&&!sim"):
             c.addtag_withtag(tag, item)
 
     def redrawLive(self):
@@ -1689,7 +1768,8 @@ class PlannerWindow(tk.Toplevel):
             w = 4 if sel else 3
             dash = (6, 3) if not b.get("forwards", True) else None
             if shape and shape[0] == "trace":
-                self.drawTrace(shape[1], col, w, dash, arrow=False)
+                self.drawTrace(self.cleanPinTrace(b, shape[1], self.poseBefore(i)), col, w, dash,
+                               arrow=False)
             elif shape and shape[0] == "swing":     # just the line the robot's centre takes
                 self.drawTrace(shape[5], col, w, None, arrow=False)
             elif shape and shape[0] == "turn":
@@ -1725,14 +1805,10 @@ class PlannerWindow(tk.Toplevel):
                 r = 11 if i == self.selected else 8
                 self.drawPoint(b["x"], b["y"], PURPLE, r=r)
                 self.drawHeadingLine(i, r)
-            elif b["kind"] == "goToPin":            # a pin: orange, with its lift level beside it
+            elif b["kind"] == "goToPin":            # a pin: an orange ring and dot, no text
                 r = 11 if i == self.selected else 8
                 self.drawPinRing(b["x"], b["y"], PIN_COLOR)
                 self.drawPoint(b["x"], b["y"], PIN_COLOR, r=r)
-                px, py = self.toMap(b["x"], b["y"])
-                self.map.create_text(px + PIN_RING_PX + 4, py, text=f"{i + 1} PIN {b['level']}",
-                                     anchor="w",
-                                     fill=PIN_COLOR, font=("Consolas", 9, "bold"))
             elif b["kind"].startswith("swing"):     # the point the swing ends on
                 r = 11 if i == self.selected else 8
                 self.drawPoint(*self.pointPos(i), PURPLE, r=r)
@@ -2588,6 +2664,15 @@ class PlannerWindow(tk.Toplevel):
             self.map.create_line(x1 - ux * 9, y1 - uy * 9, x1, y1, fill=color, width=2,
                                  arrow="last", arrowshape=(9, 11, 4))
 
+    @staticmethod
+    def cleanPinTrace(b, trace, pose):
+        """A goToPin is drawn as the straight line it drives (from where the robot is to where the
+        claw reaches the pin), not the simulator's trace, whose first few inches wobble while the
+        boomerang settles."""
+        if b["kind"] != "goToPin" or not trace:
+            return trace
+        return [(pose[0], pose[1]), tuple(trace[-1])]
+
     def drawTrace(self, trace, color, width, dash, arrow=True):
         """The simulated path of the robot centre, thinned so Tk isn't
         handed thousands of segments."""
@@ -3409,7 +3494,7 @@ class PlannerWindow(tk.Toplevel):
         shape = simulate([b], pose)[0][1]
         c = self.map
         if shape and shape[0] == "trace" and not detour:
-            self.drawTrace(shape[1], PREVIEW, 3, (6, 3), arrow=False)
+            self.drawTrace(self.cleanPinTrace(b, shape[1], pose), PREVIEW, 3, (6, 3), arrow=False)
         elif shape and shape[0] == "swing":         # a line and one box where it ends
             self.drawTrace(shape[5], PREVIEW, 3, (6, 3), arrow=False)
             self.drawSwingEnd(shape, PREVIEW)

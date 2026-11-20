@@ -44,6 +44,9 @@ void moveToPointSmooth(float x, float y, int timeoutMs, lemlib::MoveToPointParam
 // turns to face the pin, then drives until the robot's front tip -- the claw, `reach` inches ahead
 // of the odometry centre -- is on (x, y), i.e. stops `reach` short of it along the line to the pin.
 // reach <= 0, driving backwards, or already within reach of the pin: no stop-short / no turn.
+// useIR (default) with a forward grab: one chassis.moveToPose to the stop-short point, arriving facing the
+// pin (decelRange / decelSpeed and the camera are not used); the IR claw watch closes the claws on the
+// pin and the run log says whether the IR confirmed the grab. useIR = false keeps the straight drive.
 // The last `decelRange` inches are driven at `decelSpeed` (0-127) so the robot settles on the pin
 // instead of arriving at full speed (see moveToPointDecel); decelRange <= 0 turns that off.
 // Pin grab trigger. false (fast grab): the claws shut by themselves a moment before the claw tip

@@ -69,9 +69,10 @@ void liftHold();
 // Shuts the claws (claw / claw2 independently). Does not move the lift.
 void clawsClose(bool useClaw = true, bool useClaw2 = true);
 
-// Upper travel limit in motor degrees from the limit switch home position. The lower
-// end is stopped by the limit switch itself.
-constexpr double LIFT_UPPER_LIMIT = 500.0;
+// There is no upper angle limit: the lift goes as high as the driver / level angle asks. The
+// lower end is stopped by the limit switch. This is only the span the position gauge draws
+// (brain and laptop tool), in motor degrees from home.
+constexpr double LIFT_GAUGE_SPAN = 500.0;
 
 // Sends the lift to a level's LIFT angle (or its DROP angle with drop = true),
 // usable from driver control or autonomous. Out-of-range levels are ignored.

@@ -32,7 +32,7 @@ const bool VEXNET_ENABLED = false;
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
-pros::MotorGroup left_motor_group({11, -12, 13, -14}, pros::MotorGears::green);
+pros::MotorGroup left_motor_group({-11, 12, -13, 14}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({17, -18, 19, -20}, pros::MotorGears::green);
 
 LiftGroup lift({-5, 6}, pros::MotorGears::red);
@@ -52,7 +52,9 @@ pros::Rotation verticalRotation(15); // negative port = reversed, so driving for
 pros::Rotation horizontalRotation(16);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
-pros::Vision vision_sensor(20, pros::E_VISION_ZERO_CENTER);
+// Port 21: port 20 is the right drive motor (-20) -- two devices on one port breaks the drivetrain.
+// Plug the vision sensor into smart port 21 (or change this to whichever port is free).
+pros::Vision vision_sensor(21, pros::E_VISION_ZERO_CENTER);
 // Filled at runtime by the driver menu's VISION screen from the signature
 // slot stored on the sensor (captured with the VEX Vision Utility on a PC).
 pros::vision_signature_s_t GOAL_SIG{};

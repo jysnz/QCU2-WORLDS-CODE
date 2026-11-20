@@ -48,7 +48,7 @@ void homeLift() {
 }
 
 // Drives the lift motors from two buttons: `up` raises it (R1), `down` lowers it (R2).
-// Call every loop. Up stops at LIFT_UPPER_LIMIT; down stops at the limit switch (which also
+// Call every loop. Up has no angle limit; down stops at the limit switch (which also
 // re-zeroes the angle). With neither pressed the lift holds (unless an auto-grab is moving it).
 void liftManualControl(bool up, bool down) {
   // The limit switch is the home position: whenever it's pressed the lift angle is 0.
@@ -57,7 +57,7 @@ void liftManualControl(bool up, bool down) {
     lift.tare_position_all();
   }
 
-  if (up && lift.get_position() < LIFT_UPPER_LIMIT) {
+  if (up) {
     lift.move_velocity(100);
   } else if (down && !limitDown) { // down until the switch is touched, whatever the angle reads
     lift.move_velocity(-100);
@@ -895,6 +895,15 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
             runlog::event("pin already within reach");
             return;  // the claw is already on the pin
         }
+        if (useIR && kPinGrabByIR && !wallPin) {
+            // moveToPose to the stop-short point, arriving facing the pin. The IR watch started by
+            // goToPin() closes the claws when it sees the pin: that is the grab confirmation.
+            const float ux = dx / dist, uy = dy / dist;
+            const float theta = std::atan2(dx, dy) * 180.0f / (float)M_PI;
+            chassis.moveToPose(x - ux * reach, y - uy * reach, theta, timeoutMs,
+                               {.forwards = true, .maxSpeed = (int)speed}, true);
+            return;
+        }
         // face the pin, then drive a straight line to it (see straightPinTask)
         // (the arrival speed is the same for every pin: decelSpeed from the call is not used here)
         auto *a = new StraightPinArgs{x, y, reach, timeoutMs, speed, decelRange,
@@ -928,6 +937,9 @@ void goToPin(float x, float y, int level, int timeoutMs, int maxSpeed, bool forw
         pros::delay(10);
     }
     runlog::event("pin drive ended seen=%d", pinCloseWatchHit() ? 1 : 0);
+    if (kPinGrabByIR && useIR)
+        runlog::event(pinCloseWatchHit() ? "pin grab CONFIRMED by IR"
+                                         : "pin NOT seen by IR, claws closed on arrival");
     pinCloseWatch(false);
     clawsClose();
     runlog::event("pin claws closed");

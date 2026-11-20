@@ -1342,7 +1342,7 @@ static bool runPlanStep(const PlanStep &st) {
       return true;
     }
     if (drop) { // a drop is the controlled move, and always waits (the claws open on arrival)
-      const double target = std::clamp(liftDropAngles[st.dirIdx], 0.0, LIFT_UPPER_LIMIT);
+      const double target = std::max(liftDropAngles[st.dirIdx], 0.0);
       double vel = 0;
       uint32_t until = pros::millis() + st.timeoutMs;
       while (pros::millis() < until) {

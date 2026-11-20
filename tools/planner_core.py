@@ -1262,17 +1262,17 @@ def simulate(blocks, start, logs=None, times=None):
                 pass                # the claw is already on the pin
             else:
                 if fwd and reach > 0:
+                    # the brain drives this as a moveToPose to the stop-short point, arriving facing the pin
                     tx, ty = tx - (tx - x0) / dist * reach, ty - (ty - y0) / dist * reach
-                    turnT = sim_turn(robot, dict(b, direction="AUTO", minSpeed=0, earlyExitRange=0,
-                                                 timeout=1000),
-                                     trace, heading_to(x0, y0, b["x"], b["y"]), None, None, log=log)
+                    dur = sim_move_to_pose(robot, dict(b, x=tx, y=ty,
+                                                       theta=heading_to(x0, y0, b["x"], b["y"]),
+                                                       minSpeed=0, earlyExitRange=0), trace, log)
                 else:
-                    turnT = 0
-                moveLog = [] if log is not None else None
-                dur = turnT + sim_move_to_point(robot, dict(b, x=tx, y=ty, minSpeed=0,
-                                                            earlyExitRange=0), trace, moveLog)
-                if log is not None:
-                    log.extend((row[0] + turnT,) + row[1:] for row in moveLog)
+                    moveLog = [] if log is not None else None
+                    dur = sim_move_to_point(robot, dict(b, x=tx, y=ty, minSpeed=0,
+                                                        earlyExitRange=0), trace, moveLog)
+                    if log is not None:
+                        log.extend(moveLog)
             shape = ("trace", trace)
         elif k == "shootAtGoal":
             subTimes = []
@@ -1503,6 +1503,70 @@ def estimate_seconds(flat, start):
         else:
             other += extra_seconds(k)
     return driving + other, driving, other
+
+
+def step_seconds(b, ms):
+    """Seconds one flat block takes, given the simulator's `ms` for it: the same rule as
+    estimate_seconds, one block at a time."""
+    k = b["kind"]
+    if k in TIMED_KINDS:
+        return ms / 1000.0 * drive_scale() + MOTION_OVERHEAD_S + (EXTRA_S["goToPin"] if k == "goToPin" else 0.0)
+    if k == "wait":
+        return b["ms"] / 1000.0
+    if k == "liftToLevel":
+        return 0.8 if (b.get("waitLift") == "YES" or b.get("position") == "DROP") else 0.0
+    return extra_seconds(k)
+
+
+def shape_trace(shape):
+    """The points (x, y) a simulated step drove through, [] for a turn on the spot."""
+    if shape and shape[0] == "trace":
+        return list(shape[1])
+    if shape and shape[0] == "swing":
+        return list(shape[5])
+    return []
+
+
+def plan_timeline(flat, start):
+    """[(t0, dur, kind, from_pose, to_pose, trace)] for every block of a flat plan, in seconds:
+    where the robot is and what it drives through while that block runs. The total is
+    estimate_seconds(flat, start)[0]; the last t0 + dur is the same number."""
+    times = []
+    res = simulate(flat, tuple(start), times=times)
+    out, t, pose = [], 0.0, tuple(start)
+    for i, b in enumerate(flat):
+        dur = step_seconds(b, times[i] if i < len(times) else 0.0)
+        to = tuple(res[i][0]) if i < len(res) else pose
+        trace = shape_trace(res[i][1]) if i < len(res) else []
+        if b["kind"] == "goToPin" and trace:    # drawn as the straight line it drives (no wobble)
+            trace = [(pose[0], pose[1]), trace[-1]]
+        out.append((t, dur, b["kind"], pose, to, trace))
+        t += dur
+        pose = to
+    return out
+
+
+def timeline_pose(timeline, t):
+    """(x, y, heading) of the robot t seconds into the plan, and the points driven so far."""
+    trail, pose = [], None
+    for t0, dur, _kind, p0, p1, trace in timeline:
+        if t < t0:
+            break
+        f = 1.0 if dur <= 0 else min(1.0, (t - t0) / dur)
+        if trace:
+            n = len(trace) - 1
+            k = f * n
+            i = min(int(k), n - 1) if n > 0 else 0
+            a, bb = trace[i], trace[min(i + 1, n)]
+            x, y = a[0] + (bb[0] - a[0]) * (k - i), a[1] + (bb[1] - a[1]) * (k - i)
+            trail += trace[:i + 1] + [(x, y)]
+        else:
+            x, y = p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f
+            if (p1[0], p1[1]) != (p0[0], p0[1]):
+                trail += [(p0[0], p0[1]), (x, y)]
+        dth = (p1[2] - p0[2] + 180.0) % 360.0 - 180.0
+        pose = (x, y, (p0[2] + dth * f) % 360.0)
+    return pose, trail
 
 
 def expand_plan(blocks, start):
