@@ -271,7 +271,7 @@ class PacketStream:
 
 KNOWN_SCREENS = ("HOME", "PATH_TYPE", "ANGULAR_LIST", "LATERAL_LIST", "EDIT", "MOTOR_TEST",
                  "PLANNER", "REMOTE_DRIVE", "TEMPS", "HANDOFF", "PID_TUNER", "POSE",
-                 "AUTO_TUNER", "LIFT_CAL", "DECEL_TUNE", "VISION")
+                 "AUTO_TUNER", "LIFT_CAL", "DECEL_TUNE", "VISION", "DISTANCE", "ODOM_RESET")
 DRIVE_SCREEN = "REMOTE_DRIVE"       # the one that accepts W/A/S/D
 PLAN_STATUS = ("IDLE", "RUNNING", "DONE", "CANCELLED")   # == PlanStatus on the brain
 
@@ -314,7 +314,7 @@ def parse_rui_line(line):
     # regardless of which ones the current screen actually populated.
     segments = {k: "" for k in ("BTN", "FIELDS", "FOOTER", "CODE", "MOTORS", "SCROLL",
                                 "STEP", "FOOTC", "PLOT", "TRAIL", "SEL", "ACTIVE", "PLAN",
-                                "PATH", "PID", "RES", "AUTO", "MSG", "LIFT", "DECEL", "VIS")}
+                                "PATH", "PID", "RES", "AUTO", "MSG", "LIFT", "DECEL", "VIS", "DIST", "ODOMR")}
     for chunk in rest.split("|"):
         tag, sep, value = chunk.partition(":")
         if sep and tag in segments:
@@ -439,6 +439,38 @@ def parse_rui_line(line):
                     "upper": v[4], "claw": v[5] == 1, "claw2": v[6] == 1, "dropping": v[7] == 1, "saveReq": int(v[8]),
                     "levels": levels, "msg": segments["MSG"]}
 
+    # Distance screen (sendState() in distance_diag.cpp):
+    #   DIST:<sel>,<ref>,<state>,<dirty>,<saved x3>,<pending x3>,<offset x3>,<raw x3>,<fps>
+    dist = None
+    if segments["DIST"]:
+        try:
+            v = [float(x) for x in segments["DIST"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 17:
+            dist = {"sel": int(v[0]), "ref": int(v[1]), "state": max(0, min(5, int(v[2]))), "dirty": v[3] == 1,
+                    "saved": [int(x) for x in v[4:7]], "pend": [int(x) for x in v[7:10]],
+                    "offset": [int(x) for x in v[10:13]], "raw": [int(x) for x in v[13:16]], "fps": v[16]}
+            if not all(0 <= x <= 2 for x in dist["saved"] + dist["pend"]):
+                dist = None
+
+    # Odom reset screen (sendState() in odom_reset_cal.cpp):
+    #   ODOMR:<x>,<y>,<theta>,<F>,<L>,<R>,<aligned>,<xOk>,<yOk>,<wx>,<wy>,<tiltOk>,<tilt>,<haveLast>,
+    #         <lastX>,<lastY>,<lastTheta>,<dH>,<dX>,<dY>,<haveUndo>,<mountF>,<mountL>,<mountR>,<maxCorr>
+    odomr = None
+    if segments["ODOMR"]:
+        try:
+            v = [float(x) for x in segments["ODOMR"].split(",")]
+        except ValueError:
+            v = []
+        if len(v) == 25:
+            odomr = {"x": v[0], "y": v[1], "theta": v[2], "mm": [int(v[3]), int(v[4]), int(v[5])],
+                     "aligned": v[6] == 1, "xOk": v[7] == 1, "yOk": v[8] == 1, "wx": v[9], "wy": v[10],
+                     "tiltOk": v[11] == 1, "tilt": v[12], "haveLast": v[13] == 1,
+                     "last": (v[14], v[15], v[16]), "dH": v[17], "dX": v[18], "dY": v[19],
+                     "haveUndo": v[20] == 1, "mount": (v[21], v[22], v[23]), "maxCorr": v[24],
+                     "msg": segments["MSG"]}
+
     # Decel tune screen (sendState() in decel_tune.cpp):
     #   DECEL:<dist>,<speed>,<range>,<end>,<steps>,<own>,<running>,<haveStart>   MSG:<last result>
     decel = None
@@ -497,7 +529,9 @@ def parse_rui_line(line):
         "result": result,
         "auto": auto,
         "lift": lift,
+        "dist": dist,
         "decel": decel,
+        "odomr": odomr,
         "vision": vision,
     }
 
@@ -1527,6 +1561,14 @@ class BrainScreen:
             self.drawDecelTuneScreen(st)
         elif tag == "VISION":
             self.drawVisionScreen(st)
+        elif tag == "DISTANCE":
+            self.clearScreen()
+            self.set_pen(CYAN)
+            self.print(FONT_SMALL, 20, 100, "DISTANCE -- use the Distance Calibration window")
+        elif tag == "ODOM_RESET":
+            self.clearScreen()
+            self.set_pen(CYAN)
+            self.print(FONT_SMALL, 20, 100, "ODOM RESET -- use the Odom Reset window")
         elif tag == "POSE":
             self.drawPoseScreen(st)
         elif tag == "HANDOFF":
@@ -1632,10 +1674,13 @@ class RemoteTouchApp:
         self.autoTuner = None
         self.liftCal = None
         self.decelTune = None
+        self.distCal = None
+        self.odomRst = None
         self.pollQueue()
 
     def windows(self):
-        return [w for w in (self.planner, self.pidTuner, self.autoTuner, self.liftCal, self.decelTune)
+        return [w for w in (self.planner, self.pidTuner, self.autoTuner, self.liftCal, self.decelTune, self.distCal,
+                            self.odomRst)
                 if w is not None]
 
     def hookWindow(self, win):
@@ -1697,6 +1742,8 @@ class RemoteTouchApp:
             self.updateAutoTuner(state)
             self.updateLiftCal(state)
             self.updateDecelTune(state)
+            self.updateDistanceCal(state)
+            self.updateOdomReset(state)
         elif not self.gotState and time.time() - self.startedAt > 5:
             self.showWaitingHint()
         self.pumpPidLines()
@@ -1793,6 +1840,36 @@ class RemoteTouchApp:
             if state["screen"] == "LIFT_CAL" and self.liftCal.state() == "withdrawn":
                 self.liftCal.deiconify()
             self.liftCal.applyState(state)
+
+    # -- laptop distance calibration window --
+    def updateDistanceCal(self, state):
+        """The brain's DISTANCE screen gets tools/distance_calibration.py."""
+        if state["screen"] == "DISTANCE" and self.distCal is None:
+            try:
+                from distance_calibration import DistanceWindow
+            except ImportError as e:
+                self.status.config(text=f"distance_calibration.py failed to load: {e}")
+                return
+            self.distCal = self.hookWindow(DistanceWindow(self.root, self.link))
+        if self.distCal is not None:
+            if state["screen"] == "DISTANCE" and self.distCal.state() == "withdrawn":
+                self.distCal.deiconify()
+            self.distCal.applyState(state)
+
+    # -- laptop odom reset window --
+    def updateOdomReset(self, state):
+        """The brain's ODOM RESET screen gets tools/odom_reset_cal.py."""
+        if state["screen"] == "ODOM_RESET" and self.odomRst is None:
+            try:
+                from odom_reset_cal import OdomResetWindow
+            except ImportError as e:
+                self.status.config(text=f"odom_reset_cal.py failed to load: {e}")
+                return
+            self.odomRst = self.hookWindow(OdomResetWindow(self.root, self.link))
+        if self.odomRst is not None:
+            if state["screen"] == "ODOM_RESET" and self.odomRst.state() == "withdrawn":
+                self.odomRst.deiconify()
+            self.odomRst.applyState(state)
 
     # -- laptop decel tune window --
     def updateDecelTune(self, state):

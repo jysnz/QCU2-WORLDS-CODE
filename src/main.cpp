@@ -6,6 +6,7 @@
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "driver_menu.hpp"
+#include "distance_diag.hpp"
 #include "lemlib/api.hpp"
 #include "run_log.hpp"
 #include "motors.hpp"
@@ -29,6 +30,9 @@
 // false: field control off - normal driving and autonomous (practice)
 // This is only the state at boot -- the VEXNET switch on the brain screen flips it live.
 const bool VEXNET_ENABLED = false;
+// true: when the program runs (opcontrol starts) go straight into the driver menu without having to
+// hold DPAD-LEFT. Set to false to get the old behavior (hold DPAD-LEFT to enter the menu).
+constexpr bool START_IN_DRIVER_MENU = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
@@ -91,6 +95,7 @@ void initialize() {
     for (int i = 0; i < 250 && imu.is_calibrating(); i++)
         pros::delay(20);
     resetPoseAfterCalibration();
+    distanceStartReader();     // background VL53L0X reader, used by odomReset
     startImuDriftCorrection(); // learns the IMU's heading creep while the robot sits still
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
@@ -149,8 +154,8 @@ void opcontrol() {
     // the robot just drives. Tapping DRIVE in the menu also falls through to normal driving.
     // A single instantaneous read here misses the press almost every time -- you can only start
     // pressing it once you see/feel driver control begin -- so poll for a short window instead.
-    bool enterMenu = false;
-    for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
+    bool enterMenu = START_IN_DRIVER_MENU;
+    for (int i = 0; i < 15 && !enterMenu; i++) { // ~300ms at 20ms/tick
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
             enterMenu = true;
             break;

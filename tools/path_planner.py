@@ -1071,7 +1071,8 @@ class PlannerWindow(tk.Toplevel):
         # goToPin is placed by tapping the map (pickMotion), so it is a card here but not a badge
         # (the plain Shoot and Auto-grab cards are gone: Shoot at goal does the shooting and Grab pin the
         # IR grabbing; their blocks still load from old plans)
-        for i, kind in enumerate(["liftToLevel", "claw", "homeLift", "goToPin", "shootAtGoal"]):
+        for i, kind in enumerate(["liftToLevel", "claw", "homeLift", "goToPin", "shootAtGoal",
+                                    "odomReset"]):
             self._functionButton(fgrid, kind).grid(row=i // 3, column=i % 3, padx=3, pady=3,
                                                    sticky="nsew")
         for c in range(3):
@@ -1187,7 +1188,8 @@ class PlannerWindow(tk.Toplevel):
                        "homeLift": ("Home", "lift"), "shootToGoal": ("Shoot", "to goal"),
                        "autoGrabPin": ("Auto-grab", "IR closes claws"),
                        "shootAtGoal": ("Shoot at goal", "tap goal + side"),
-                       "goToPin": ("Grab pin", "go + IR grab")}
+                       "goToPin": ("Grab pin", "go + IR grab"),
+                       "odomReset": ("Odom reset", "x/y from walls")}
 
     def _functionButton(self, parent, kind):
         """A robot-function button: a dark card with a title and a caption that
@@ -3943,7 +3945,10 @@ class PlannerWindow(tk.Toplevel):
             if name == "waitLift" and b.get("position") == "DROP":
                 continue                # a drop always waits: the claws open on arrival
             default, kind = PARAM_SPEC[name]
-            tk.Label(self.paramFrame, text=name, fg="#aaa", bg=PANEL_BG,
+            label = {"odomFront": "front sensor", "odomLeft": "left sensor",
+                     "odomRight": "right sensor", "odomHeading": "fix heading",
+                     "maxCorrection": "max correction (in)"}.get(name, name)
+            tk.Label(self.paramFrame, text=label, fg="#aaa", bg=PANEL_BG,
                      font=("Segoe UI", 8)).grid(row=(col // 5) * 2, column=col % 5, sticky="w",
                                                 padx=6)
             if kind == "bool":

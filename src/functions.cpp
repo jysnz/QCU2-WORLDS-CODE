@@ -1,4 +1,6 @@
 #include "functions.hpp"
+#include "distance_diag.hpp"
+#include "odom_reset_math.hpp"
 #include "lift_calibration.hpp"
 #include "motors.hpp"
 #include "run_log.hpp"
@@ -945,6 +947,40 @@ void relocalizeFromWall(int wall, float edgeIn, bool backwards, int timeoutMs, i
     if (setHeading && std::fabs(turn) > 10.0f)
         newTheta = theta; // the robot was not square on the wall: do not trust the wall's heading
     chassis.setPose(x, y, newTheta);
+}
+
+bool odomReset(bool useFront, bool useLeft, bool useRight, float maxCorrectionIn, bool fixHeading) {
+    const lemlib::Pose pose = chassis.getPose();
+    if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.theta)) {
+        printf("ODOMRESET skip: pose not finite\n");
+        return false;
+    }
+    if (!odomreset::headingAligned(pose.theta)) {
+        printf("ODOMRESET skip: heading %.1f not within %.0f deg of a wall\n", pose.theta, odomreset::MAX_TILT_DEG);
+        runlog::event("odomReset skipped heading=%.1f", pose.theta);
+        return false;
+    }
+    const odomreset::Reading r[3] = {
+        {useFront, useFront ? distanceReadMm(DistanceSide::FRONT) : -1, 0.0f, SENSOR_FRONT_OFFSET_IN},
+        {useLeft, useLeft ? distanceReadMm(DistanceSide::LEFT) : -1, -90.0f, SENSOR_LEFT_OFFSET_IN},
+        {useRight, useRight ? distanceReadMm(DistanceSide::RIGHT) : -1, 90.0f, SENSOR_RIGHT_OFFSET_IN},
+    };
+    const odomreset::Result res = odomreset::correct(pose.x, pose.y, pose.theta, r, 3, maxCorrectionIn, fixHeading);
+    printf("ODOMRESET mm F=%d L=%d R=%d  used=%d rejected=%d  odom (%.2f, %.2f) -> (%.2f, %.2f)\n", r[0].mm, r[1].mm,
+           r[2].mm, res.used, res.rejected, pose.x, pose.y, res.x, res.y);
+    if (!res.xOk && !res.yOk && !res.headingOk) {
+        runlog::event("odomReset no valid reading (F=%d L=%d R=%d rejected=%d)", r[0].mm, r[1].mm, r[2].mm,
+                      res.rejected);
+        return false;
+    }
+    // re-read the pose so motion during the sensor reads isn't lost, then change only the corrected axes
+    const lemlib::Pose now = chassis.getPose();
+    const float dx = res.xOk ? res.x - pose.x : 0.0f, dy = res.yOk ? res.y - pose.y : 0.0f;
+    const float dth = res.headingOk ? odomreset::wrap180(res.theta - pose.theta) : 0.0f;
+    chassis.setPose(now.x + dx, now.y + dy, now.theta + dth);
+    printf("ODOMRESET heading %+.2f deg\n", dth);
+    runlog::event("odomReset dx=%+.2f dy=%+.2f dth=%+.2f", dx, dy, dth);
+    return true;
 }
 
 bool decelOwnFinish = true;

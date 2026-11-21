@@ -143,6 +143,19 @@ class Blocks(unittest.TestCase):
             self.assertTrue(pc.block_code(b))
         self.assertIn("chassis.moveToPoint", pc.export_code(route(), START))
 
+    def test_odom_reset_round_trips(self):
+        b = pc.new_block("odomReset", odomLeft="NO", maxCorrection=3.5)
+        self.assertEqual(pc.block_code(b), "odomReset(true, false, true, 3.5, true);")
+        self.assertEqual(pc.parse_auto_line(pc.block_code(b)), b)
+        self.assertEqual(pc.block_to_plan_add(b).split()[2], str(pc.KINDS.index("odomReset")))
+        self.assertEqual(pc.KINDS.index("odomReset"), 16)     # == StepKind::ODOM_RESET on the brain
+        self.assertIn(" 5 0 127 0 3.50 ", pc.block_to_plan_add(b))   # dirIdx mask 1 + 4
+
+    def test_mirror_swaps_odom_reset_sides(self):
+        b = pc.new_block("odomReset", odomLeft="NO")
+        out, _ = pc.flip_plan([b], START, "mirror")
+        self.assertEqual((out[0]["odomLeft"], out[0]["odomRight"]), ("YES", "NO"))
+
     def test_export_has_no_nan(self):
         self.assertNotIn("nan", pc.export_code(route(), START).lower())
 

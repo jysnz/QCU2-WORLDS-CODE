@@ -103,6 +103,17 @@ void relocalizeFromWall(int wall, float edgeIn, bool backwards = true, int timeo
                         int power = 60, bool setHeading = true, float wallAt = NAN,
                         float maxCorrectionIn = 3.0f);
 
+// Corrects odometry x/y from the distance to the field walls, using the front / left / right
+// VL53L0X sensors (distance_diag.hpp). Only the x/y that a wall reading pins down is changed. With
+// fixHeading and both side sensors valid, the heading is corrected too, from the left+right span
+// (the sensors are on one line, so span = 144 / cos(tilt)): it gives the size of the tilt, the sign
+// comes from the IMU, and it can't resolve a tilt below ~3 deg. Call it while stopped, with the chosen sensors facing a bare wall.
+// Skipped (returns false) when the heading is not within 10 deg of 0/90/180/270, when a sensor has
+// no valid recent reading, or when a reading is outside the field or more than maxCorrectionIn from
+// odometry (something other than the wall is in view). Two sensors on opposite walls are averaged.
+bool odomReset(bool useFront, bool useLeft, bool useRight, float maxCorrectionIn = 4.0f,
+               bool fixHeading = true);
+
 // Drives to the given final pose (x, y, heading) and holds it for the rest of the autonomous
 // period: if the robot ends short or gets pushed it drives and turns back. Pass the routine's last
 // waypoint. Call it last in an autonomous routine. Never returns; PROS stops the autonomous task

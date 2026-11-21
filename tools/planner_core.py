@@ -52,7 +52,8 @@ MAP_PX = 500               # map is drawn this many px square
 # Order == StepKind on the brain (PLAN ADD sends the index).
 KINDS = ["turnToHeading", "turnToPoint", "swingToHeading", "swingToPoint",
          "moveToPoint", "moveToPose", "wait", "setPose", "waitUntilDone",
-         "liftToLevel", "claw", "homeLift", "goToPin", "shootToGoal", "autoGrabPin", "shootAtGoal"]
+         "liftToLevel", "claw", "homeLift", "goToPin", "shootToGoal", "autoGrabPin", "shootAtGoal",
+         "odomReset"]      # index 16 = StepKind::ODOM_RESET (15 is the brain's RELOCALIZE; shootAtGoal never reaches it)
 MOTIONS = set(KINDS[:6])   # the ones that actually drive (async on the robot)
 # goToPin drives too, but it is one blocking call (open claws, lift, drive, close claws), so it
 # is placed on the map like a motion and never gets a waitUntilDone after it.
@@ -193,7 +194,7 @@ def shoot_points(goal, side, standoff, clr):
 # Robot functions: not movements of the chassis, but things the robot does at the
 # spot it has reached. They get their own section in the window and a badge on
 # the map at the pose where they happen.
-FUNCTIONS = ["liftToLevel", "claw", "homeLift", "shootToGoal", "autoGrabPin"]
+FUNCTIONS = ["liftToLevel", "claw", "homeLift", "shootToGoal", "autoGrabPin", "odomReset"]
 FUNCTION_COLORS = {k: "#d8d8d8" for k in FUNCTIONS}   # neutral: no colour per function
 
 
@@ -241,6 +242,11 @@ PARAM_SPEC = {
     "shootLevel": ("CURRENT", ["CURRENT"] + LIFT_LEVELS),
     "grab": ("ON", ["ON", "OFF"]),                 # autoGrabPin: the IR sensor closes the claws
     "clawWhich": ("CLAW", CLAW_WHICH), "clawState": ("ON", CLAW_STATES),
+    # odomReset: which wall sensors to trust (they must face a bare wall), and the biggest correction
+    # accepted (a reading further from odometry than this is treated as an obstacle and ignored)
+    "odomFront": ("YES", ["YES", "NO"]), "odomLeft": ("YES", ["YES", "NO"]),
+    "odomRight": ("YES", ["YES", "NO"]), "maxCorrection": (4.0, "num"),
+    "odomHeading": ("YES", ["YES", "NO"]),         # odomReset: also correct the heading (needs left + right)
 }
 KIND_PARAMS = {
     "turnToHeading": ["theta", "timeout", "direction", "maxSpeed", "minSpeed", "earlyExitRange"],
@@ -274,6 +280,8 @@ KIND_PARAMS = {
     "shootToGoal": ["timeout"],
     # the IR sensor closes the claws by itself whenever it sees a pin (pinAutoGrabEnable)
     "autoGrabPin": ["grab"],
+    # correct x/y from the wall distance (VL53L0X front / left / right); heading stays the IMU's
+    "odomReset": ["odomFront", "odomLeft", "odomRight", "maxCorrection", "odomHeading"],
     # tap a goal, pick the side it is shot from: drives round the other goals, in to `standoff`
     # inches from this one, faces it, raises the lift to shootLevel and drops
     "shootAtGoal": ["x", "y", "goalSide", "push", "drive", "isPin", "shootLevel", "timeout"],
@@ -344,6 +352,10 @@ def block_code(b):
         return f"shootToGoal({int(b['timeout'])});"
     if k == "autoGrabPin":
         return f"pinAutoGrabEnable({'true' if b['grab'] == 'ON' else 'false'});"
+    if k == "odomReset":
+        flag = lambda n: "true" if b.get(n, "YES") == "YES" else "false"
+        return (f"odomReset({flag('odomFront')}, {flag('odomLeft')}, {flag('odomRight')}, "
+                f"{b.get('maxCorrection', 4.0):.1f}, {flag('odomHeading')});")
     fwd = "true" if b.get("forwards", True) else "false"
     if k == "goToPin":
         return (f"goToPin({b['x']:.2f}, {b['y']:.2f}, {level_index(b)}, {int(b['timeout'])}, "
@@ -394,7 +406,8 @@ DIR_ENUM = {"AUTO": "AUTO", "CW": "CW_CLOCKWISE", "CCW": "CCW_COUNTERCLOCKWISE"}
 KIND_GLYPH = {"moveToPoint": "→", "moveToPose": "↝", "turnToHeading": "↻", "turnToPoint": "↻",
               "swingToHeading": "↷", "swingToPoint": "↷", "wait": "⏱", "setPose": "◎",
               "waitUntilDone": "·", "liftToLevel": "⇧", "claw": "◐", "homeLift": "⌂",
-              "goToPin": "●", "shootToGoal": "✦", "autoGrabPin": "◉", "shootAtGoal": "✦"}
+              "goToPin": "●", "shootToGoal": "✦", "autoGrabPin": "◉", "shootAtGoal": "✦",
+              "odomReset": "⌖"}
 ROW_COLORS = {"drive": "#e8eaf0", "func": "#9db4ff", "quiet": "#6b7280"}
 
 
@@ -426,6 +439,11 @@ def block_summary(b):
         return "shootToGoal (drop at current level)"
     if k == "autoGrabPin":
         return f"autoGrabPin {b['grab']}"
+    if k == "odomReset":
+        used = "".join(c for c, n in (("F", "odomFront"), ("L", "odomLeft"), ("R", "odomRight"))
+                       if b.get(n, "YES") == "YES")
+        return (f"odomReset {used or '-'} (max {b.get('maxCorrection', 4.0):g} in)"
+                + (" +hdg" if b.get("odomHeading", "YES") == "YES" else ""))
     if k == "shootAtGoal":
         return (f"shootAtGoal ({b['x']:g}, {b['y']:g}) {b['goalSide']} {b['drive']}"
                 + (" PIN" if b.get("isPin") == "YES" else ""))
@@ -460,6 +478,11 @@ def block_to_plan_add(b):
             k, (CLAW_WHICH.index(b["clawWhich"]) if b["clawWhich"] in CLAW_WHICH else 0), CLAW_STATES.index(b["clawState"]))
     if b["kind"] == "autoGrabPin":      # sideIdx = 0 on / 1 off
         return "PLAN ADD {} 0 0 0 0 1 0 {} 127 0 0 0.6 0".format(k, 0 if b["grab"] == "ON" else 1)
+    if b["kind"] == "odomReset":        # dirIdx = sensor mask (1 front, 2 left, 4 right), exit = max correction
+        mask = sum(bit for bit, n in ((1, "odomFront"), (2, "odomLeft"), (4, "odomRight"))
+                   if b.get(n, "YES") == "YES")
+        return "PLAN ADD {} 0 0 0 0 1 {} {} 127 0 {:.2f} 0.6 0".format(      # side slot: 0 = fix heading too
+            k, mask, 0 if b.get("odomHeading", "YES") == "YES" else 1, b.get("maxCorrection", 4.0))
     if b["kind"] == "shootToGoal":      # only the timeout matters
         return "PLAN ADD {} 0 0 0 {} 1 0 0 127 0 0 0.6 0".format(k, t)
     if b["kind"] == "goToPin":          # dirIdx = lift level; the rest as a moveToPoint
@@ -825,6 +848,11 @@ def parse_auto_line(line):
         return new_block("shootToGoal", timeout=int(float(pos[0])) if pos else 2000)
     if fn == "pinAutoGrabEnable":
         return new_block("autoGrabPin", grab="ON" if args.strip() == "true" else "OFF")
+    if fn == "odomReset":
+        yn = lambda s: "YES" if s == "true" else "NO"
+        return new_block("odomReset", odomFront=yn(pos[0]), odomLeft=yn(pos[1]), odomRight=yn(pos[2]),
+                         maxCorrection=float(pos[3]) if len(pos) > 3 else 4.0,
+                         odomHeading=yn(pos[4]) if len(pos) > 4 else "NO")
     if fn == "goToPin":     # goToPin(x, y, level, timeout, maxSpeed, forwards[, reach, decelRange, decelSpeed])
         vals = dict(x=float(pos[0]), y=float(pos[1]),
                     level=LIFT_LEVELS[min(int(pos[2]), len(LIFT_LEVELS) - 1)],
@@ -1381,7 +1409,7 @@ def shoot_blocks(b, pose, ctx=None):
 
 # Rough seconds the robot spends on the blocks that are not driven or turned (the simulator times
 # those): lift travel, the claws, a drop, homing. Real values depend on the robot; adjust to taste.
-EXTRA_S = {"claw": 0.15, "shootToGoal": 0.8, "homeLift": 0.9, "goToPin": 1.1}
+EXTRA_S = {"claw": 0.15, "shootToGoal": 0.8, "homeLift": 0.9, "goToPin": 1.1, "odomReset": 0.3}
 MOTION_OVERHEAD_S = 0.05        # per driven / turned block: the hand-over to the next one
 AUTO_PERIOD_S = 30.0            # the length of a VEX U autonomous period
 
@@ -1559,6 +1587,8 @@ def flip_plan(blocks, start, mode="rotate"):
                 n["direction"] = swap[n["direction"]]
             if n.get("side") in swap:
                 n["side"] = swap[n["side"]]
+        if k == "odomReset" and reverses:     # a mirror swaps the robot's left and right
+            n["odomLeft"], n["odomRight"] = n.get("odomRight", "YES"), n.get("odomLeft", "YES")
         if k == "shootAtGoal":
             if fx and n.get("goalSide") in side_x:
                 n["goalSide"] = side_x[n["goalSide"]]

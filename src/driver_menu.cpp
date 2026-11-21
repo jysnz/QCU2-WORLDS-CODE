@@ -3,7 +3,8 @@
 // Touchscreen home screen shown at the start of opcontrol():
 //   HOME -> PID TUNING | PATH PLANNER | TEST MOTORS | DRIVE | LAPTOP DRIVE
 //           | MOTOR TEMPS | ROBOT POSE | AUTO PID TUNE   (scroll down for
-//           ODOM SETUP | DISTANCE | LIFT CAL | IR TEST | DECEL TUNE | VISION)
+//           ODOM SETUP | DISTANCE | LIFT CAL | IR TEST | DECEL TUNE | VISION
+//           | ODOM RESET)
 //   PATH PLANNER -> ANGULAR | LATERAL
 //   ANGULAR -> turnToHeading | turnToPoint | swingToHeading | swingToPoint
 //   LATERAL -> moveToPoint | moveToPose
@@ -20,6 +21,7 @@
 #include "pid_tuner.hpp"
 #include "auto_tuner.hpp"
 #include "odom_setup.hpp"
+#include "odom_reset_cal.hpp"
 #include "distance_diag.hpp"
 #include "pin_sensor_diag.hpp"
 #include "decel_tune.hpp"
@@ -263,6 +265,9 @@ enum class StepKind {
   RELOCALIZE,      // relocalizeFromWall(dirIdx = wall 0 bottom / 1 top / 2 left / 3 right, earlyExit =
                    //   edge (centre to the wall-side edge, in), !forwards = back to the wall,
                    //   timeoutMs, maxSpeed = power, sideIdx == 0 ? set heading : leave it)
+  ODOM_RESET,      // odomReset(front, left, right, maxCorrection): dirIdx = sensor bit mask
+                   //   (1 front, 2 left, 4 right), earlyExit = max correction (in),
+                   //   sideIdx == 0 ? correct the heading too : x/y only
 };
 struct PlanStep {
   StepKind kind = StepKind::MOVE_TO_POINT;
@@ -362,6 +367,7 @@ static void startStep(const PlanStep &st) {
   case StepKind::SHOOT_TO_GOAL:
   case StepKind::AUTO_GRAB_PIN:
   case StepKind::RELOCALIZE:
+  case StepKind::ODOM_RESET:
     break;
   }
 }
@@ -461,6 +467,12 @@ static void formatStepCode(const PlanStep &st, char lines[3][80]) {
              st.earlyExit, st.forwards ? "false" : "true", st.timeoutMs, st.maxSpeed,
              st.sideIdx == 0 ? "true" : "false", st.y > 0.5f ? ", wallAt" : "");
     snprintf(lines[1], 80, "  // push into the wall, then set the position (and heading) from it");
+    break;
+  case StepKind::ODOM_RESET:
+    snprintf(lines[0], 80, "odomReset(%s, %s, %s, %.1f, %s);", (st.dirIdx & 1) ? "true" : "false",
+             (st.dirIdx & 2) ? "true" : "false", (st.dirIdx & 4) ? "true" : "false", st.earlyExit,
+             st.sideIdx == 0 ? "true" : "false");
+    snprintf(lines[1], 80, "  // x/y (and heading) from the wall distance sensors");
     break;
   }
 }
@@ -706,7 +718,7 @@ static bool gridHandleScrollTouch(int count, int x, int y) {
   return false;
 }
 
-static const GridItem kHomeItems[14] = {
+static const GridItem kHomeItems[15] = {
     {"PID TUNING"},
     {"PATH PLANNER"},
     {"TEST MOTORS"},
@@ -721,8 +733,9 @@ static const GridItem kHomeItems[14] = {
     {"IR TEST"},
     {"DECEL TUNE"},
     {"VISION"},
+    {"ODOM RESET"},
 };
-static const int kHomeItemCount = 14;
+static const int kHomeItemCount = 15;
 
 static const GridItem kPathItems[2] = {
     {"ANGULAR"},
@@ -1390,6 +1403,16 @@ static bool runPlanStep(const PlanStep &st) {
     drawPlannerScreen();
     return true;
   }
+  if (st.kind == StepKind::ODOM_RESET) {
+    chassis.waitUntilDone(); // sensors are read while stopped
+    pros::delay(150);
+    odomReset((st.dirIdx & 1) != 0, (st.dirIdx & 2) != 0, (st.dirIdx & 4) != 0,
+              st.earlyExit > 0.01f ? st.earlyExit : 4.0f, st.sideIdx == 0);
+    remoteTrail.clear();
+    planPath.clear();
+    drawPlannerScreen();
+    return true;
+  }
   if (st.kind == StepKind::SET_POSE) {
     chassis.setPose(st.x, st.y, st.theta);
     remoteTrail.clear();
@@ -1740,7 +1763,7 @@ static void remoteTouchListenerTask(void *) {
       } else if (sscanf(rest, "ADD %d %f %f %f %d %d %d %d %f %f %f %f %f", &k, &st.x, &st.y,
                         &st.theta, &st.timeoutMs, &fwd, &st.dirIdx, &st.sideIdx, &st.maxSpeed,
                         &st.minSpeed, &st.earlyExit, &st.lead, &st.drift) == 13) {
-        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::RELOCALIZE);
+        st.kind = (StepKind)std::clamp(k, 0, (int)StepKind::ODOM_RESET);
         st.forwards = fwd != 0;
         remoteTouchMutex.take();
         if (remoteInput.planAdds.size() < kMaxPlanSteps)
@@ -1817,6 +1840,10 @@ static void remoteTouchListenerTask(void *) {
           remoteInput.liftCmds.push_back(c);
         remoteTouchMutex.give();
       }
+    } else if (strncmp(line, "DIST ", 5) == 0) {
+      distanceRemoteCommand(line + 5);
+    } else if (strncmp(line, "ODOMR ", 6) == 0) {
+      odomResetRemoteCommand(line + 6);
     } else if (strncmp(line, "PID ", 4) == 0) {
       const char *rest = line + 4;
       RemotePidCommand c;
@@ -2748,6 +2775,9 @@ void driverMenuControl() {
         } else if (hit == 13) {
           visionCalibControl(); // returns on its own BACK; sends RUI|VISION
                                 // lines meanwhile
+          goHome();
+        } else if (hit == 14) {
+          odomResetCalControl(); // returns on its own BACK
           goHome();
         }
         break;

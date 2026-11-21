@@ -1,0 +1,54 @@
+RUN REPORT  #2  plan  DONE  25.33 s  (102 samples every 20 ms)
+WARNING: the link dropped data: 102/682 samples, 15/58 events arrived.
+start pose (-15.9, -47.8) -91.6 deg   end pose (-24.3, -21.2) -318.0 deg
+WARNING: only 54 of 227 lines of this recording arrived, even after asking the robot again (10 requests sent, the robot acknowledged 1). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          LOOKS WRONG, see below
+  forward wheel (vertical rotation sensor)     no totals arrived; only 16 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 16 step(s) checked (the rest did not arrive)
+  robot turning against something              LOOKS WRONG, see below
+  standing still: 1.3 s in total, the heading moved -1.54 deg (should be 0)
+  turning: IMU -36.8 deg in total, drive wheels -157.1 (on clean turns on the spot the IMU = 71% of the wheels: this robot's wheel scrub)  [only the steps that arrived]
+  driving: forward tracking wheel 88.8 in, drive motors 94.2 in; most the robot tipped 3.8 deg
+  per step:   turn IMU / wheels (deg)   forward wheel / motors (in)   slid sideways (in)   tilt (deg)
+   step 14 goToPin            +45.9 /  +61.5       +29.1 /  +28.2      +1.8      3.2
+   step 15 turnToHeading     -111.7 / -156.3        +0.0 /   +1.2      -2.9      2.9
+   step 20 turnToHeading      -55.1 / -135.3        -3.5 /   -0.6      -5.6      2.6   <-- blocked
+   step 25 goToPin            +90.3 /  +97.0       +11.6 /  +11.8      +2.4      3.0
+   step 28 moveToPoint         -0.8 /   +1.7       +14.2 /  +14.2      +0.0      2.7
+   step 38 moveToPoint         -4.8 /  -25.9       +29.3 /  +37.3      +0.4      3.8
+  LOOKS WRONG:
+   - While the robot stood still (1.3 s in total) its heading moved -1.54 deg. Standing still it should not move at all: that is IMU drift, or the drift correction over-correcting.
+   - step 20 turnToHeading: the drive wheels turned enough for -97 deg but the robot only turned -55 deg, and it slid 5.6 in sideways. It was turning against something (a goal, a pin, the wall) or its wheels were spinning: get clear before this turn.
+
+STEPS (end error = robot vs the simulator when the next step began)
+    0 liftToLevel       0.00 s + 1.89 s
+    3 waitUntilDone     1.89 s + 0.00 s
+    4 turnToHeading     1.89 s + 1.02 s   end error  0.5 in   +1.3 deg
+    5 waitUntilDone     2.91 s + 0.00 s
+    6 moveToPoint       2.91 s + 1.24 s   end error 19.3 in   -0.2 deg
+    7 waitUntilDone     4.16 s + 1.98 s
+   13 waitUntilDone     6.14 s + 0.00 s
+   14 goToPin           6.14 s + 6.58 s   end error 13.7 in  -131.9 deg
+   18 waitUntilDone    12.72 s + 0.00 s
+   19 liftToLevel      12.72 s + 7.86 s
+   31 liftToLevel      20.59 s + 0.39 s
+   32 waitUntilDone    20.98 s + 4.36 s
+
+EVENTS
+    0.00 s  step   0  step 0 begin                                 (0.0, -63.9) 0.0 deg
+    1.89 s  step   3  step 3 begin                                 (-0.3, -46.8) -1.9 deg
+    1.89 s  step   4  step 4 begin                                 (-0.3, -46.8) -1.9 deg
+    2.91 s  step   5  step 5 begin                                 (-0.8, -46.9) -90.2 deg
+    2.91 s  step   6  step 6 begin                                 (-0.8, -46.9) -90.2 deg
+    4.16 s  step   7  step 7 begin                                 (-16.1, -47.8) -93.0 deg
+    6.14 s  step  13  step 13 begin                                (0.9, -47.7) -92.2 deg
+    6.14 s  step  14  step 14 begin                                (0.9, -47.7) -92.2 deg
+    6.14 s  step  14  pin vision: sensor not answering             (0.9, -47.7) -92.2 deg
+   12.72 s  step  18  step 18 begin                                (-23.6, -41.5) -178.3 deg
+   12.72 s  step  19  step 19 begin                                (-23.6, -41.5) -178.2 deg
+   17.84 s  step  25  pin line end: along 11.1 of 11.4 off line -0.05 heading (-43.2, -42.5) -138.6 deg
+   20.58 s  step  30  odomReset skipped heading=-253.3             (-30.0, -47.0) -253.3 deg
+   20.59 s  step  31  step 31 begin                                (-30.0, -47.0) -253.3 deg
+   20.98 s  step  32  step 32 begin                                (-30.4, -47.0) -253.3 deg
