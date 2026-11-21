@@ -10,6 +10,7 @@ extern pros::MotorGroup left_motor_group;
 extern pros::MotorGroup right_motor_group;
 extern pros::MotorGroup intake2;
 extern pros::MotorGroup lift;
+extern pros::Motor liftArm;  // port 19: A = up, Y = down
 extern pros::Motor claw;
 
 // ─── Pneumatics ──────────────────────────────────────────────────────────────

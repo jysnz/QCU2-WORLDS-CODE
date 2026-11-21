@@ -32,7 +32,8 @@ const bool VEXNET_ENABLED = false;
 pros::MotorGroup left_motor_group({-8, 9, 10, -11, 12}, pros::MotorGears::green);
 pros::MotorGroup right_motor_group({-3, 4, -5, 6, -7}, pros::MotorGears::green);
 pros::MotorGroup intake2({17, -16}, pros::MotorGears::green);
-pros::MotorGroup lift({14, 19, -18}, pros::MotorGears::green);
+pros::MotorGroup lift({14, -18}, pros::MotorGears::green);
+pros::Motor liftArm(19);  // the lift arm: A = up, Y = down (see jawheadControl)
 pros::Motor claw(13);
 
 pros::adi::Pneumatics clamp('A', false);
@@ -65,6 +66,7 @@ void initialize() {
     lift.tare_position_all();
 
     claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+    liftArm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);  // holds its height when A / Y are released
     dashboard::showSplash("Calibrating IMU...", "Keep the robot still");
     chassis.calibrate();
 
@@ -75,6 +77,7 @@ void initialize() {
         s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
         auto mechanisms = dashboard::readMotors(intake2, "Intake");
         mechanisms.push_back(dashboard::readMotor(claw, "CLAW", "Claw"));
+        mechanisms.push_back(dashboard::readMotor(liftArm, "ARM", "Lift Arm"));
         s.centerRight = {"MECHANISMS", mechanisms};
     };
     // The PID tuner / point planner own the brain screen while active

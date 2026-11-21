@@ -88,6 +88,7 @@ void testAllMotorDirections() {
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
   testMotorGroupDirections("LIFT", lift, y);
   testMotorGroupDirections("INTAKE", intake2, y);
+  testMotorsDirections("LIFT ARM", {{"Arm", &liftArm}}, y);
 }
 
 void drivetrainReset(){
@@ -163,7 +164,7 @@ void jawheadControl() {
   static bool imu_status = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
-  static bool wasYHeld = false;
+  static bool wasClampBtnHeld = false;
   static bool clampOn = false;
   static uint32_t lastClampToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
@@ -184,12 +185,12 @@ void jawheadControl() {
       controller.print(1, 0, "Lift: %7.1f   ", lift.get_position());
     }
 
-    // Tap Y to switch the clamp cleanly on/off (edge-detected so holding Y
+    // Tap R2 to switch the clamp cleanly on/off (edge-detected so holding R2
     // doesn't rapid-fire clamp.toggle() every loop and leave it in a
-    // random state).
-    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
-    bool clampToggleTapped = clampToggleHeld && !wasYHeld;
-    wasYHeld = clampToggleHeld;
+    // random state). (It used to be Y; Y now drives the lift arm down.)
+    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+    bool clampToggleTapped = clampToggleHeld && !wasClampBtnHeld;
+    wasClampBtnHeld = clampToggleHeld;
     if (clampToggleTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
       lastClampToggleMs = nowMs;
       clampOn = !clampOn;
@@ -244,6 +245,17 @@ void jawheadControl() {
       lift.move_velocity(-200);
     } else {
       lift.move_velocity(0);
+    }
+
+    // Lift arm (port 19): hold A to raise it, hold Y to lower it. Released = it holds (brake HOLD).
+    // If it moves the wrong way, flip the sign of the port in main.cpp: pros::Motor liftArm(-19).
+    const int LIFT_ARM_SPEED = 100;  // rpm (green gearset max is 200)
+    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
+      liftArm.move_velocity(LIFT_ARM_SPEED);
+    } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y)) {
+      liftArm.move_velocity(-LIFT_ARM_SPEED);
+    } else {
+      liftArm.move_velocity(0);
     }
 
     if (intakeForward) {
