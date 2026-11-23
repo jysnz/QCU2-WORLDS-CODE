@@ -355,8 +355,12 @@ static void startStep(const PlanStep &st) {
   case StepKind::GO_TO_PIN: // the drive part; runPlanStep() does the claws and lift around it
     // otherwise unused PLAN ADD fields carry the rest: earlyExit = reach (centre to claw tip, in),
     // drift = decelRange (in), lead = decelSpeed
+    // the side slot is a bit mask: 1 = wallPin, 2 = vision sensor off, 4 = IR sensor off,
+    // 8 = drive with moveToPose
     goToPinDrive(st.x, st.y, st.timeoutMs, (int)st.maxSpeed, st.forwards, st.earlyExit, st.drift,
-                 st.lead, st.sideIdx == 1); // (the side slot carries wallPin)
+                 st.lead, (st.sideIdx & 1) != 0, (st.sideIdx & 2) == 0, (st.sideIdx & 4) == 0,
+                 (st.sideIdx & 8) != 0,
+                 st.minSpeed); // (the otherwise unused minSpeed slot carries the early exit range)
     break;
   case StepKind::WAIT:
   case StepKind::SET_POSE:
@@ -453,7 +457,9 @@ static void formatStepCode(const PlanStep &st, char lines[3][80]) {
              st.timeoutMs, st.maxSpeed, fwdLbl);
     snprintf(lines[1], 80, "  %.2f, %.2f, %.0f);  // reach, decel range, speed", st.earlyExit,
              st.drift, st.lead);
-    snprintf(lines[2], 80, "  // lift level %s", liftLevelName(st.dirIdx));
+    snprintf(lines[2], 80, "  // lift level %s%s%s%s%s", liftLevelName(st.dirIdx),
+             (st.sideIdx & 1) ? ", wall pin" : "", (st.sideIdx & 2) ? ", vision off" : "",
+             (st.sideIdx & 4) ? ", IR off" : "", (st.sideIdx & 8) ? ", moveToPose" : "");
     break;
   case StepKind::SHOOT_TO_GOAL:
     snprintf(lines[0], 80, "shootToGoal(%d);  // drop at the lift's current level", st.timeoutMs);
@@ -1443,7 +1449,7 @@ static bool runPlanStep(const PlanStep &st) {
     runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", st.x, st.y, st.earlyExit,
                   st.dirIdx);
     liftOpenClaws();
-    if (kPinGrabByIR)
+    if (kPinGrabByIR && (st.sideIdx & 4) == 0) // (bit 4 = IR sensor off: the timed grab closes them)
       pinCloseWatch(true); // claws shut the instant the IR sees the pin, whatever the robot is doing
   }
   startStep(st);
@@ -1457,6 +1463,14 @@ static bool runPlanStep(const PlanStep &st) {
     if (waitForCancel()) {
       pinCloseWatch(false);
       return false;
+    }
+    // the IR saw the pin and the claws are shutting: the drive stops now (cancelled every tick, as a
+    // queued second stage starts the moment the first is cancelled)
+    if (isPinStep && kPinGrabByIR && (st.sideIdx & 4) == 0 && pinCloseWatchHit() &&
+        chassis.isInMotion()) {
+      chassis.cancelMotion();
+      left_motor_group.move_velocity(0);
+      right_motor_group.move_velocity(0);
     }
     lemlib::Pose pose = chassis.getPose();
     int px, py;

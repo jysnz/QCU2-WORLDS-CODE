@@ -22,8 +22,10 @@ extern bool decelOwnFinish;
 // moveToPoint calls, so it behaves like chassis.moveToPoint: async = true returns at once (follow it
 // with chassis.waitUntilDone()), false blocks until the robot has arrived. decelRange <= 0 or a
 // decelSpeed that isn't below maxSpeed makes it a plain moveToPoint.
+// handoffRange: how close (inches) to the end of the cruise stage the final approach takes over
+// without the robot stopping (the early exit range between the two stages).
 void moveToPointDecel(float x, float y, int timeoutMs, lemlib::MoveToPointParams params,
-                      float decelRange, float decelSpeed, bool async = true);
+                      float decelRange, float decelSpeed, bool async = true, float handoffRange = 2.0f);
 
 // Like moveToPointDecel, but the slow-down is a ramp instead of one step: over the last `decelRange`
 // inches the speed limit falls in `steps` equal stages (2-8) from params.maxSpeed down to
@@ -49,7 +51,7 @@ constexpr bool kPinGrabByIR = true;
 constexpr int kPinClawLatencyMs = 130;
 void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, float reach,
                   float decelRange, float decelSpeed, bool wallPin = false, bool useVision = true,
-                  bool useIR = true);
+                  bool useIR = true, bool usePose = false, float earlyExitRange = 2.0f);
 
 // Fetches the pin at (x, y) (field inches): opens the claws, raises the lift to `level` (an index into
 // the LIFT CAL table, e.g. LIFT_PIN_LEVEL) while driving, drives so the FRONT TIP of the robot (the
@@ -61,9 +63,16 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
 // useVision: false = the camera never steers or stops the drive (odometry line only).
 // useIR: false = the IR sensor is not used; the claws shut on the timed fast grab
 // (kPinClawLatencyMs) as the claw tip reaches the pin.
+// usePose: true = drive there with chassis.moveToPose (ending with the claw tip on the pin, heading along
+// the line to it) instead of the turn-then-straight-line drive. No camera steering in that mode; the IR
+// sensor still closes the claws (useIR false: they shut when the drive ends). Needs forwards and reach > 0.
+// earlyExitRange: when the drive has a cruise stage and a slow final approach (decelRange > 0, moveToPose
+// mode or the backwards / no-reach drive), the approach starts this many inches before the cruise stage
+// ends, so the robot hands over without stopping. <= 0 = the default, 2. (The straight-line drive has no
+// stages, so it ignores it.)
 void goToPin(float x, float y, int level, int timeoutMs = 3000, int maxSpeed = 0, bool forwards = true,
              float reach = 0, float decelRange = 10, float decelSpeed = 40, bool wallPin = false,
-             bool useVision = true, bool useIR = true);
+             bool useVision = true, bool useIR = true, bool usePose = false, float earlyExitRange = 2.0f);
 
 
 // ─── Vision-assisted pin grab (the straight pin drive in functions.cpp) ───

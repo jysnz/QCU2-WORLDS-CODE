@@ -3941,9 +3941,12 @@ class PlannerWindow(tk.Toplevel):
             b = self.blocks[self.selected]
             self.paramFrame.config(text=f"{self.selected + 1}. {b['kind']}")
         col = 0
+        grouped = [n for n in KIND_PARAMS[b["kind"]] if n in PIN_OPTION_LABELS]
         for name in KIND_PARAMS[b["kind"]]:
             if name == "waitLift" and b.get("position") == "DROP":
                 continue                # a drop always waits: the claws open on arrival
+            if name in grouped:
+                continue                # shown together in one box below
             default, kind = PARAM_SPEC[name]
             label = {"odomFront": "front sensor", "odomLeft": "left sensor",
                      "odomRight": "right sensor", "odomHeading": "fix heading",
@@ -3971,6 +3974,20 @@ class PlannerWindow(tk.Toplevel):
             w.grid(row=(col // 5) * 2 + 1, column=col % 5, sticky="w", padx=6, pady=(0, 4))
             self.paramWidgets[name] = var
             col += 1
+        if grouped:         # the on/off options (sensors, drive mode) side by side in one box
+            box = tk.LabelFrame(self.paramFrame, text=" pin options ", fg="#aaa", bg=PANEL_BG,
+                                font=("Segoe UI", 8))
+            box.grid(row=((col + 4) // 5) * 2, column=0, columnspan=5, sticky="w", padx=6,
+                     pady=(2, 4))
+            for name in grouped:
+                default, _kind = PARAM_SPEC[name]
+                var = tk.BooleanVar(value=bool(b.get(name, default)))
+                w = tk.Checkbutton(box, variable=var, bg=PANEL_BG, text=bool_label(name, var.get()),
+                                   fg="#ddd", selectcolor=INPUT_BG,
+                                   command=lambda n=name: self.paramChanged(n))
+                w.pack(side="left", padx=(4, 10))
+                self.paramBools[name] = w
+                self.paramWidgets[name] = var
         self.codeLabel.config(text=block_code(b))
 
     def syncPendingParams(self):

@@ -1,0 +1,12 @@
+RUN REPORT  #3  ?  INCOMPLETE  12.76 s  (25 samples every 20 ms)
+start pose (-0.1, -64.1) -4.0 deg   end pose (-23.3, -40.7) -172.6 deg
+WARNING: only 10 of ? lines of this recording arrived, even after asking the robot again (8 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK: this recording has no sensor data (the robot's firmware is older than this report, or those lines never arrived).
+
+EVENTS
+    0.96 s  step   1  step 1 begin                                 (-0.2, -63.7) -8.0 deg
+    0.96 s  step   2  step 2 begin                                 (-0.2, -63.6) -8.1 deg
+    1.97 s  step   3  step 3 begin                                 (-5.6, -46.9) -29.9 deg
+    8.39 s  step  14  pin drive ended seen=1                       (-18.4, -28.3) -52.3 deg
+    8.39 s  step  14  pin claws closed                             (-18.4, -28.3) -52.3 deg

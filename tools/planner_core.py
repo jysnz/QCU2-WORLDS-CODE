@@ -231,6 +231,9 @@ PARAM_SPEC = {
     "decelRange": (0.0, "num"), "decelSpeed": (40, "num"), "decelSteps": (1, "int"),
     "reach": (DEFAULT_ROBOT_IN / 2, "num"),     # goToPin: centre -> claw tip, inches
     "wallPin": (False, "bool"),                 # goToPin: face the pin, then drive straight through (no camera)
+    "useVision": (True, "bool"),                # goToPin: False = the camera never steers or stops the drive
+    "useIR": (True, "bool"),                    # goToPin: False = no IR sensor; claws shut on the timed grab
+    "usePose": (False, "bool"),                 # goToPin: True = drive there with moveToPose (no camera steering)
     "ms": (500, "int"),
     "level": (LIFT_LEVELS[0], LIFT_LEVELS), "position": ("LIFT", ["LIFT", "DROP"]),
     "waitLift": ("YES", ["YES", "NO"]),
@@ -275,7 +278,7 @@ KIND_PARAMS = {
     # The claw tip -- `reach` inches ahead of the robot's centre -- ends on the pin, and the last
     # decelRange inches are driven at decelSpeed.
     "goToPin": ["x", "y", "level", "timeout", "forwards", "maxSpeed", "reach", "decelRange",
-                "decelSpeed", "wallPin"],
+                "decelSpeed", "earlyExitRange", "wallPin", "useVision", "useIR", "usePose"],
     # drop at whatever level the lift is at when it runs (GROUND: just opens the claws)
     "shootToGoal": ["timeout"],
     # the IR sensor closes the claws by itself whenever it sees a pin (pinAutoGrabEnable)
@@ -284,15 +287,27 @@ KIND_PARAMS = {
     "odomReset": ["odomFront", "odomLeft", "odomRight", "maxCorrection", "odomHeading"],
     # tap a goal, pick the side it is shot from: drives round the other goals, in to `standoff`
     # inches from this one, faces it, raises the lift to shootLevel and drops
-    "shootAtGoal": ["x", "y", "goalSide", "push", "drive", "isPin", "shootLevel", "timeout"],
+    # earlyExitRange: on a SMOOTH drive, how far (in) from each point on the way round the goals the
+    # robot is allowed to hand over to the next leg without stopping (0 = stop on every point)
+    "shootAtGoal": ["x", "y", "goalSide", "push", "drive", "earlyExitRange", "isPin", "shootLevel",
+                    "timeout"],
 }
+# goToPin's three on/off options, shown together in one box in the window (ticked = on)
+PIN_OPTION_LABELS = {"useVision": "vision sensor", "useIR": "IR sensor",
+                     "usePose": "drive with moveToPose"}
+
+
 def bool_label(name, value):
     """The text of a yes/no parameter's checkbox: it follows the value."""
     if name == "wallPin":
         return "wall pin: face it, straight through" if value else "no wall"
+    # the pin options are ticked = on; their text stays put so a box reads the same either way
+    if name in PIN_OPTION_LABELS:
+        return PIN_OPTION_LABELS[name]
     return "forwards" if value else "backwards"
 
 
+GO_TO_PIN_EXIT = 2.0       # goToPin's early exit range when none is given (what the robot always used)
 HAS_POINT = {"turnToPoint", "swingToPoint", "moveToPoint", "moveToPose", "setPose", "goToPin"}
 HAS_HEADING = {"turnToHeading", "swingToHeading", "moveToPose", "setPose"}
 
@@ -306,6 +321,9 @@ def new_block(kind, **overrides):
         b["decelRange"], b["decelSpeed"] = 10.0, 40
         if "PIN" in LIFT_LEVELS:
             b["level"] = "PIN"
+        b["earlyExitRange"] = GO_TO_PIN_EXIT     # the hand-over between its cruise and approach
+    if kind == "shootAtGoal":   # starts at what the window's path spacing gave before this was a setting
+        b["earlyExitRange"] = float(PLAN_CTX["exit"])
     b.update(overrides)
     return b
 
@@ -358,10 +376,23 @@ def block_code(b):
                 f"{b.get('maxCorrection', 4.0):.1f}, {flag('odomHeading')});")
     fwd = "true" if b.get("forwards", True) else "false"
     if k == "goToPin":
+        # the trailing wallPin, useVision, useIR arguments are only written when one of them
+        # is not the default, so plans that use the defaults export exactly as they always did
+        tf = lambda v: "true" if v else "false"
+        wall, vis, ir = bool(b.get("wallPin")), b.get("useVision", True), b.get("useIR", True)
+        pose = bool(b.get("usePose"))
+        early = float(b.get("earlyExitRange", GO_TO_PIN_EXIT))
+        args = [tf(wall), tf(vis), tf(ir), tf(pose), f"{early:.2f}"]
+        tail = ""
+        if abs(early - GO_TO_PIN_EXIT) > 1e-6:
+            tail = ", " + ", ".join(args)
+        elif pose:
+            tail = ", " + ", ".join(args[:4])
+        elif wall or not vis or not ir:
+            tail = ", " + ", ".join(args[:3])
         return (f"goToPin({b['x']:.2f}, {b['y']:.2f}, {level_index(b)}, {int(b['timeout'])}, "
                 f"{b['maxSpeed']:.0f}, {fwd}, {b.get('reach', 0.0):.2f}, "
-                f"{b.get('decelRange', 0.0):.2f}, {b.get('decelSpeed', 40):.0f}"
-                f"{', true' if b.get('wallPin') else ''});")
+                f"{b.get('decelRange', 0.0):.2f}, {b.get('decelSpeed', 40):.0f}{tail});")
     opts = []
     if k in ("turnToPoint", "swingToPoint", "moveToPoint", "moveToPose"):
         opts.append(f".forwards = {fwd}")
@@ -450,6 +481,11 @@ def block_summary(b):
     if k == "goToPin":
         return (f"goToPin ({b['x']:.1f}, {b['y']:.1f}) lift {b['level']}"
                 + ("" if b.get("forwards", True) else " BWD") + (" WALL" if b.get("wallPin") else "")
+                + ("" if b.get("useVision", True) else " noVIS")
+                + ("" if b.get("useIR", True) else " noIR")
+                + (" POSE" if b.get("usePose") else "")
+                + ("" if abs(b.get("earlyExitRange", GO_TO_PIN_EXIT) - GO_TO_PIN_EXIT) < 1e-6
+                   else f" exit {b['earlyExitRange']:g}")
                 + f" {int(b['timeout'])}ms")
     parts = []
     if k in HAS_POINT:
@@ -487,11 +523,17 @@ def block_to_plan_add(b):
         return "PLAN ADD {} 0 0 0 {} 1 0 0 127 0 0 0.6 0".format(k, t)
     if b["kind"] == "goToPin":          # dirIdx = lift level; the rest as a moveToPoint
         # exit = reach (centre -> claw tip), lead = decelSpeed, drift = decelRange
-        # (the side slot carries wallPin: 1 = square to the nearest wall first)
-        return "PLAN ADD {} {:.2f} {:.2f} 0 {} {} {} {} {:.1f} 0 {:.2f} {:.1f} {:.2f}".format(
+        # (the side slot is a bit mask: 1 = wallPin (square to the nearest wall first),
+        #  2 = the vision sensor is off, 4 = the IR sensor is off, 8 = drive with moveToPose;
+        #  0 = the defaults)
+        flags = ((1 if b.get("wallPin") else 0) | (0 if b.get("useVision", True) else 2)
+                 | (0 if b.get("useIR", True) else 4) | (8 if b.get("usePose") else 0))
+        # (the minSpeed slot, unused by a pin drive, carries earlyExitRange)
+        return "PLAN ADD {} {:.2f} {:.2f} 0 {} {} {} {} {:.1f} {:.2f} {:.2f} {:.1f} {:.2f}".format(
             k, b["x"], b["y"], t, 1 if b.get("forwards", True) else 0, level_index(b),
-            1 if b.get("wallPin") else 0,
-            b.get("maxSpeed", 127), b.get("reach", 0.0), b.get("decelSpeed", 40),
+            flags,
+            b.get("maxSpeed", 127), b.get("earlyExitRange", GO_TO_PIN_EXIT), b.get("reach", 0.0),
+            b.get("decelSpeed", 40),
             b.get("decelRange", 0.0))
     lead, drift = b.get("lead", 0.6), b.get("horizontalDrift", 0.0)
     if b["kind"] == "moveToPoint":      # the brain reads the slow-down from these two fields
@@ -697,6 +739,24 @@ def auto_function_name(stem):
     return "auto_" + name if name[0].isdigit() else name
 
 
+SHOOT_MARK = "// planner-shoot "
+SHOOT_END = "// planner-shoot-end"
+
+
+def auto_block_lines(blocks, indent="    "):
+    """The C++ lines of a plan's blocks. A Shoot at goal is written as the blocks it expands to,
+    between a marker holding the original block and an end marker, so reading the function back
+    (Edit auto) gives the one editable block again instead of the loose moves."""
+    lines = []
+    for i, b in enumerate(blocks):
+        if "_shoot" in b:
+            lines.append(f"{indent}{SHOOT_MARK}{b['_shoot']}")
+        lines.append(f"{indent}{block_code(b)}  // {i + 1}: {block_summary(b)}")
+        if b.get("_shootEnd"):
+            lines.append(f"{indent}{SHOOT_END}")
+    return lines
+
+
 def write_auto_function(name, blocks, start, cpp_path=AUTONOMOUS_CPP, hpp_path=AUTONOMOUS_HPP):
     """Write the plan into autonomous.cpp as `void name()` and declare it in
     autonomous.hpp. Saving the same plan again replaces its function -- it
@@ -735,7 +795,7 @@ def write_auto_function(name, blocks, start, cpp_path=AUTONOMOUS_CPP, hpp_path=A
             "// Coordinates: inches, origin at field centre, heading 0 = +y, clockwise +.",
             f"void {final}() {{",
             f"    chassis.setPose({start[0]:.2f}, {start[1]:.2f}, {start[2]:.2f});  // start pose"]
-    body += [f"    {block_code(b)}  // {i + 1}: {block_summary(b)}" for i, b in enumerate(blocks)]
+    body += auto_block_lines(blocks)
     body += ["}", f"// END planner: {final}", ""]
     code = "\n".join(body)
 
@@ -860,6 +920,10 @@ def parse_auto_line(line):
         if len(pos) >= 9:   # older exports stop at forwards: reach 0, no slow-down
             vals.update(reach=float(pos[6]), decelRange=float(pos[7]), decelSpeed=float(pos[8]))
             vals["wallPin"] = len(pos) >= 10 and pos[9] == "true"
+            vals["useVision"] = len(pos) < 11 or pos[10] == "true"     # not written = the default (on)
+            vals["useIR"] = len(pos) < 12 or pos[11] == "true"
+            vals["usePose"] = len(pos) >= 13 and pos[12] == "true"
+            vals["earlyExitRange"] = float(pos[13]) if len(pos) >= 14 else GO_TO_PIN_EXIT
         else:
             vals.update(reach=0.0, decelRange=0.0)
         return new_block("goToPin", **vals)
@@ -895,8 +959,22 @@ def read_auto_function(name, cpp_path=AUTONOMOUS_CPP):
     if not m:
         raise KeyError(name)
     start, blocks, skipped = [0.0, 0.0, 0.0], [], []
+    in_shoot = False        # between a Shoot at goal marker and its end: the expanded blocks
     for line in m.group(0).split("\n"):
         s = line.strip()
+        if s.startswith(SHOOT_END):
+            in_shoot = False
+            continue
+        if s.startswith(SHOOT_MARK):
+            try:
+                src = json.loads(s[len(SHOOT_MARK):])
+                blocks.append(new_block("shootAtGoal", **{k: v for k, v in src.items() if k != "kind"}))
+                in_shoot = True
+            except (ValueError, AttributeError):
+                pass        # unreadable marker: fall back to the loose blocks below it
+            continue
+        if in_shoot:
+            continue
         if not s or s.startswith("//") or re.match(r"void\s+\w+\s*\(\s*\)\s*\{", s) or s == "}":
             continue
         if "// start pose" in s:
@@ -1362,7 +1440,8 @@ def shoot_blocks(b, pose, ctx=None):
     leg first), out to the point on the chosen side, face the goal, drive in straight, face it
     again to square up, then lift to PIN and claws off (a pin) or shootToGoal."""
     ctx = ctx or PLAN_CTX
-    size, avoid, exitRange = ctx["size"], ctx["avoid"], ctx["exit"]
+    size, avoid = ctx["size"], ctx["avoid"]
+    exitRange = float(b.get("earlyExitRange", ctx["exit"]))     # the hand-over between the points
     goal = (float(b["x"]), float(b["y"]))
     pre, stand = shoot_points(goal, b["goalSide"], shoot_standoff(b, size), goal_clearance(*size))
     wps = avoid_route((pose[0], pose[1]), pre, size) if avoid else []
@@ -1534,7 +1613,12 @@ def expand_plan(blocks, start):
     for i, b in enumerate(blocks):
         lo = len(flat)
         if b["kind"] == "shootAtGoal":
-            flat += shoot_blocks(b, sim[i - 1][0] if i > 0 else tuple(start))
+            sub = shoot_blocks(b, sim[i - 1][0] if i > 0 else tuple(start))
+            # remember where the expansion came from, so writing the function into autonomous.cpp
+            # can leave a marker that Edit auto turns back into this one block
+            sub[0]["_shoot"] = json.dumps(b)
+            sub[-1]["_shootEnd"] = True
+            flat += sub
         else:
             flat.append(b)
         spans.append((lo, len(flat)))

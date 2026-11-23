@@ -1,0 +1,13 @@
+RUN REPORT  #1  ?  INCOMPLETE  13.02 s  (20 samples every 20 ms)
+start pose (0.0, -64.0) 0.1 deg   end pose (-23.3, -41.1) -172.9 deg
+WARNING: only 5 of ? lines of this recording arrived, even after asking the robot again (0 requests sent, the robot acknowledged 0). What follows is what did arrive.
+
+SENSOR CHECK (the IMU and both rotation sensors against the drive motors, every 20 ms of the run)
+  IMU                                          no totals arrived; only 1 step(s) checked (the rest did not arrive)
+  forward wheel (vertical rotation sensor)     no totals arrived; only 1 step(s) checked (the rest did not arrive)
+  sideways wheel (horizontal rotation sensor)  no totals arrived; only 1 step(s) checked (the rest did not arrive)
+  turning: IMU +0.0 deg in total, drive wheels +0.0  [only the steps that arrived]
+  driving: forward tracking wheel 0.0 in, drive motors 0.0 in; most the robot tipped 0.0 deg
+  NO VERDICT: nothing wrong in what arrived, but part of the IMU-against-wheels comparison is missing.
+  This run cannot say whether the IMU is at fault. Run again over the USB cable for a whole recording.
+(no steps or pin grabs were logged in this run)

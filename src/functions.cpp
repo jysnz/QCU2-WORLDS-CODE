@@ -661,6 +661,8 @@ void straightPinTask(void *p) {
         }
 
         float mag;
+        if (seen && byIR)
+            break; // the IR saw the pin and the claws are shutting: stop here, no ease-out past it
         if (seen) {
             // fast grab: keep the speed until the claws have gripped, then ease to a stop
             const uint32_t hold = byIR ? 0u : (uint32_t)kPinClawLatencyMs;
@@ -771,19 +773,10 @@ void straightPinTask(void *p) {
             const float along = rx * ux + ry * uy;
             if (along >= stopAt + kRunInPushIn)
                 break; // pushed the extra distance without the IR: done
-            const bool seen = pinCloseWatchHit();
-            if (seen && seenAt == 0)
-                seenAt = pros::millis();
+            if (pinCloseWatchHit())
+                break; // the IR saw the pin: the claws are shutting, stop at once
 
-            float mag;
-            if (seen) {
-                const uint32_t since = pros::millis() - seenAt;
-                if (since >= kSeenStopMs)
-                    break;
-                mag = prevMag * (1.0f - (float)since / (float)kSeenStopMs);
-            } else {
-                mag = std::min(kRunInSpeed, prevMag + kLineAccelStep);
-            }
+            const float mag = std::min(kRunInSpeed, prevMag + kLineAccelStep);
             prevMag = mag;
 
             // NO correcting any more: the heading was set by the square-up, and steering on the camera
@@ -822,15 +815,44 @@ void straightPinTask(void *p) {
 } // namespace
 
 void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, float reach,
-                  float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR) {
+                  float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR,
+                  bool usePose, float earlyExitRange) {
     const float speed = (float)(maxSpeed > 0 ? maxSpeed : kDefaultPathSpeed);
+    const float handoff = earlyExitRange > 0 ? earlyExitRange : 2.0f;  // between the cruise and approach
+    const lemlib::Pose p = chassis.getPose();
+    const float dx = x - p.x, dy = y - p.y;
+    const float dist = std::hypot(dx, dy);
+    if (usePose && forwards && reach > 0) {
+        // moveToPose drive: ends with the claw tip on the pin, heading along the line from where the
+        // robot is to the pin, so the last stretch is straight. No camera steering in this mode (the IR
+        // sensor still closes the claws, see goToPin(); without it they shut when the drive ends).
+        if (dist <= reach) {
+            runlog::event("pin already within reach");
+            return;
+        }
+        const float ux = dx / dist, uy = dy / dist;
+        const float heading = std::atan2(dx, dy) * 180.0f / (float)M_PI;  // 0 = +y, clockwise +
+        const float ex = x - ux * reach, ey = y - uy * reach;             // where the robot's centre stops
+        const float arrive = std::min(kPinArrivalSpeed, speed);
+        runlog::event("pin pose drive heading=%.1f end=(%.2f, %.2f)", heading, ex, ey);
+        if (decelRange > 0 && arrive < speed && dist - reach > decelRange * 1.25f) {
+            // stage 1: full speed to the point decelRange short of the stop, handed on without stopping
+            chassis.moveToPose(ex - ux * decelRange, ey - uy * decelRange, heading, timeoutMs,
+                               {.forwards = true, .maxSpeed = speed, .minSpeed = arrive,
+                                .earlyExitRange = handoff},
+                               true);
+            // stage 2: queued behind it, the last stretch at the arrival speed
+            chassis.moveToPose(ex, ey, heading, timeoutMs, {.forwards = true, .maxSpeed = arrive}, true);
+        } else {
+            chassis.moveToPose(ex, ey, heading, timeoutMs, {.forwards = true, .maxSpeed = speed}, true);
+        }
+        pros::delay(20); // the motion has begun: isInMotion() is true from here
+        return;
+    }
     // the camera follows the yellow pin whenever it sees it, so the yellow signature has to be on
     // the sensor (it used to be installed only by opening the VISION screen)
     if (useVision && !visionEnsureYellow())
         runlog::event("pin vision: sensor not answering");
-    const lemlib::Pose p = chassis.getPose();
-    const float dx = x - p.x, dy = y - p.y;
-    const float dist = std::hypot(dx, dy);
     if (forwards && reach > 0) {
         if (dist <= reach) {
             runlog::event("pin already within reach");
@@ -847,28 +869,50 @@ void goToPinDrive(float x, float y, int timeoutMs, int maxSpeed, bool forwards, 
     // (a backwards grab, or no reach given: the old way) full speed, then slowing to decelSpeed over
     // the last decelRange inches
     moveToPointDecel(x, y, timeoutMs, {.forwards = forwards, .maxSpeed = speed}, decelRange,
-                     decelSpeed, true);
+                     decelSpeed, true, handoff);
 }
 
 void goToPin(float x, float y, int level, int timeoutMs, int maxSpeed, bool forwards, float reach,
-             float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR) {
+             float decelRange, float decelSpeed, bool wallPin, bool useVision, bool useIR,
+             bool usePose, float earlyExitRange) {
     runlog::event("pin target x=%.2f y=%.2f reach=%.2f level=%d", x, y, reach, level);
+    // what the IR sensor reads before the drive (a pin reads `pinSensorActiveHigh`): a sensor that is
+    // unplugged, stuck or pointing the wrong way shows up in the run report as the same value all run
+    runlog::event("IR sensor raw=%d (a pin reads %d)", (int)pinSensor.get_value(),
+                  pinSensorActiveHigh ? 1 : 0);
     liftOpenClaws();
     // IR mode: the sensor closes the claws the moment it sees the pin, even mid-drive or mid-turn
     if (kPinGrabByIR && useIR)
         pinCloseWatch(true);
     goToPinDrive(x, y, timeoutMs, maxSpeed, forwards, reach, decelRange, decelSpeed, wallPin, useVision,
-                 useIR);
+                 useIR, usePose, earlyExitRange);
     pros::delay(10);
     // wait for the motion; it counts as finished only after it stays idle (queued moves have gaps)
     int idleMs = 0;
+    bool irStopped = false;
     // (keep this long: between the cruise stage and the decel approach the chassis is briefly idle,
     // and returning in that gap lets the next motion cancel the approach at the decel-start point)
     while (idleMs < 150) {
+        // The IR saw the pin and the claws are shutting: the drive stops RIGHT NOW. Nothing after the
+        // grab may move the robot (the rest of the drive, a queued approach stage, the ease-out).
+        // Cancelled every tick while it is still in motion, because a queued second stage starts the
+        // moment the first one is cancelled.
+        if (kPinGrabByIR && useIR && pinCloseWatchHit()) {
+            if (!irStopped) {
+                irStopped = true;
+                runlog::event("pin seen: drive stopped");
+            }
+            if (chassis.isInMotion()) {
+                chassis.cancelMotion();
+                left_motor_group.move_velocity(0);
+                right_motor_group.move_velocity(0);
+            }
+        }
         idleMs = chassis.isInMotion() ? 0 : idleMs + 10;
         pros::delay(10);
     }
-    runlog::event("pin drive ended seen=%d", pinCloseWatchHit() ? 1 : 0);
+    runlog::event("pin drive ended seen=%d IR raw=%d", pinCloseWatchHit() ? 1 : 0,
+                  (int)pinSensor.get_value());
     pinCloseWatch(false);
     clawsClose();
     runlog::event("pin claws closed");
@@ -1065,7 +1109,7 @@ void queueOwnApproach(float x, float y, int timeoutMs, const lemlib::MoveToPoint
 } // namespace
 
 void moveToPointDecel(float x, float y, int timeoutMs, lemlib::MoveToPointParams params,
-                      float decelRange, float decelSpeed, bool async) {
+                      float decelRange, float decelSpeed, bool async, float handoffRange) {
     lemlib::Pose pose = chassis.getPose();
     float dist = std::hypot(x - pose.x, y - pose.y);
     // too short to have a "far" part, or nothing to slow down to: just drive it
@@ -1077,7 +1121,7 @@ void moveToPointDecel(float x, float y, int timeoutMs, lemlib::MoveToPointParams
     float ux = (x - pose.x) / dist, uy = (y - pose.y) / dist;
     lemlib::MoveToPointParams cruise = params;
     cruise.minSpeed = std::max(params.minSpeed, decelSpeed);
-    cruise.earlyExitRange = 2;
+    cruise.earlyExitRange = handoffRange > 0 ? handoffRange : 2.0f;
     chassis.moveToPoint(x - ux * decelRange, y - uy * decelRange, timeoutMs, cruise, true);
     // stage 2: queued behind it, the last stretch capped at decelSpeed
     lemlib::MoveToPointParams approach = params;

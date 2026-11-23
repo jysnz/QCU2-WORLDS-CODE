@@ -59,6 +59,7 @@ class DistanceWindow(tk.Toplevel):
         self.raw = [-2, -2, -2]
         self.dirty = False
         self.onBrainScreen = False
+        self._lastKey = None
         self.refVar = tk.StringVar(value="100")
         self.srcVars = [tk.IntVar(value=i) for i in range(3)]
         self.protocol("WM_DELETE_WINDOW", self.withdraw)
@@ -214,6 +215,10 @@ class DistanceWindow(tk.Toplevel):
             self.note("Tap DISTANCE on the brain to calibrate from here.", "warn")
             return
         self.chipBrain.config(text="brain: DISTANCE", fg=GREEN)
+        key = repr(sorted(d.items()))
+        if key == self._lastKey and self.focus_get() is not self.refEntry:
+            return                      # the brain repeats its state many times a second: nothing to redo
+        self._lastKey = key
         self.sel = d["sel"]
         self.pend, self.saved, self.offset, self.raw = d["pend"], d["saved"], d["offset"], d["raw"]
         self.dirty = d["dirty"]

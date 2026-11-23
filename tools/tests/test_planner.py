@@ -133,6 +133,50 @@ class Shooting(unittest.TestCase):
         self.assertNotIn("shootToGoal", kinds)
 
 
+class SavedFunction(unittest.TestCase):
+    """A plan written into autonomous.cpp and read back (Edit auto) must not come back in pieces."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cpp = os.path.join(self.tmp.name, "autonomous.cpp")
+        self.hpp = os.path.join(self.tmp.name, "autonomous.hpp")
+        with open(self.cpp, "w", encoding="utf-8") as f:
+            f.write("void runAutonomous() {\n}\n")
+        with open(self.hpp, "w", encoding="utf-8") as f:
+            f.write("void runAutonomous();\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def round_trip(self, blocks):
+        flat, _ = pc.expand_plan(blocks, START)
+        pc.write_auto_function("my_auto", flat, START, self.cpp, self.hpp)
+        return pc.read_auto_function("my_auto", self.cpp)
+
+    def test_shoot_at_goal_comes_back_as_one_block(self):
+        shoot = B("shootAtGoal", x=-24, y=-48, goalSide="RIGHT", isPin="YES", push=2.0)
+        pin = B("goToPin", x=-24, y=-24, useVision=False, useIR=False)
+        _start, blocks, skipped = self.round_trip([pin, shoot])
+        self.assertEqual(skipped, [])
+        self.assertEqual([b["kind"] for b in blocks], ["goToPin", "shootAtGoal"])
+        self.assertEqual(blocks[0], pin)
+        self.assertEqual(blocks[1], shoot)
+
+    def test_saving_again_does_not_double_the_shot(self):
+        shoot = B("shootAtGoal", x=-24, y=-48, goalSide="RIGHT")
+        _start, blocks, _ = self.round_trip([shoot])
+        _start, again, _ = self.round_trip(blocks)
+        self.assertEqual(again, blocks)
+
+    def test_a_plan_without_a_shoot_reads_back_unchanged(self):
+        plan = [B("moveToPoint", x=-48, y=-40), B("waitUntilDone"),
+                B("goToPin", x=-24, y=-24, useIR=False)]
+        _start, blocks, skipped = self.round_trip(plan)
+        self.assertEqual(skipped, [])
+        self.assertEqual([b["kind"] for b in blocks], [b["kind"] for b in plan])
+        self.assertFalse(blocks[2]["useIR"])
+
+
 class Blocks(unittest.TestCase):
     def test_relocalize_is_gone(self):
         self.assertNotIn("relocalize", pc.KINDS)
@@ -150,6 +194,67 @@ class Blocks(unittest.TestCase):
         self.assertEqual(pc.block_to_plan_add(b).split()[2], str(pc.KINDS.index("odomReset")))
         self.assertEqual(pc.KINDS.index("odomReset"), 16)     # == StepKind::ODOM_RESET on the brain
         self.assertIn(" 5 0 127 0 3.50 ", pc.block_to_plan_add(b))   # dirIdx mask 1 + 4
+
+    def test_go_to_pin_sensor_flags_round_trip(self):
+        # defaults export exactly as before (no extra arguments)
+        plain = B("goToPin", x=-24, y=-24)
+        self.assertTrue(plain["useVision"] and plain["useIR"])
+        self.assertNotIn("true, true", pc.block_code(plain))
+        self.assertEqual(pc.parse_auto_line(pc.block_code(plain)), plain)
+        for vis, ir in ((False, True), (True, False), (False, False)):
+            b = B("goToPin", x=-24, y=-24, useVision=vis, useIR=ir)
+            code = pc.block_code(b)
+            self.assertTrue(code.endswith(
+                f"false, {str(vis).lower()}, {str(ir).lower()});"), code)
+            self.assertEqual(pc.parse_auto_line(code), b)
+        # an export from before the flags existed still loads with both sensors on
+        old = pc.parse_auto_line("goToPin(-24.00, -24.00, 5, 3000, 127, true, 7.50, 10.00, 40);")
+        self.assertTrue(old["useVision"] and old["useIR"] and not old["wallPin"])
+
+    def test_go_to_pin_move_to_pose_round_trips(self):
+        b = B("goToPin", x=-24, y=-24, usePose=True)
+        self.assertFalse(B("goToPin", x=-24, y=-24)["usePose"])        # off unless asked for
+        code = pc.block_code(b)
+        self.assertTrue(code.endswith("false, true, true, true);"), code)
+        self.assertEqual(pc.parse_auto_line(code), b)
+        self.assertIn("POSE", pc.block_summary(b))
+        both = B("goToPin", x=-24, y=-24, usePose=True, useIR=False)
+        self.assertEqual(pc.parse_auto_line(pc.block_code(both)), both)
+        self.assertEqual(pc.block_to_plan_add(b).split()[9], "8")
+        self.assertEqual(pc.block_to_plan_add(both).split()[9], "12")
+
+    def test_go_to_pin_early_exit_range(self):
+        plain = B("goToPin", x=-24, y=-24)
+        self.assertEqual(plain["earlyExitRange"], 2.0)              # what the robot always used
+        self.assertNotIn("2.00)", pc.block_code(plain).split("40")[-1])     # nothing extra written
+        b = B("goToPin", x=-24, y=-24, earlyExitRange=4.5)
+        code = pc.block_code(b)
+        self.assertTrue(code.endswith("false, true, true, false, 4.50);"), code)
+        self.assertEqual(pc.parse_auto_line(code), b)
+        self.assertIn("exit 4.5", pc.block_summary(b))
+        # it goes to the brain in the minSpeed slot, which a pin drive does not otherwise use
+        self.assertEqual(pc.block_to_plan_add(b).split()[11], "4.50")
+        # a block without the key (an older plan) exports as it always did
+        old = {k: v for k, v in plain.items() if k != "earlyExitRange"}
+        self.assertEqual(pc.block_code(old), pc.block_code(plain))
+
+    def test_shoot_at_goal_early_exit_range_sets_the_hand_over(self):
+        def exits(value):
+            flat, _ = pc.expand_plan([B("shootAtGoal", x=-24, y=-48, goalSide="RIGHT",
+                                        drive="SMOOTH", earlyExitRange=value)], (-60.0, -60.0, 0.0))
+            return {b["earlyExitRange"] for b in flat if b["kind"] == "moveToPoint" and b["minSpeed"] > 0}
+        flows = exits(9.0)
+        if flows:           # (a route with no goal in the way has no points to hand over on)
+            self.assertEqual(flows, {9.0})
+            self.assertEqual(exits(0.0), {0.0})
+
+    def test_go_to_pin_sensor_flags_reach_the_brain(self):
+        field = lambda **kw: pc.block_to_plan_add(B("goToPin", x=-24, y=-24, **kw)).split()[9]  # the side slot
+        self.assertEqual(field(), "0")
+        self.assertEqual(field(wallPin=True), "1")
+        self.assertEqual(field(useVision=False), "2")
+        self.assertEqual(field(useIR=False), "4")
+        self.assertEqual(field(wallPin=True, useVision=False, useIR=False), "7")
 
     def test_mirror_swaps_odom_reset_sides(self):
         b = pc.new_block("odomReset", odomLeft="NO")

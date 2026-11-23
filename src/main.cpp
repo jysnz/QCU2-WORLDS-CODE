@@ -31,8 +31,9 @@
 // This is only the state at boot -- the VEXNET switch on the brain screen flips it live.
 const bool VEXNET_ENABLED = false;
 // true: when the program runs (opcontrol starts) go straight into the driver menu without having to
-// hold DPAD-LEFT. Set to false to get the old behavior (hold DPAD-LEFT to enter the menu).
-constexpr bool START_IN_DRIVER_MENU = true;
+// hold DPAD-LEFT. false (now): hold DPAD-LEFT as driver control starts to enter the menu; with it not
+// held the robot goes straight to normal driving (jawheadControl: the driver functions).
+constexpr bool START_IN_DRIVER_MENU = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions

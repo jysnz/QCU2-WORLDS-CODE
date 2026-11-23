@@ -296,11 +296,13 @@ void drawLive(const Live &lv) {
 // State line, sent at the usual remote rate:
 //   RUI|ODOM_RESET|..|ODOMR:<x>,<y>,<theta>,<F>,<L>,<R>,<aligned>,<xOk>,<yOk>,<wx>,<wy>,<tiltOk>,<tilt>,
 //        <haveLast>,<lastX>,<lastY>,<lastTheta>,<dH>,<dX>,<dY>,<haveUndo>,<mountF>,<mountL>,<mountR>,<maxCorr>|MSG:<status>
-// Commands from the laptop ("ODOMR ..." lines): RESET <fixHeading 0|1>, UNDO, POSE <x> <y>.
+// Commands from the laptop ("ODOMR ..." lines): RESET <fixHeading 0|1>, UNDO, POSE <x> <y> [<heading>].
 struct RemoteCmd {
   enum Kind { RESET, UNDO, POSE } kind;
   int a;
   float x, y;
+  float th = 0;       // POSE: heading to set (deg), when hasTh
+  bool hasTh = false; // POSE without a heading keeps the current one
 };
 pros::Mutex g_cmdMutex;
 RemoteCmd g_cmds[8];
@@ -385,16 +387,22 @@ void doUndo() {
 }
 
 // Move odometry to (nx, ny), heading kept. Simulates drift, so RESET XY has something to fix.
-void doSetXY(float nx, float ny) {
+// With `th` (the laptop's start pose, like the path planner's) the heading is set as well.
+void doSetXY(float nx, float ny, const float *th = nullptr) {
   const lemlib::Pose before = chassis.getPose();
   nx = std::clamp(nx, -FIELD_HALF, FIELD_HALF);
   ny = std::clamp(ny, -FIELD_HALF, FIELD_HALF);
   undoPose = before;
   haveUndo = true;
   haveLast = false;
-  chassis.setPose(nx, ny, before.theta);
-  printf("ODOMRESET TEST map tap -> odom (%.2f, %.2f)\n", nx, ny);
-  setStatus("odom moved to (%.1f, %.1f): now RESET XY", nx, ny);
+  chassis.setPose(nx, ny, th ? *th : before.theta);
+  if (th) {
+    printf("ODOMRESET TEST start pose -> odom (%.2f, %.2f, %.1f)\n", nx, ny, *th);
+    setStatus("odom set to (%.1f, %.1f) hdg %.1f: now RESET", nx, ny, wrap360(*th));
+  } else {
+    printf("ODOMRESET TEST map tap -> odom (%.2f, %.2f)\n", nx, ny);
+    setStatus("odom moved to (%.1f, %.1f): now RESET XY", nx, ny);
+  }
 }
 
 // Tap on the brain's map.
@@ -405,12 +413,15 @@ void doMapTap(int x, int y) {
 } // namespace
 
 void odomResetRemoteCommand(const char *rest) {
-  RemoteCmd c = {RemoteCmd::UNDO, 0, 0, 0};
+  RemoteCmd c = {RemoteCmd::UNDO, 0, 0, 0, 0, false};
   if (std::sscanf(rest, "RESET %d", &c.a) == 1)
     c.kind = RemoteCmd::RESET;
   else if (std::strncmp(rest, "UNDO", 4) == 0)
     c.kind = RemoteCmd::UNDO;
-  else if (std::sscanf(rest, "POSE %f %f", &c.x, &c.y) == 2)
+  else if (std::sscanf(rest, "POSE %f %f %f", &c.x, &c.y, &c.th) == 3) {
+    c.kind = RemoteCmd::POSE;
+    c.hasTh = true;
+  } else if (std::sscanf(rest, "POSE %f %f", &c.x, &c.y) == 2)
     c.kind = RemoteCmd::POSE;
   else
     return;
@@ -467,7 +478,7 @@ void odomResetCalControl() {
       else if (rc.kind == RemoteCmd::UNDO)
         doUndo();
       else
-        doSetXY(rc.x, rc.y);
+        doSetXY(rc.x, rc.y, rc.hasTh ? &rc.th : nullptr);
     }
 
     const Live lv = computeLive();

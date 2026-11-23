@@ -12,11 +12,13 @@ THE MAP (the same field render as the path planner: tools/field.png, +Y up, +X r
     orange dot        where each sensor beam lands (a dot short of the wall = something in the way)
     pink diamond      the TRUE position you measured with a tape (type it in, or right-click the map)
     grey robot        where odometry was before the last reset
-    left-click map    moves odometry there (heading kept) to simulate drift, so RESET XY has something to fix
+    orange robot      the START POSE you are setting, the way the path planner does it: type X / Y / H, press
+                      "Pick start pose" and tap the map, or drag the robot (move) / its knob (heading). "Send to
+                      robot" sets the odometry there (heading included), e.g. 3 in off the tape to simulate drift
 
 HOW TO CHECK X/Y
     1. Put the robot on a spot you measured with a tape and type that X / Y in TRUE POSITION.
-    2. Left-click the map a little way (under 4 in) from it to put odometry off, or just let it be.
+    2. Set the START POSE a little way (under 4 in) from it and press "Send to robot" to put odometry off.
     3. RESET XY. Odometry should land on the tape position: the ERROR panel shows the distance
        in inches and turns green at 0.5 in or less. Repeat from a few spots; the LOG keeps every try.
     4. Put a box in front of a sensor and reset: that reading should be rejected and nothing should move.
@@ -32,7 +34,7 @@ RUN ON ITS OWN
 
 WIRE FORMAT (see src/odom_reset_cal.cpp)
     robot -> laptop  RUI|ODOM_RESET|...|ODOMR:<25 numbers>|MSG:<status>
-    laptop -> robot  ODOMR RESET 0|1  |  ODOMR UNDO  |  ODOMR POSE x y
+    laptop -> robot  ODOMR RESET 0|1  |  ODOMR UNDO  |  ODOMR POSE x y [heading]
 """
 
 import math
@@ -85,6 +87,15 @@ class OdomResetWindow(tk.Toplevel):
         self.lastSig = None             # to notice a new reset and add a LOG row
         self.logRows = []
         self.trueVars = (tk.StringVar(), tk.StringVar())
+        # The start pose, set like the path planner's: type X / Y / H, tap the map in "Pick start pose" mode, drag
+        # the robot to move it, drag its nose knob to turn it. SEND puts the robot's odometry there.
+        self.start = [0.0, 0.0, 0.0]
+        self.startVars = [tk.StringVar(value="0"), tk.StringVar(value="0"), tk.StringVar(value="0")]
+        self.pickStart = False
+        self.drag = None                # "move" / "hdg" while the mouse is down on the start robot
+        self._drawPending = False       # redraws are coalesced (see requestDraw), so the map does not flicker
+        self._resizeJob = None
+        self._lastKey = None            # the last state drawn: an identical one is skipped
         self.hover = None
         self._fieldSrc = None           # field.png at full size (Pillow only)
         self._fieldImg = None           # what is drawn: the scaled image
@@ -136,12 +147,14 @@ class OdomResetWindow(tk.Toplevel):
         body.pack(fill="both", expand=True, padx=12)
 
         # map
-        mcard = self._card(body, "FIELD  (left-click: move odometry there   right-click: set TRUE position)")
+        mcard = self._card(body, "FIELD  (drag the orange start robot / its nose knob   right-click: set TRUE position)")
         mcard.pack(side="left", fill="both", expand=True)
         self.map = tk.Canvas(mcard, width=MAP_SIZE, height=MAP_SIZE, bg=INPUT, highlightthickness=0)
         self.map.pack(fill="both", expand=True, padx=10, pady=(0, 4))
-        self.map.bind("<Configure>", lambda e: self.drawMap())
-        self.map.bind("<Button-1>", self.onLeftClick)
+        self.map.bind("<Configure>", self.onResize)
+        self.map.bind("<Button-1>", self.onPress)
+        self.map.bind("<B1-Motion>", self.onDrag)
+        self.map.bind("<ButtonRelease-1>", self.onRelease)
         self.map.bind("<Button-3>", self.onRightClick)
         self.map.bind("<Motion>", self.onMotion)
         self.map.bind("<Leave>", lambda e: self.onMotion(None))
@@ -162,6 +175,24 @@ class OdomResetWindow(tk.Toplevel):
         self.undoBtn = self._btn(acts, "UNDO  (U)", self.undo, size=10, pad=6)
         self.undoBtn.pack(fill="x", pady=(4, 0))
 
+        scard = self._card(right, "START POSE  (like the path planner: inches, heading 0 = +Y, clockwise)")
+        scard.pack(fill="x", pady=(8, 0))
+        srow = tk.Frame(scard, bg=CARD)
+        srow.pack(padx=10, pady=(0, 4))
+        for i, name in enumerate(("X", "Y", "H")):
+            tk.Label(srow, text=name, bg=CARD, fg=GRAY, font=(FONT, 9, "bold")).grid(row=0, column=i * 2, padx=(0, 4))
+            e = tk.Entry(srow, textvariable=self.startVars[i], width=7, justify="center", bg=INPUT, fg=WHITE,
+                         insertbackground=WHITE, relief="flat", font=(MONO, 12))
+            e.grid(row=0, column=i * 2 + 1, ipady=3, padx=(0, 8))
+            e.bind("<Return>", lambda ev: self.applyStartEntries())
+            e.bind("<FocusOut>", lambda ev: self.applyStartEntries())
+        brow = tk.Frame(scard, bg=CARD)
+        brow.pack(fill="x", padx=10, pady=(0, 8))
+        self.pickBtn = self._btn(brow, "Pick start pose", self.togglePickStart, size=9, pad=3)
+        self.pickBtn.pack(side="left")
+        self._btn(brow, "Use robot pose", self.useRobotPose, size=9, pad=3).pack(side="left", padx=4)
+        self._btn(brow, "Send to robot", self.sendStartPose, bg="#143a1e", fg=GREEN, size=9, pad=3).pack(side="left")
+
         live = self._card(right, "LIVE")
         live.pack(fill="x", pady=(8, 0))
         self.odomLine = self._line(live)
@@ -180,7 +211,7 @@ class OdomResetWindow(tk.Toplevel):
             e = tk.Entry(row, textvariable=self.trueVars[i], width=8, justify="center", bg=INPUT, fg=WHITE,
                          insertbackground=WHITE, relief="flat", font=(MONO, 12))
             e.grid(row=0, column=i * 2 + 1, ipady=3, padx=(0, 10))
-            e.bind("<Return>", lambda ev: self.drawMap())
+            e.bind("<Return>", lambda ev: self.requestDraw())
             e.bind("<FocusOut>", lambda ev: self.refreshError())
         self._btn(row, "clear", self.clearTrue, size=8, pad=1).grid(row=0, column=4)
         self.errOdom = self._line(tcard)
@@ -258,18 +289,107 @@ class OdomResetWindow(tk.Toplevel):
         cx, cy, s = self._geom()
         return (px - cx) / s, (cy - py) / s
 
-    def onLeftClick(self, ev):
-        x, y = self.toIn(ev.x, ev.y)
-        x = max(-FIELD_HALF, min(FIELD_HALF, x))
-        y = max(-FIELD_HALF, min(FIELD_HALF, y))
-        self.send(f"ODOMR POSE {x:.2f} {y:.2f}")
-        self.note(f"odometry moved to ({x:.1f}, {y:.1f}); now RESET XY", ORANGE)
+    # -- redraw scheduling: many events in one go collapse into one draw at idle --
+    def requestDraw(self):
+        if self._drawPending:
+            return
+        self._drawPending = True
+        self.after_idle(self._drawNow)
+
+    def _drawNow(self):
+        self._drawPending = False
+        try:
+            if self.winfo_exists():
+                self.drawMap()
+        except tk.TclError:
+            pass
+
+    def onResize(self, _e):
+        """Resizing fires <Configure> many times a second, and each one used to rescale the field image.
+        Wait for the resize to settle, like the planner's re-layout."""
+        if self._resizeJob is not None:
+            self.after_cancel(self._resizeJob)
+        self._resizeJob = self.after(80, self._resized)
+
+    def _resized(self):
+        self._resizeJob = None
+        self.requestDraw()
+
+    # -- start pose (the path planner's way) --
+    def _clampPose(self, x, y):
+        return (round(max(-FIELD_HALF, min(FIELD_HALF, x)), 1), round(max(-FIELD_HALF, min(FIELD_HALF, y)), 1))
+
+    def setStart(self, x=None, y=None, h=None):
+        if x is not None and y is not None:
+            self.start[0], self.start[1] = self._clampPose(x, y)
+        if h is not None:
+            self.start[2] = round(h % 360.0, 1)
+        for v, val in zip(self.startVars, self.start):
+            v.set(f"{val:g}")
+        self.requestDraw()
+
+    def applyStartEntries(self):
+        try:
+            x, y, h = (float(v.get()) for v in self.startVars)
+        except ValueError:
+            for v, val in zip(self.startVars, self.start):      # not a number: put the last good value back
+                v.set(f"{val:g}")
+            return
+        self.setStart(x, y, h)
+
+    def togglePickStart(self):
+        self.pickStart = not self.pickStart
+        self.pickBtn.config(relief="sunken" if self.pickStart else "flat", fg=ORANGE if self.pickStart else WHITE)
+        self.map.config(cursor="crosshair" if self.pickStart else "")
+
+    def useRobotPose(self):
+        if self.st is None:
+            self.note("no robot pose yet: open ODOM RESET on the brain", ORANGE)
+            return
+        self.setStart(self.st["x"], self.st["y"], self.st["theta"])
+
+    def sendStartPose(self):
+        self.applyStartEntries()
+        self.send(f"ODOMR POSE {self.start[0]:.2f} {self.start[1]:.2f} {self.start[2]:.1f}")
+        self.note(f"start pose ({self.start[0]:g}, {self.start[1]:g}) hdg {self.start[2]:g} sent; now RESET", ORANGE)
+
+    def _knobPx(self):
+        """Pixel position of the heading knob, a little way in front of the start robot."""
+        a = math.radians(self.start[2])
+        return self.toPx(self.start[0] + math.sin(a) * 16, self.start[1] + math.cos(a) * 16)
+
+    def onPress(self, ev):
+        kx, ky = self._knobPx()
+        px, py = self.toPx(self.start[0], self.start[1])
+        if self.pickStart:                          # a tap places the start (heading kept), like the planner
+            x, y = self.toIn(ev.x, ev.y)
+            self.setStart(x, y)
+            self.togglePickStart()
+            self.drag = None
+        elif math.hypot(ev.x - kx, ev.y - ky) <= 9:
+            self.drag = "hdg"
+        elif math.hypot(ev.x - px, ev.y - py) <= 16:
+            self.drag = "move"
+        else:
+            self.drag = None
+
+    def onDrag(self, ev):
+        if self.drag == "move":
+            x, y = self.toIn(ev.x, ev.y)
+            self.setStart(x, y)
+        elif self.drag == "hdg":
+            px, py = self.toPx(self.start[0], self.start[1])
+            if math.hypot(ev.x - px, ev.y - py) > 3:
+                self.setStart(h=math.degrees(math.atan2(ev.x - px, py - ev.y)))
+
+    def onRelease(self, _ev):
+        self.drag = None
 
     def onRightClick(self, ev):
         x, y = self.toIn(ev.x, ev.y)
         self.trueVars[0].set(f"{x:.1f}")
         self.trueVars[1].set(f"{y:.1f}")
-        self.drawMap()
+        self.requestDraw()
         self.refreshError()
 
     def onMotion(self, ev):
@@ -289,7 +409,7 @@ class OdomResetWindow(tk.Toplevel):
     def clearTrue(self):
         self.trueVars[0].set("")
         self.trueVars[1].set("")
-        self.drawMap()
+        self.requestDraw()
         self.refreshError()
 
     # -- drawing --
@@ -319,7 +439,8 @@ class OdomResetWindow(tk.Toplevel):
 
         st = self.st
         if st is None:
-            c.create_text(cx, cy, text="waiting for the brain's ODOM RESET screen", fill=ORANGE, font=(FONT, 10))
+            c.create_text(cx, cy + 40, text="waiting for the brain's ODOM RESET screen", fill=ORANGE, font=(FONT, 10))
+            self._startRobot()
             return
 
         if st["haveLast"]:
@@ -350,6 +471,17 @@ class OdomResetWindow(tk.Toplevel):
             c.create_line(px - 9, py, px + 9, py, fill=GREEN, width=2)
             c.create_line(px, py - 9, px, py + 9, fill=GREEN, width=2)
             c.create_oval(px - 5, py - 5, px + 5, py + 5, outline=GREEN, width=2)
+
+        self._startRobot()                                            # on top, so it can always be grabbed
+
+    def _startRobot(self):
+        """The start pose being set: an orange robot with a knob on its nose to turn it (as in the planner)."""
+        x, y, h = self.start
+        self._robot(x, y, h, ORANGE, fill=False)
+        kx, ky = self._knobPx()
+        self.map.create_oval(kx - 5, ky - 5, kx + 5, ky + 5, fill=ORANGE, outline="#000")
+        px, py = self.toPx(x, y)
+        self.map.create_text(px + 12, py + 14, text="START", fill=ORANGE, font=(FONT, 7, "bold"))
 
     def _robot(self, x, y, th, color, fill):
         """A 15 in square at (x, y) turned to heading th (compass: 0 = +Y, clockwise) with a nose line."""
@@ -451,6 +583,10 @@ class OdomResetWindow(tk.Toplevel):
             self.note("Tap ODOM RESET on the brain to test from here.", ORANGE)
             return
         self.chipBrain.config(text="brain: ODOM RESET", fg=GREEN)
+        key = repr(sorted(d.items()))
+        if key == self._lastKey:        # the brain repeats its state several times a second: nothing to redo
+            return
+        self._lastKey = key
         self.st = d
         self.undoBtn.config(state="normal" if d["haveUndo"] else "disabled")
         sig = (d["haveLast"], d["last"])
@@ -459,7 +595,7 @@ class OdomResetWindow(tk.Toplevel):
         self.lastSig = sig
         self.refreshLive()
         self.refreshError()
-        self.drawMap()
+        self.requestDraw()
         self.note(d.get("msg", ""), CYAN)
 
 
@@ -482,6 +618,8 @@ class _FakeLink:
         if f[1] == "POSE":
             self.undoPose, self.haveUndo = list(self.odom), True
             self.odom = [float(f[2]), float(f[3])]
+            if len(f) > 4:
+                self.theta = float(f[4])
         elif f[1] == "RESET":
             b = tuple(self.odom) + (self.theta,)
             wx, wy, ok = self.walls()
