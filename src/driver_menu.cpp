@@ -8,28 +8,157 @@
 
 #include "driver_menu.hpp"
 #include "canvas.hpp"
+#include "distance_diag.hpp"
+#include "fieldctl/fieldctl.hpp"
 #include "lift_tuning.hpp"
 #include "motors.hpp"
 #include "pid_tuner.hpp"
-#include "point_planner.hpp"
+#include "laptop_plan.hpp"
+#include "path_planner.hpp"
 #include "pros/misc.hpp"
 #include "pros/rtos.hpp"
 #include "pros/screen.hpp"
 #include "screen_task.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <vector>
 
 bool driverMenuActive = false;
+
+// -- Laptop link (tools/remote_touch.py) -------------------------------------------------------
+// Rides on the USB cable `pros terminal` uses.
+//   robot -> laptop   RUI|<screen>|<data>   a few times a second: what the menu currently shows
+//                       RUI|HOME|label~sub;label~sub..           the cards
+//                       RUI|TEMPS|title:name,temp,conn,over;..#title:..   motor temperatures
+//                       RUI|TEST_CONFIRM|   /   RUI|TEST_RUN|done|aborted|label,port,rev,state;..
+//                       RUI|TOOL|PID|PLANNER|LIFT|INTAKE   a full-screen tool is open
+//                       RUI|DRIVE|          the menu is closed, the robot is driving
+//   laptop -> robot   TOUCH x y     a synthetic tap on the brain screen (brain coordinates, 480x240)
+//                     LEAVE         same as holding the top-right corner: leave the open tool
+//                     RATE ms       how often to send RUI lines (default 150; slower over radio)
+//                     LT ...        passed on to the lift / intake tuner (tools/lift_tuner.py)
+// This is the ONLY task that reads the USB input (two readers would steal each other's lines),
+// so the lift tuner's "LT" lines arrive through here too. It stands down while VEXNET field
+// control is on, because field control reads the same input then.
+static pros::Mutex linkMtx;
+static std::string linkState = "RUI|DRIVE|"; // until the menu says otherwise: the robot is just driving
+static bool linkTouchPending = false;
+static int linkTouchX = 0, linkTouchY = 0;
+static int linkIntervalMs = 150;
+static std::atomic<bool> remoteLeave{false};
+
+static std::string sf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static std::string sf(const char *fmt, ...) {
+    char buf[160];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    return buf;
+}
+
+static void publish(const std::string &line) {
+    linkMtx.take();
+    linkState = line;
+    linkMtx.give();
+}
+
+static bool takeLinkTouch(int &x, int &y) {
+    linkMtx.take();
+    bool got = linkTouchPending;
+    if (got) {
+        x = linkTouchX;
+        y = linkTouchY;
+        linkTouchPending = false;
+    }
+    linkMtx.give();
+    return got;
+}
+
+// A tool that can be mirrored on the laptop publishes its own screen's state here (instead of the plain
+// "RUI|TOOL|name|" line runTool() sent when it opened).
+void driverMenuPublish(const char *line) { publish(line); }
+
+// -- Hooks for the PID tuner (see driver_menu.hpp) --
+bool takeRemoteKey(RemoteKey) { return false; }
+bool takeRemoteTouch(int &x, int &y) { return takeLinkTouch(x, y); }
+int remoteSendIntervalMs() {
+    linkMtx.take();
+    int ms = linkIntervalMs;
+    linkMtx.give();
+    return ms;
+}
+bool takeRemotePidCommand(RemotePidCommand &) { return false; }
+bool takeRemotePidStop() { return false; }
+
+static void linkReader(void *) {
+    char line[200];
+    while (true) {
+        if (fieldctl::vexnet()) { // field control reads the input while VEXNET is on
+            pros::delay(50);
+            continue;
+        }
+        if (!fgets(line, sizeof(line), stdin)) {
+            pros::delay(10);
+            continue;
+        }
+        int a, b;
+        if (strncmp(line, "TOUCH ", 6) == 0 && sscanf(line + 6, "%d %d", &a, &b) == 2) {
+            linkMtx.take();
+            linkTouchPending = true;
+            linkTouchX = a;
+            linkTouchY = b;
+            linkMtx.give();
+        } else if (strncmp(line, "LEAVE", 5) == 0) {
+            remoteLeave = true;
+        } else if (strncmp(line, "RATE ", 5) == 0 && sscanf(line + 5, "%d", &a) == 1) {
+            linkMtx.take();
+            linkIntervalMs = std::clamp(a, 100, 1000);
+            linkMtx.give();
+        } else if (strncmp(line, "LT ", 3) == 0) {
+            liftTuningHandleLine(line);
+        } else {
+            laptopPlanHandleLine(line); // PLAN / POSE / DRIVE / ROBOT HOME from the laptop's map planner
+        }
+    }
+}
+
+static void linkWriter(void *) {
+    while (true) {
+        linkMtx.take();
+        std::string s = linkState;
+        int ms = linkIntervalMs;
+        linkMtx.give();
+        if (!fieldctl::vexnet()) printf("%s\n", s.c_str());
+        pros::delay(ms);
+    }
+}
+
+// Starts the laptop link (idempotent). main.cpp calls it from initialize(), so the laptop window connects as soon
+// as the program runs, not only after the menu has been opened.
+static void startLink() {
+    static bool started = false;
+    if (started) return;
+    started = true;
+    static pros::Task reader(linkReader, nullptr, "menu link in");
+    static pros::Task writer(linkWriter, nullptr, "menu link out");
+}
+
+void driverMenuStartLink() { startLink(); }
 
 // Hold the top-right corner of the screen this long to leave a tool.
 static const uint32_t kLeaveHoldMs = 800;
 static const int kLeaveX0 = 396, kLeaveY1 = 46;
 
 bool driverMenuLeaveRequested() {
+    if (remoteLeave.exchange(false)) return true; // "LEAVE" from the laptop link
     static uint32_t since = 0;
     static bool fired = false;
     pros::screen_touch_status_s_t t = pros::screen::touch_status();
@@ -86,16 +215,18 @@ struct Item {
     const char *label;
     const char *sub;
 };
-enum { ITEM_DRIVE, ITEM_PID, ITEM_PLANNER, ITEM_TEST, ITEM_LIFT, ITEM_TEMPS, ITEM_COUNT };
+enum { ITEM_DRIVE, ITEM_PID, ITEM_PLANNER, ITEM_TEST, ITEM_LIFT, ITEM_INTAKE, ITEM_TEMPS, ITEM_DISTANCE, ITEM_COUNT };
 const Item kItems[ITEM_COUNT] = {
     {"DRIVE", "joystick driving"},
     {"PID TUNING", "angular + lateral"},
     {"PATH PLANNER", "drive to a point"},
     {"TEST MOTORS", "does each one spin"},
     {"LIFT TUNER", "levels, combos, angles"},
+    {"INTAKE TUNER", "combos on L1 / L2"},
     {"MOTOR TEMPS", "every motor, live"},
+    {"DISTANCE", "sensor check + calibrate"},
 };
-const int kGridX0 = 15, kGridX1 = 465, kGridY0 = 62, kRowH = 70, kGap = 8, kCols = 3;
+const int kGridX0 = 15, kGridX1 = 465, kGridY0 = 58, kRowH = 48, kGap = 4, kCols = 3;
 
 Rect itemRect(int i) {
     int colW = (kGridX1 - kGridX0 - (kCols - 1) * kGap) / kCols;
@@ -111,12 +242,15 @@ void drawHome() {
         frame.card(r.x0, r.y0, r.x1, r.y1, 8, CARD, AXIS);
         frame.fillRoundRect(r.x0, r.y0, r.x0 + 5, r.y1, 3, CYAN);
         const Font &f = frame.textWidth(FONT_MEDIUM, kItems[i].label) <= r.x1 - r.x0 - 32 ? FONT_MEDIUM : FONT_SMALL;
-        frame.text(f, r.x0 + 14, r.y0 + 14, kItems[i].label, WHITE);
-        frame.text(FONT_SMALL, r.x0 + 14, r.y1 - 22, kItems[i].sub, GRAY);
-        frame.text(FONT_SMALL, r.x1 - 16, r.y0 + 14, ">", CYAN);
+        frame.text(f, r.x0 + 14, r.y0 + 5, kItems[i].label, WHITE);
+        frame.text(FONT_SMALL, r.x0 + 14, r.y1 - 20, kItems[i].sub, GRAY);
+        frame.text(FONT_SMALL, r.x1 - 16, r.y0 + 6, ">", CYAN);
     }
     footer("To leave a tool, hold the top-right corner of this screen for 1 second.", GRAY);
     frame.present();
+    std::string st = "RUI|HOME|";
+    for (int i = 0; i < ITEM_COUNT; i++) st += sf("%s%s~%s", i ? ";" : "", kItems[i].label, kItems[i].sub);
+    publish(st);
 }
 
 // -- MOTOR TEMPS --
@@ -140,6 +274,16 @@ void drawTemps() {
     for (const dashboard::MotorReading &r : dashboard::readMotors(intake2, "Intake")) mech.push_back(r);
     mech.push_back(dashboard::readMotor(claw_arm, "CARM", "Arm"));
     sections.push_back({"LIFT, INTAKE, CLAW ARM", CYAN, mech});
+
+    std::string st = "RUI|TEMPS|";
+    for (size_t s = 0; s < sections.size(); s++) {
+        st += sf("%s%s:", s ? "#" : "", sections[s].label);
+        for (size_t i = 0; i < sections[s].motors.size(); i++) {
+            const dashboard::MotorReading &m = sections[s].motors[i];
+            st += sf("%s%s,%.1f,%d,%d", i ? ";" : "", m.name, m.connected ? m.temp : 0.0, m.connected ? 1 : 0, m.overTemp ? 1 : 0);
+        }
+    }
+    publish(st);
 
     header("MOTOR TEMPS", nullptr, true);
     const int left = 15, right = 465, gap = 6, perRow = 5, tileH = 38, pitch = 53;
@@ -207,6 +351,7 @@ void drawConfirm() {
     frame.card(150, 160, 330, 205, 8, CARD, CYAN);
     frame.text(FONT_MEDIUM, 240, 172, "START", GREEN, Canvas::CENTER);
     frame.present();
+    publish("RUI|TEST_CONFIRM|");
 }
 const Rect kStart = {150, 160, 330, 205};
 
@@ -237,6 +382,10 @@ void drawTest() {
     else snprintf(msg, sizeof(msg), "testing %d of %d...", answered + failed + 1, (int)tests.size());
     footer(msg, failed ? RED : (testFinished ? GREEN : CYAN));
     frame.present();
+    std::string st = sf("RUI|TEST_RUN|%d|%d|", testFinished ? 1 : 0, testAborted ? 1 : 0);
+    for (size_t i = 0; i < tests.size(); i++)
+        st += sf("%s%s,%d,%d,%d", i ? ";" : "", tests[i].label, tests[i].port, tests[i].reversed ? 1 : 0, tests[i].state);
+    publish(st);
 }
 
 // Spins each motor on a fresh handle for a moment and sees whether it answered.
@@ -252,7 +401,9 @@ void runMotorTest() {
     for (TestEntry &e : tests) {
         pros::screen_touch_status_s_t t = pros::screen::touch_status();
         bool down = t.touch_status != pros::E_TOUCH_RELEASED;
-        if (down && !wasTouched && inRect(kBack, t.x, t.y)) {
+        int rx, ry;
+        bool remoteBack = takeLinkTouch(rx, ry) && inRect(kBack, rx, ry); // BACK clicked on the laptop
+        if ((down && !wasTouched && inRect(kBack, t.x, t.y)) || remoteBack) {
             testAborted = true;
             break;
         }
@@ -275,7 +426,8 @@ void runMotorTest() {
 
 // Runs one of the full-screen tools. They return when the driver holds the screen's top-right
 // corner; wait for the finger to lift so that touch doesn't also press something here.
-void runTool(void (*tool)()) {
+void runTool(const char *name, void (*tool)()) {
+    publish(sf("RUI|TOOL|%s|", name)); // the laptop shows which tool the brain is in (it cannot mirror them)
     tool();
     while (pros::screen::touch_status().touch_status != pros::E_TOUCH_RELEASED) pros::delay(20);
 }
@@ -284,6 +436,7 @@ void runTool(void (*tool)()) {
 
 void driverMenuControl() {
     driverMenuActive = true;
+    startLink();
     pros::delay(100); // let the dashboard task notice and stop drawing
     controller.rumble("-");
     Screen screen = Screen::HOME;
@@ -296,20 +449,30 @@ void driverMenuControl() {
         bool tap = down && !wasTouched;
         wasTouched = down;
         uint32_t nowMs = pros::millis();
+        int tx = t.x, ty = t.y;
+        int rx, ry;
+        if (takeLinkTouch(rx, ry)) { // a click in the laptop window counts exactly like a tap on the screen
+            tap = true;
+            tx = rx;
+            ty = ry;
+        }
 
         if (tap) {
             switch (screen) {
             case Screen::HOME:
                 for (int i = 0; i < ITEM_COUNT; i++) {
-                    if (!inRect(itemRect(i), t.x, t.y)) continue;
+                    if (!inRect(itemRect(i), tx, ty)) continue;
                     redraw = true;
                     switch (i) {
                     case ITEM_DRIVE:
+                        publish("RUI|DRIVE|");
                         driverMenuActive = false;
                         return;
-                    case ITEM_PID: runTool(pidTunerControl); break;
-                    case ITEM_PLANNER: runTool(pointPlannerControl); break;
-                    case ITEM_LIFT: runTool(liftTunerControl); break;
+                    case ITEM_PID: runTool("PID", pidTunerControl); break;
+                    case ITEM_PLANNER: runTool("PLANNER", laptopPlanScreen); break; // the map planner; the old editor is a button on it
+                    case ITEM_LIFT: runTool("LIFT", liftTunerControl); break;
+                    case ITEM_INTAKE: runTool("INTAKE", intakeTunerControl); break;
+                    case ITEM_DISTANCE: runTool("DISTANCE", distanceDiagControl); break;
                     case ITEM_TEST: screen = Screen::TEST_CONFIRM; break;
                     case ITEM_TEMPS: screen = Screen::TEMPS; break;
                     }
@@ -318,23 +481,23 @@ void driverMenuControl() {
                 }
                 break;
             case Screen::TEMPS:
-                if (inRect(kBack, t.x, t.y)) {
+                if (inRect(kBack, tx, ty)) {
                     screen = Screen::HOME;
                     redraw = true;
                 }
                 break;
             case Screen::TEST_CONFIRM:
-                if (inRect(kBack, t.x, t.y)) {
+                if (inRect(kBack, tx, ty)) {
                     screen = Screen::HOME;
                     redraw = true;
-                } else if (inRect(kStart, t.x, t.y)) {
+                } else if (inRect(kStart, tx, ty)) {
                     screen = Screen::TEST_RUN;
                     runMotorTest();
                     wasTouched = true;
                 }
                 break;
             case Screen::TEST_RUN:
-                if (inRect(kBack, t.x, t.y)) {
+                if (inRect(kBack, tx, ty)) {
                     screen = Screen::HOME;
                     redraw = true;
                 }

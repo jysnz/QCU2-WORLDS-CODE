@@ -5,7 +5,7 @@
 #include "functions.hpp"
 #include "lift_tuning.hpp"
 #include "pid_tuner.hpp"
-#include "point_planner.hpp"
+#include "path_planner.hpp"
 #include "lemlib/api.hpp"
 #include "motors.hpp"
 #include "pros/abstract_motor.hpp"
@@ -63,10 +63,11 @@ lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sens
 // ─────────────────────────────────────────────────────────────────────────────
 void initialize() {
     fieldctl::setVexnet(VEXNET_ENABLED);
+    driverMenuStartLink(); // the laptop window (tools/remote_touch.py) can connect from now on
 
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
-    lift.set_current_limit_all(2000);
+    // (No current limit set on the lift now -- add yours here: lift.set_current_limit_all(<mA>);)
     // Lift position is counted from wherever it sits at startup, so power on
     // with the lift fully down - that becomes 0.
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
@@ -87,7 +88,7 @@ void initialize() {
         s.centerRight = {"MECHANISMS", mechanisms};
     };
     // The driver menu and the tools it opens (PID tuner / point planner / lift tuner) own the brain screen
-    screen.screenBusy = [] { return driverMenuActive || pidTunerActive || pointPlannerActive || liftTunerActive; };
+    screen.screenBusy = [] { return driverMenuActive || pidTunerActive || pathPlannerActive || liftTunerActive; };
     dashboard::startScreenTask(screen);
 }
 
@@ -109,4 +110,7 @@ void opcontrol() {
     if (enterMenu) driverMenuControl();
     jawheadControl();
 }
-void autonomous() { runAutonomous(); }
+void autonomous() {
+    homeLift(); // lowers the lift to the hard stop and calls that 0 (once per run; driver control reuses it)
+    runAutonomous();
+}

@@ -2,9 +2,10 @@
 
 // ─── PID Tuner ───────────────────────────────────────────────────────────────
 // On-robot tuning mode for the LemLib angular/lateral controllers.
-// Open it from the driver menu (hold DPAD-LEFT when driver control starts, then
-// tap PID TUNING); hold the top-right corner of the screen to go back. See the full
-// controls reference at the top of src/pid_tuner.cpp -- short version:
+// Enter by tapping "PID TUNING" on the driver menu shown at the start of
+// driver control (see driver_menu.hpp); tap BACK (top-right of the brain
+// screen) to exit back to that menu. See the full controls reference at
+// the top of src/pid_tuner.cpp -- short version:
 //
 //   Y            toggle which controller LEFT/RIGHT/UP/DOWN edit (ANGULAR
 //                or LATERAL); doesn't affect R1/R2 below
@@ -12,7 +13,7 @@
 //   L1/L2        move the digit cursor (coarser/finer)
 //   UP/DOWN      adjust the selected gain by the current digit's step
 //   A/X/B        run a single test (small / big / return) in whichever
-//                mode Y currently has selected
+//                mode Y currently has selected; the pose is zeroed first
 //   R1           run the ANGULAR sweep (chained turns + return-to-start),
 //                regardless of Y mode
 //   R2           run the LATERAL sweep (chained drives + return-to-start),
@@ -22,6 +23,9 @@
 // of each run; the controller screen shows gains and the last run's
 // overshoot / settle time / final error. Full CSV telemetry streams over
 // `pros terminal`.
+//
+// (The debi branch can also drive this page from a laptop window. That window is not on this branch;
+// the hooks it used are stubs in driver_menu.cpp, so the page is brain-and-controller only here.)
 void pidTunerControl();
 
 // True while the tuner owns the brain screen; the HUD task in main.cpp must

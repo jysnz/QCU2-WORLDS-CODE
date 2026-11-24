@@ -17,6 +17,8 @@
 //                    LT LEVEL angle name comboIndex
 //                    LT ACT angle when dev cmd speed dur [combo button mode] | LT APPLY
 //                    (the last three are optional so older SD files and tools still load)
+//                    LT INTK button trigger combo   (trigger 0 pressed / 1 released)
+//   LTC has a sixth section after the actions: intake = button,trigger,combo;..
 //                    LT GO deg | LT JOG deg | LT STOP | LT SAVE
 //                    LT TESTACT i | LT TESTCOMBO i | LT TESTSTEP level step | LT RUNLEVEL i
 // The SD file (/usd/lift_tuning.txt) is just the BEGIN..APPLY lines, replayed at boot.
@@ -75,6 +77,7 @@ static void sanitizeTuning(LiftTuning &t) {
     t.comboCount = std::clamp(t.comboCount, 0, LIFT_MAX_COMBOS);
     t.levelCount = std::clamp(t.levelCount, 0, LIFT_MAX_LEVELS);
     t.actionCount = std::clamp(t.actionCount, 0, LIFT_MAX_ACTIONS);
+    t.intakeCount = std::clamp(t.intakeCount, 0, LIFT_MAX_INTAKE);
     t.forwardLimit = std::max(t.forwardLimit, 1.0);
     for (int i = 0; i < t.comboCount; i++) {
         t.combos[i].name[sizeof(t.combos[i].name) - 1] = 0;
@@ -91,6 +94,11 @@ static void sanitizeTuning(LiftTuning &t) {
         if (t.actions[i].combo < 0 || t.actions[i].combo >= t.comboCount) t.actions[i].combo = -1;
         t.actions[i].button = std::clamp(t.actions[i].button, 0, (int)LIFT_BUTTON_COUNT - 1);
         t.actions[i].mode = std::clamp(t.actions[i].mode, 0, 1);
+    }
+    for (int i = 0; i < t.intakeCount; i++) {
+        t.intake[i].button = std::clamp(t.intake[i].button, 1, (int)LIFT_BUTTON_COUNT - 1);
+        t.intake[i].trigger = std::clamp(t.intake[i].trigger, 0, 1);
+        if (t.intake[i].combo < 0 || t.intake[i].combo >= t.comboCount) t.intake[i].combo = -1;
     }
 }
 
@@ -110,6 +118,7 @@ static bool parseSettingLine(const char *line, LiftTuning &t) {
         t.comboCount = 0;
         t.levelCount = 0;
         t.actionCount = 0;
+        t.intakeCount = 0;
     } else if (sscanf(line, "LT COMBO %11s", cname) == 1) {
         if (t.comboCount < LIFT_MAX_COMBOS) {
             LiftCombo &cb = t.combos[t.comboCount++];
@@ -142,6 +151,8 @@ static bool parseSettingLine(const char *line, LiftTuning &t) {
             }
             t.actions[t.actionCount++] = act;
         }
+    } else if (sscanf(line, "LT INTK %d %d %d", &a, &b, &c) == 3) {
+        if (t.intakeCount < LIFT_MAX_INTAKE) t.intake[t.intakeCount++] = LiftIntake{a, b, c};
     } else {
         return false;
     }
@@ -164,6 +175,7 @@ static void writeSettings(FILE *f, const LiftTuning &t) {
         fprintf(f, "LT ACT %.2f %d %d %d %d %d %d %d %d\n", a.angle, a.when, a.step.device, a.step.cmd, a.step.speed,
                 a.step.durationMs, a.combo, a.button, a.mode);
     }
+    for (int i = 0; i < t.intakeCount; i++) fprintf(f, "LT INTK %d %d %d\n", t.intake[i].button, t.intake[i].trigger, t.intake[i].combo);
     fprintf(f, "LT APPLY\n");
 }
 
@@ -270,7 +282,7 @@ static void goToLevel(int idx, bool withCombo, uint32_t nowMs) {
     if (cfg.levelCount == 0) return;
     curLevel = idx;
     combo.active = false;
-    targetAngle = cfg.levels[idx].angle;
+    targetAngle = std::max(LIFT_FLOOR_DEG, cfg.levels[idx].angle); // never below 0
     targetActive = true;
     targetSetMs = nowMs;
     comboOnArrival = withCombo && cfg.levels[idx].combo >= 0;
@@ -313,6 +325,12 @@ void liftTuningBeginDriver() {
 static void serviceSlots(uint32_t nowMs) {
     for (int d = 0; d < LIFT_FIRST_PISTON; d++) {
         if (!slots[d].active) continue;
+        // 0 is the lift's only limit: a step that drives it down stops at the floor.
+        if (d == LIFT_DEV_LIFT && slots[d].velocity < 0 && liftPositionDeg() <= LIFT_FLOOR_DEG) {
+            slots[d].active = false;
+            motorFor(d)->move_velocity(0);
+            continue;
+        }
         if ((int32_t)(nowMs - slots[d].until) >= 0) {
             slots[d].active = false;
             motorFor(d)->move_velocity(0);
@@ -332,11 +350,17 @@ static const pros::controller_digital_e_t kLiftButtons[LIFT_BUTTON_COUNT] = {
 static bool actPrevHeld[LIFT_MAX_ACTIONS];  // button state last tick (tap detection)
 static bool actArmed[LIFT_MAX_ACTIONS];     // TAP: armed, waiting for the lift to reach the angle
 static bool actHoldFired[LIFT_MAX_ACTIONS]; // HOLD: already fired during this press
+static bool intakeHeld[LIFT_MAX_INTAKE];    // intake button state last tick (press / release edges)
+static bool intakePageActive = false;       // the on-robot INTAKE TUNER screen is open (L1 / L2 are free there)
 static bool liftLock = false;               // an angle combo owns the lift until R1/R2 are released
 static int liftLockButton = LIFT_BTN_NONE;
 
 static void resetActionState() {
     for (int i = 0; i < LIFT_MAX_ACTIONS; i++) actPrevHeld[i] = actArmed[i] = actHoldFired[i] = false;
+    // A button that is already down when the state resets must not count as a fresh press.
+    for (int i = 0; i < LIFT_MAX_INTAKE; i++)
+        intakeHeld[i] = i < cfg.intakeCount && cfg.intake[i].button > LIFT_BTN_NONE &&
+                        controller.get_digital(kLiftButtons[cfg.intake[i].button]);
     liftLock = false;
     liftLockButton = LIFT_BTN_NONE;
 }
@@ -346,6 +370,17 @@ static bool comboDrivesLift(int comboIdx) {
     for (int j = 0; j < cfg.combos[comboIdx].stepCount; j++)
         if (cfg.combos[comboIdx].steps[j].device == LIFT_DEV_LIFT) return true;
     return false;
+}
+
+// Starts a combo for a button-driven function; a combo that moves the lift locks R1/R2 out until
+// they are released (see liftTuningManualLiftBlocked()).
+static void fireCombo(int comboIdx, int button, uint32_t nowMs) {
+    if (comboIdx < 0 || comboIdx >= cfg.comboCount) return;
+    startCombo(comboIdx, nowMs);
+    if (comboDrivesLift(comboIdx)) {
+        liftLock = true;
+        liftLockButton = button;
+    }
 }
 
 // Plays what an angle function is set to do: its combo, or its single step.
@@ -406,6 +441,22 @@ void liftTuningStep() {
         fireAction(a, nowMs);
     }
     lastPos = pos;
+
+    // Intake functions: a combo when an intake button is pressed (or released). Like the other
+    // button-gated functions they wait for driver control, because the lift tuner owns the buttons --
+    // except on the INTAKE TUNER screen, where L1 / L2 are free so you can try them.
+    for (int i = 0; i < cfg.intakeCount; i++) {
+        const LiftIntake &f = cfg.intake[i];
+        if ((liftTunerActive && !intakePageActive) || f.button <= LIFT_BTN_NONE) {
+            intakeHeld[i] = false;
+            continue;
+        }
+        bool held = controller.get_digital(kLiftButtons[f.button]);
+        bool pressedEdge = held && !intakeHeld[i], releasedEdge = !held && intakeHeld[i];
+        intakeHeld[i] = held;
+        if ((f.trigger == LIFT_TRIG_PRESSED && pressedEdge) || (f.trigger == LIFT_TRIG_RELEASED && releasedEdge))
+            fireCombo(f.combo, f.button, nowMs);
+    }
 
     // The lift lock lifts once the combo is done and R1 / R2 / the trigger button are all let go.
     if (liftLock && !combo.active && !slots[LIFT_DEV_LIFT].active &&
@@ -480,49 +531,48 @@ void setStatus(const char *msg) {
     statusUntilMs = pros::millis() + 2500;
 }
 
-void listenerTask(void *) {
-    char line[160];
-    while (true) {
-        if (!fgets(line, sizeof(line), stdin)) {
-            pros::delay(10);
-            continue;
-        }
-        if (strncmp(line, "LT ", 3) != 0) continue;
-        double x;
-        int i, j;
-        mtx.take();
-        if (strncmp(line, "LT BEGIN", 8) == 0) {
-            pending = cfg;
-        } else if (strncmp(line, "LT APPLY", 8) == 0) {
-            sanitizeTuning(pending);
-            cfg = pending;
-            if (curLevel >= cfg.levelCount) curLevel = -1;
-            combo.active = false;
-            resetActionState(); // action indexes may have shifted: nothing stays armed
-            req.configChanged = true;
-        } else if (parseSettingLine(line, pending)) {
-        } else if (sscanf(line, "LT GO %lf", &x) == 1) {
-            req.go = true;
-            req.goAngle = x;
-        } else if (sscanf(line, "LT JOG %lf", &x) == 1) {
-            req.jogPending = true;
-            req.jog = x;
-        } else if (strncmp(line, "LT STOP", 7) == 0) {
-            req.stop = true;
-        } else if (strncmp(line, "LT SAVE", 7) == 0) {
-            req.save = true;
-        } else if (sscanf(line, "LT TESTACT %d", &i) == 1) {
-            req.testAct = i;
-        } else if (sscanf(line, "LT TESTSTEP %d %d", &i, &j) == 2) {
-            req.testStepLevel = i;
-            req.testStepIdx = j;
-        } else if (sscanf(line, "LT TESTCOMBO %d", &i) == 1) {
-            req.testCombo = i;
-        } else if (sscanf(line, "LT RUNLEVEL %d", &i) == 1) {
-            req.runLevel = i;
-        }
-        mtx.give();
+// One line from the laptop tool ("LT ..."). The driver menu's link reader is the only thing that reads
+// the USB input and hands lines here (two readers would steal lines from each other), so this runs
+// whether or not a tuner screen is open. Settings edits always apply; commands that move things only
+// act while a tuner screen is open -- a stale "GO" must not move the lift when the tuner opens later.
+void handleLine(const char *line) {
+    if (strncmp(line, "LT ", 3) != 0) return;
+    double x;
+    int i, j;
+    mtx.take();
+    if (strncmp(line, "LT BEGIN", 8) == 0) {
+        pending = cfg;
+    } else if (strncmp(line, "LT APPLY", 8) == 0) {
+        sanitizeTuning(pending);
+        cfg = pending;
+        if (curLevel >= cfg.levelCount) curLevel = -1;
+        combo.active = false;
+        resetActionState(); // action indexes may have shifted: nothing stays armed
+        req.configChanged = true;
+    } else if (parseSettingLine(line, pending)) {
+    } else if (!liftTunerActive) {
+        // no tuner screen open: ignore everything that would move a motor
+    } else if (sscanf(line, "LT GO %lf", &x) == 1) {
+        req.go = true;
+        req.goAngle = x;
+    } else if (sscanf(line, "LT JOG %lf", &x) == 1) {
+        req.jogPending = true;
+        req.jog = x;
+    } else if (strncmp(line, "LT STOP", 7) == 0) {
+        req.stop = true;
+    } else if (strncmp(line, "LT SAVE", 7) == 0) {
+        req.save = true;
+    } else if (sscanf(line, "LT TESTACT %d", &i) == 1) {
+        req.testAct = i;
+    } else if (sscanf(line, "LT TESTSTEP %d %d", &i, &j) == 2) {
+        req.testStepLevel = i;
+        req.testStepIdx = j;
+    } else if (sscanf(line, "LT TESTCOMBO %d", &i) == 1) {
+        req.testCombo = i;
+    } else if (sscanf(line, "LT RUNLEVEL %d", &i) == 1) {
+        req.runLevel = i;
     }
+    mtx.give();
 }
 
 // Appends to buf (size n) at offset o.
@@ -557,6 +607,9 @@ void sendConfig(const LiftTuning &t) {
         put(buf, sizeof(buf), o, "%s%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d", i ? ";" : "", a.angle, a.when, a.step.delayMs, a.step.device,
             a.step.cmd, a.step.speed, a.step.durationMs, a.combo, a.button, a.mode);
     }
+    put(buf, sizeof(buf), o, "|");
+    for (int i = 0; i < t.intakeCount; i++)
+        put(buf, sizeof(buf), o, "%s%d,%d,%d", i ? ";" : "", t.intake[i].button, t.intake[i].trigger, t.intake[i].combo);
     printf("%s\n", buf);
 }
 
@@ -614,16 +667,51 @@ void drawScreen(const LiftTuning &t, double live, int sel, bool goalActive, bool
     frame.present();
 }
 
+// The INTAKE TUNER page: one row per intake function (button, when, combo).
+void drawIntakeScreen(const LiftTuning &t, int sel, bool comboRunning) {
+    for (int y = 0; y < Canvas::H; y++) frame.fillRect(0, y, Canvas::W, y + 1, mixColor(0x0D1119, 0x07090D, y * 255 / (Canvas::H - 1)));
+    frame.fillRect(0, 0, Canvas::W, 40, C_HEADER);
+    frame.fillRect(0, 40, Canvas::W, 41, C_DIVIDER);
+    frame.text(FONT_LARGE, 14, 7, "INTAKE TUNER", C_TEXT);
+    if (comboRunning) frame.text(FONT_SMALL, 466, 14, "COMBO...", C_WARM, Canvas::RIGHT);
+    frame.text(FONT_SMALL, 14, 50, "When an intake button is pressed or released, play a combo.", C_DIM);
+
+    const int rx0 = 14, rx1 = 466, rowH = 30, ry0 = 74;
+    for (int r = 0; r < LIFT_MAX_INTAKE; r++) {
+        int y0 = ry0 + r * (rowH + 6), y1 = y0 + rowH;
+        if (r >= t.intakeCount) {
+            if (r == t.intakeCount) {
+                frame.card(rx0, y0, rx1, y1, 5, C_HEADER, C_EDGE);
+                frame.text(FONT_SMALL, rx0 + 12, y0 + 8, t.intakeCount == 0 ? "No intake functions yet. Press X to add one." : "Press X to add another", C_DIM);
+            }
+            continue;
+        }
+        const LiftIntake &f = t.intake[r];
+        bool s = r == sel;
+        frame.card(rx0, y0, rx1, y1, 5, s ? mixColor(C_TILE, C_INFO, 50) : C_TILE, s ? C_INFO : C_EDGE);
+        frame.text(FONT_SMALL, rx0 + 12, y0 + 8, f.button == LIFT_BTN_L2 ? "L2  outtake" : "L1  intake", s ? C_TEXT : C_DIM);
+        frame.text(FONT_SMALL, rx0 + 150, y0 + 8, f.trigger == LIFT_TRIG_RELEASED ? "when released" : "when pressed", s ? C_TEXT : C_DIM);
+        bool hasCombo = f.combo >= 0 && f.combo < t.comboCount;
+        frame.text(FONT_SMALL, rx1 - 12, y0 + 8, hasCombo ? t.combos[f.combo].name : "no combo", hasCombo ? C_OK : C_DIM, Canvas::RIGHT);
+    }
+    bool showMsg = pros::millis() < statusUntilMs;
+    frame.text(FONT_SMALL, 10, 222, showMsg ? statusMsg : "UP/DN pick  L/R combo  A when  Y button  X add  B remove  R2 SD", showMsg ? C_OK : C_DIM);
+    frame.present();
+}
+
 } // namespace
 
-void liftTunerControl() {
+// page 0 = the lift tuner, page 1 = the intake tuner. Both share the laptop link, the saving and
+// the executor; only the controller handling and the brain screen differ.
+static void runTuner(int page) {
     liftTunerActive = true;
-    static pros::Task listener(listenerTask, nullptr, "lift tuner link");
+    intakePageActive = page == 1;
     int sel = 0;
     bool goalActive = false;
     double goalAngle = 0;
     bool jogging = false;
     bool prevUp = false, prevDown = false, prevA = false, prevY = false, prevR1 = false, prevR2 = false;
+    bool prevLeft = false, prevRight = false, prevX = false, prevB = false; // intake page only
     uint32_t lastStateMs = 0, lastConfigMs = 0, lastDrawMs = 0, lastPrintMs = 0;
     int printRow = 0;
     liftTuningBeginDriver(); // fresh executor state; the encoder stays as it is (the start position is not applied)
@@ -641,6 +729,7 @@ void liftTunerControl() {
             }
             mtx.give();
             liftTunerActive = false;
+            intakePageActive = false;
             controller.rumble("-");
             return;
         }
@@ -670,7 +759,7 @@ void liftTunerControl() {
         }
         if (r.go) {
             goalActive = true;
-            goalAngle = r.goAngle;
+            goalAngle = std::max(LIFT_FLOOR_DEG, r.goAngle); // never below 0
             mtx.take();
             targetActive = false;
             mtx.give();
@@ -703,6 +792,65 @@ void liftTunerControl() {
         if (goalActive && std::fabs(live - goalAngle) < 3.0) goalActive = false;
 
         // -- Controller --
+        if (page == 1) {
+            // INTAKE TUNER: UP/DOWN pick a function, LEFT/RIGHT change its combo, A flips pressed /
+            // released, Y flips L1 / L2, X adds one, B removes the picked one, R2 saves to the SD card.
+            bool up = controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP);
+            bool down = controller.get_digital(pros::E_CONTROLLER_DIGITAL_DOWN);
+            bool left = controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT);
+            bool right = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
+            bool a = controller.get_digital(pros::E_CONTROLLER_DIGITAL_A);
+            bool y = controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y);
+            bool x = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
+            bool b = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+            bool r2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+            bool changed = false;
+            mtx.take();
+            int n = cfg.intakeCount;
+            sel = n > 0 ? std::clamp(sel, 0, n - 1) : 0;
+            if (n > 0 && up && !prevUp) sel = (sel + n - 1) % n;
+            if (n > 0 && down && !prevDown) sel = (sel + 1) % n;
+            if (n > 0) {
+                LiftIntake &f = cfg.intake[sel];
+                bool stepL = left && !prevLeft, stepR = right && !prevRight;
+                if (stepL || stepR) { // none -> combo 1 -> combo 2 ... -> none
+                    int count = cfg.comboCount + 1;
+                    f.combo = ((f.combo + 1 + (stepR ? 1 : -1) + count) % count) - 1;
+                    changed = true;
+                }
+                if (a && !prevA) {
+                    f.trigger = f.trigger == LIFT_TRIG_PRESSED ? LIFT_TRIG_RELEASED : LIFT_TRIG_PRESSED;
+                    changed = true;
+                }
+                if (y && !prevY) {
+                    f.button = f.button == LIFT_BTN_L1 ? LIFT_BTN_L2 : LIFT_BTN_L1;
+                    changed = true;
+                }
+                if (b && !prevB) { // remove (last: nothing below uses `f`)
+                    for (int k = sel; k < n - 1; k++) cfg.intake[k] = cfg.intake[k + 1];
+                    cfg.intakeCount--;
+                    sel = std::max(0, std::min(sel, cfg.intakeCount - 1));
+                    changed = true;
+                }
+            }
+            if (x && !prevX && cfg.intakeCount < LIFT_MAX_INTAKE) {
+                cfg.intake[cfg.intakeCount++] = LiftIntake{};
+                sel = cfg.intakeCount - 1;
+                changed = true;
+            }
+            mtx.give();
+            if (changed) {
+                lastConfigMs = 0; // the laptop sees it on the next tick
+                setStatus("Intake function updated");
+            }
+            if (r2 && !prevR2) {
+                bool ok = saveToSd();
+                savedState = ok ? 1 : -1;
+                setStatus(ok ? "Saved to SD card" : "No SD card!");
+            }
+            prevUp = up, prevDown = down, prevLeft = left, prevRight = right;
+            prevA = a, prevY = y, prevX = x, prevB = b, prevR2 = r2;
+        } else {
         mtx.take();
         int rows = cfg.levelCount + 1;
         mtx.give();
@@ -724,7 +872,7 @@ void liftTunerControl() {
             mtx.take();
             targetActive = false;
             mtx.give();
-            lift.move_velocity(jogUp ? 60 : -60);
+            lift.move_velocity(jogUp ? 60 : (live <= LIFT_FLOOR_DEG ? 0 : -60)); // down stops at 0
         } else if (jogging) {
             jogging = false;
             lift.move_velocity(0);
@@ -743,7 +891,7 @@ void liftTunerControl() {
         }
         if (y && !prevY) { // go to the selected row's angle
             mtx.take();
-            goalAngle = sel == 0 ? cfg.startPosition : cfg.levels[std::min(sel - 1, cfg.levelCount - 1)].angle;
+            goalAngle = std::max(LIFT_FLOOR_DEG, sel == 0 ? cfg.startPosition : cfg.levels[std::min(sel - 1, cfg.levelCount - 1)].angle);
             targetActive = false;
             mtx.give();
             goalActive = true;
@@ -762,6 +910,7 @@ void liftTunerControl() {
             setStatus(ok ? "Saved to SD card" : "No SD card!");
         }
         prevUp = up, prevDown = down, prevA = a, prevY = y, prevR1 = r1, prevR2 = r2;
+        }
 
         liftTuningStep(); // angle functions, combos and timed steps work in the tuner too
 
@@ -781,11 +930,20 @@ void liftTunerControl() {
         }
         if (nowMs - lastDrawMs >= 100) {
             lastDrawMs = nowMs;
-            drawScreen(snap, live, sel, goalActive || targetActive, comboRunning);
+            if (page == 1) drawIntakeScreen(snap, sel, comboRunning);
+            else drawScreen(snap, live, sel, goalActive || targetActive, comboRunning);
         }
         if (nowMs - lastPrintMs >= 120) { // controller screen: alternate two rows (row 0 is fieldctl's)
             lastPrintMs = nowMs;
-            if (printRow == 0) controller.print(1, 0, "Lift %7.1f      ", live);
+            if (page == 1) {
+                if (printRow == 0) controller.print(1, 0, "Intake tuner    ");
+                else if (snap.intakeCount == 0) controller.print(2, 0, "none: X adds one");
+                else {
+                    const LiftIntake &f = snap.intake[std::min(sel, snap.intakeCount - 1)];
+                    controller.print(2, 0, "> %s %c %-8s", f.button == LIFT_BTN_L2 ? "L2" : "L1", f.trigger == LIFT_TRIG_RELEASED ? 'r' : 'p',
+                                     f.combo >= 0 && f.combo < snap.comboCount ? snap.combos[f.combo].name : "none");
+                }
+            } else if (printRow == 0) controller.print(1, 0, "Lift %7.1f      ", live);
             else if (sel == 0) controller.print(2, 0, "> START %7.1f  ", snap.startPosition);
             else controller.print(2, 0, "> %-6s %7.1f ", snap.levels[std::min(sel - 1, snap.levelCount - 1)].name,
                                    snap.levels[std::min(sel - 1, snap.levelCount - 1)].angle);
@@ -794,3 +952,7 @@ void liftTunerControl() {
         pros::delay(20);
     }
 }
+
+void liftTuningHandleLine(const char *line) { handleLine(line); }
+void liftTunerControl() { runTuner(0); }
+void intakeTunerControl() { runTuner(1); }

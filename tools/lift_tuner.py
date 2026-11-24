@@ -9,7 +9,7 @@ driver control starts to open the driver menu, then tap LIFT TUNER).
 Needs pyserial (pip install pyserial). Close `pros terminal` first -- only one
 program can hold the brain's serial port.
 
-WHAT YOU CAN SET (four tabs)
+WHAT YOU CAN SET (five tabs)
     Start & limits      START POSITION: the angle the lift is assumed to be at when
                         driver control starts. FORWARD LIMIT: how far X may drive it.
     Combos              Your library of named combos -- add as many as you like and
@@ -25,6 +25,9 @@ WHAT YOU CAN SET (four tabs)
                         HOLD = only while it is held, TAP = tap it to arm, then it fires
                         once when the lift gets there. A combo that moves the lift (e.g.
                         lift BACKWARD) wins over a held R1.
+    Intake              "When intake button L1 / L2 is pressed (or released), play this
+                        COMBO." The intake keeps spinning as usual. Open INTAKE TUNER in the
+                        robot's driver menu to try it.
 
 THE WORKFLOW
     1. Move the lift (jog buttons, click the gauge, or X / B in the on-robot tuner) and
@@ -132,6 +135,9 @@ WHENS = ["Going up", "Going down", "Either way"]
 BUTTONS = ["Any (no button)", "R1", "R2", "L1", "L2", "Up", "Down", "Left", "Right", "X", "B", "Y", "A"]  # index == LiftButton
 BTN_MODES = ["Hold", "Tap"]
 SINGLE_STEP = "A single step (set below)"
+INTAKE_BUTTONS = [("L1 (intake)", 3), ("L2 (outtake)", 4)]   # (label, LiftButton)
+INTAKE_WHEN = ["Pressed", "Released"]                          # index == LiftTrigger
+MAX_INTAKE = 4
 JOGS = (-25, -5, -1, 1, 5, 25)
 
 
@@ -164,7 +170,17 @@ def normalize_model(m):
         a.setdefault("combo", -1)
         a.setdefault("button", 0)
         a.setdefault("mode", 0)
+    m.setdefault("intake", [])
+    for f in m["intake"]:
+        f.setdefault("button", 3)
+        f.setdefault("trigger", 0)
+        f.setdefault("combo", -1)
     return m
+
+
+def new_intake(button=3, trigger=0, combo=-1):
+    """An intake function: when intake BUTTON is pressed (trigger 0) or released (1), play COMBO."""
+    return {"button": button, "trigger": trigger, "combo": combo}
 
 
 def default_model():
@@ -198,7 +214,8 @@ def sample_model():
             "actions": [
                 new_action(300.0, 0, new_step(dev=6, cmd=3)),
                 new_action(200.0, 1, new_step(dev=6, cmd=4)),
-                new_action(650.0, 0, combo=3, button=1, mode=0)]}
+                new_action(650.0, 0, combo=3, button=1, mode=0)],
+            "intake": [new_intake(3, 0, 1)]}
 
 
 def step_summary(s, with_delay=True):
@@ -254,6 +271,8 @@ def model_to_commands(m):
         s = a["step"]
         out.append(f"LT ACT {a['angle']:.2f} {a['when']} {s['dev']} {s['cmd']} {s['speed']} {s['dur']} "
                    f"{a.get('combo', -1)} {a.get('button', 0)} {a.get('mode', 0)}")
+    for f in m.get("intake", []):
+        out.append(f"LT INTK {f['button']} {f['trigger']} {f['combo']}")
     out.append("LT APPLY")
     return out
 
@@ -264,7 +283,7 @@ def parse_ltc(line):
         parts = line.rstrip("\r\n").split("|")
         en, start, limit = parts[1].split(",")
         m = {"startEnabled": en == "1", "start": float(start), "limit": float(limit),
-             "combos": [], "levels": [], "actions": []}
+             "combos": [], "levels": [], "actions": [], "intake": []}
         for cb in filter(None, parts[2].split(";")):
             name, steps = cb.split(":", 1)
             sl = []
@@ -283,6 +302,10 @@ def parse_ltc(line):
                                  "step": {"delay": int(d), "dev": int(dev), "cmd": int(cmd),
                                           "speed": int(sp), "dur": int(du)},
                                  "combo": combo, "button": button, "mode": mode})
+        if len(parts) > 5:   # robots older than the intake tuner do not send this section
+            for ik in filter(None, parts[5].split(";")):
+                b, t, c = (int(x) for x in ik.split(","))
+                m["intake"].append({"button": b, "trigger": t, "combo": c})
         return m
     except (ValueError, IndexError):
         return None
@@ -314,6 +337,9 @@ def code_block(m):
         L.append(f"    t.actions[{i}] = {{{a['angle']:.1f}, {a['when']}, "
                  f"{{0, {s['dev']}, {s['cmd']}, {s['speed']}, {s['dur']}}}, "
                  f"{a.get('combo', -1)}, {a.get('button', 0)}, {a.get('mode', 0)}}};")
+    L.append(f"    t.intakeCount = {len(m.get('intake', []))};")
+    for i, f in enumerate(m.get("intake", [])):
+        L.append(f"    t.intake[{i}] = {{{f['button']}, {f['trigger']}, {f['combo']}}};")
     return "\n".join(L) + "\n"
 
 
@@ -388,6 +414,26 @@ class PacketStream:
         lines = self.text.split("\n")
         self.text = lines.pop()
         return lines
+
+
+def find_brain_ports():
+    """Every serial port that looks like the V5 brain, the likeliest 'User Port' first. The brain shows up as two
+    ports (system + user); only the user one carries the program's text, but the names differ between PCs, so a
+    caller that gets no data from the first should try the next."""
+    import serial.tools.list_ports
+    vex = [p for p in serial.tools.list_ports.comports()
+           if p.vid == 0x2888 or "vex" in ((p.description or "") + (p.manufacturer or "")).lower()]
+
+    def rank(p):
+        d = (p.description or "").lower()
+        if "user" in d:
+            return 0
+        if "x.2" in (p.location or ""):
+            return 1
+        if "communications" in d or "system" in d:
+            return 3
+        return 2
+    return [p.device for p in sorted(vex, key=rank)]
 
 
 def find_brain_port():
@@ -478,7 +524,7 @@ class FakeLink:
             pd = self.pending
             if cmd == "BEGIN":
                 self.pending = {"startEnabled": False, "start": 0.0, "limit": 743.2,
-                                "combos": [], "levels": [], "actions": []}
+                                "combos": [], "levels": [], "actions": [], "intake": []}
             elif cmd == "START" and pd is not None:
                 en, deg = rest.split()
                 pd["startEnabled"], pd["start"] = en == "1", float(deg)
@@ -499,6 +545,9 @@ class FakeLink:
                 pd["actions"].append({"angle": float(a), "when": int(w), "step": {
                     "delay": 0, "dev": int(dev), "cmd": int(c), "speed": int(sp), "dur": int(du)},
                     "combo": ex[0], "button": ex[1], "mode": ex[2]})
+            elif cmd == "INTK" and pd is not None:
+                b, t, c = map(int, rest.split())
+                pd["intake"].append({"button": b, "trigger": t, "combo": c})
             elif cmd == "APPLY" and pd is not None:
                 self.model, self.pending = pd, None
                 self.t_cfg = 0
@@ -530,7 +579,8 @@ class FakeLink:
             ac = ";".join(f"{a['angle']:.2f},{a['when']},0,{a['step']['dev']},{a['step']['cmd']},"
                           f"{a['step']['speed']},{a['step']['dur']},{a.get('combo', -1)},{a.get('button', 0)},"
                           f"{a.get('mode', 0)}" for a in m["actions"])
-            self.lines.put(f"LTC|{1 if m['startEnabled'] else 0},{m['start']:.2f},{m['limit']:.2f}|{cb}|{lv}|{ac}|")
+            ik = ";".join(f"{x['button']},{x['trigger']},{x['combo']}" for x in m.get("intake", []))
+            self.lines.put(f"LTC|{1 if m['startEnabled'] else 0},{m['start']:.2f},{m['limit']:.2f}|{cb}|{lv}|{ac}|{ik}")
 
     def close(self):
         pass
@@ -1307,6 +1357,154 @@ class StepList(tk.Frame):
         self.on_test(i)
 
 
+class IntakePanel(tk.Frame):
+    """Intake button functions: play a combo when an intake button is pressed or released."""
+
+    def __init__(self, parent, app, on_change):
+        bg = parent.cget("bg")
+        super().__init__(parent, bg=bg)
+        self.app, self.on_change = app, on_change
+        self.items, self.combo_names, self.combo_labels = [], [], []
+        cols = [("n", "#", 36, "w", False), ("btn", "Button", 150, "w", False), ("when", "When", 110, "w", False),
+                ("plays", "Plays", 300, "w", True)]
+        self.table = ListTable(self, cols, empty_text="No intake functions yet.", height=4,
+                               on_select=lambda i: (self.load_form(), self.update_state()))
+        self.hint = Note(self, "")
+        form = tk.Frame(self, bg=bg)
+        self.v_btn = tk.StringVar(value=INTAKE_BUTTONS[0][0])
+        self.v_when = tk.StringVar(value=INTAKE_WHEN[0])
+        self.v_combo = tk.StringVar()
+
+        def cell(c, title):
+            f = tk.Frame(form, bg=bg)
+            f.grid(row=0, column=c, sticky="nw", padx=(0, S(16)), pady=(0, S(8)))
+            tk.Label(f, text=title, bg=bg, fg=C.muted, font=fnt(T["caption"])).pack(anchor="w", pady=(0, S(3)))
+            return f
+
+        ttk.Combobox(cell(0, "Button"), textvariable=self.v_btn, values=[b[0] for b in INTAKE_BUTTONS],
+                     state="readonly", width=16, style="App.TCombobox").pack(anchor="w")
+        ttk.Combobox(cell(1, "When"), textvariable=self.v_when, values=INTAKE_WHEN, state="readonly", width=10,
+                     style="App.TCombobox").pack(anchor="w")
+        self.cb_combo = ttk.Combobox(cell(2, "Play combo"), textvariable=self.v_combo, state="readonly", width=26,
+                                     style="App.TCombobox")
+        self.cb_combo.pack(anchor="w")
+
+        row = tk.Frame(self, bg=bg)
+        Btn(row, "Add function", self.add, icon="add", compact=True,
+            tip="Adds the fields above as a NEW intake function.").pack(side="left")
+        self.btnUpdate = Btn(row, "Update function", self.update_sel, compact=True,
+                             tip="Overwrites the selected function with the fields above.")
+        self.btnUpdate.pack(side="left", padx=S(6))
+        self.btnRemove = Btn(row, "", self.remove, icon="delete", variant="dangerq", compact=True,
+                             tip="Remove the selected function.")
+        self.btnRemove.pack(side="left")
+        self.btnTest = Btn(row, "Test function", self.test, icon="play", compact=True,
+                           tip="Plays the selected function's combo on the robot now. Applies unsent edits first.")
+        self.btnTest.pack(side="right")
+        row.pack(side="bottom", fill="x")
+        form.pack(side="bottom", fill="x")
+        self.hint.pack(side="bottom", fill="x", pady=(S(8), S(10)))
+        self.table.pack(fill="both", expand=True)
+        self.update_state()
+
+    def selected(self):
+        return self.table.selected()
+
+    def set_items(self, items):
+        self.items = items
+        self.redraw()
+
+    def set_combo_names(self, names):
+        """The combos a function can play (kept in sync by the app)."""
+        self.combo_names = list(names)
+        self.combo_labels = [f"{i + 1}. {n}" for i, n in enumerate(names)]
+        self.cb_combo["values"] = self.combo_labels
+        if self.v_combo.get() not in self.combo_labels:
+            self.v_combo.set(self.combo_labels[0] if self.combo_labels else "")
+        self.table.set_rows(self._rows(), self.selected())
+
+    def _rows(self):
+        rows = []
+        for i, it in enumerate(self.items):
+            c = it.get("combo", -1)
+            btn = next((lbl for lbl, code in INTAKE_BUTTONS if code == it["button"]), f"button {it['button']}")
+            rows.append((i + 1, btn, INTAKE_WHEN[it.get("trigger", 0)],
+                         self.combo_names[c] if 0 <= c < len(self.combo_names) else "(no combo)"))
+        return rows
+
+    def redraw(self, keep=None):
+        rows = self._rows()
+        has_keep = keep is not None and 0 <= keep < len(rows)
+        self.table.set_rows(rows, keep if has_keep else None)
+        if has_keep:
+            self.load_form()
+        self.update_state()
+
+    def read_form(self):
+        if self.v_combo.get() not in self.combo_labels:
+            self.app.notify("Make a combo first on the Combos tab, then pick it here.", "warning")
+            return None
+        return new_intake(dict(INTAKE_BUTTONS)[self.v_btn.get()], INTAKE_WHEN.index(self.v_when.get()),
+                          self.combo_labels.index(self.v_combo.get()))
+
+    def load_form(self):
+        i = self.selected()
+        if i is None:
+            return
+        it = self.items[i]
+        self.v_btn.set(next((lbl for lbl, code in INTAKE_BUTTONS if code == it["button"]), INTAKE_BUTTONS[0][0]))
+        self.v_when.set(INTAKE_WHEN[it.get("trigger", 0)])
+        c = it.get("combo", -1)
+        if 0 <= c < len(self.combo_labels):
+            self.v_combo.set(self.combo_labels[c])
+
+    def update_state(self):
+        i = self.selected()
+        for b in (self.btnUpdate, self.btnRemove, self.btnTest):
+            b.configure(state="normal" if i is not None else "disabled")
+        if not self.combo_labels:
+            self.hint.configure(text="No combos yet. Build one on the Combos tab, then pick it here.")
+        elif not self.items:
+            self.hint.configure(text="No intake functions yet. Pick a button, when, and a combo, then press “Add function”.")
+        elif i is None:
+            self.hint.configure(text="Click a function to edit it, or fill in the fields and press “Add function” for a new one.")
+        else:
+            self.hint.configure(text=f"Editing function {i + 1}. Change the fields, then press “Update function”.")
+
+    def add(self):
+        if len(self.items) >= MAX_INTAKE:
+            self.app.notify(f"At most {MAX_INTAKE} intake functions fit in the robot's memory.", "warning")
+            return
+        item = self.read_form()
+        if item is None:
+            return
+        self.items.append(item)
+        self.redraw(len(self.items) - 1)
+        self.on_change()
+
+    def update_sel(self):
+        i = self.selected()
+        item = self.read_form() if i is not None else None
+        if item is not None:
+            self.items[i] = item
+            self.redraw(i)
+            self.on_change()
+
+    def remove(self):
+        i = self.selected()
+        if i is not None:
+            del self.items[i]
+            self.redraw(min(i, len(self.items) - 1))
+            self.on_change()
+
+    def test(self):
+        i = self.selected()
+        if i is None:
+            self.app.notify("Select a function in the table first.", "warning")
+            return
+        self.app.test_intake(i)
+
+
 class App(tk.Tk):
     def __init__(self, demo):
         super().__init__()
@@ -1317,7 +1515,7 @@ class App(tk.Tk):
         w, h = min(S(1180), sw - S(60)), min(S(740), sh - S(90))
         self.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(0, (sh - h) // 2 - S(20))}")
         self.minsize(min(S(1040), w), min(S(640), h))
-        self.model = default_model()
+        self.model = normalize_model(default_model())
         self.loaded_from_robot = False
         self.dirty = False
         self.live = 0.0
@@ -1364,6 +1562,7 @@ class App(tk.Tk):
         self._tab_combos()
         self._tab_levels()
         self._tab_actions()
+        self._tab_intake()
         self.tabs.select(0)
         self._build_status()
 
@@ -1634,6 +1833,16 @@ class App(tk.Tk):
         self.actions = StepList(sec.body, self, "action", self.on_model_edit, self.test_action, lambda: self.live)
         self.actions.pack(fill="both", expand=True)
 
+    def _tab_intake(self):
+        wrap = self._page("Intake")
+        sec = Section(wrap, "Intake buttons",
+                      "Play a combo when you press or release an intake button. The intake still runs as usual; "
+                      "the combo plays on top of it. On the robot, open INTAKE TUNER in the driver menu.")
+        sec.meta.configure(text=f"up to {MAX_INTAKE}")
+        sec.pack(fill="both", expand=True)
+        self.intake = IntakePanel(sec.body, self, self.mark_dirty)
+        self.intake.pack(fill="both", expand=True)
+
     # ── model <-> widgets ──
     def refresh_all(self):
         self.suspend = True
@@ -1648,6 +1857,7 @@ class App(tk.Tk):
         self.refresh_combo_list()
         self.refresh_level_list()
         self.actions.set_items(m["actions"])
+        self.intake.set_items(m["intake"])
         self.pick_combo(refresh=False)
         self.pick_level(refresh=False)
         self.suspend = False
@@ -1669,6 +1879,7 @@ class App(tk.Tk):
                                 self.comboIdx if combos else None)
         self.secCombos.meta.configure(text=f"{len(combos)} of {MAX_COMBOS}")
         self.actions.set_combo_names([c["name"] for c in combos])
+        self.intake.set_combo_names([c["name"] for c in combos])
         self.cbCombo["values"] = ["(no combo)"] + [c["name"] for c in combos]
 
     def pick_combo(self, refresh=True):
@@ -1752,6 +1963,9 @@ class App(tk.Tk):
         for a in self.model["actions"]:
             k = a.get("combo", -1)
             a["combo"] = -1 if k == i else (k - 1 if k > i else k)
+        for f in self.model["intake"]:
+            k = f.get("combo", -1)
+            f["combo"] = -1 if k == i else (k - 1 if k > i else k)
         for lv in self.model["levels"]:
             lv["combo"] = -1 if lv["combo"] == i else (lv["combo"] - 1 if lv["combo"] > i else lv["combo"])
         self.comboIdx = max(0, i - 1)
@@ -2023,6 +2237,15 @@ class App(tk.Tk):
         if self.dirty:
             self.apply()
         self.send([f"LT TESTACT {i}"])
+
+    def test_intake(self, i):
+        c = self.model["intake"][i]["combo"]
+        if c < 0:
+            self.notify("That function has no combo to test.", "warning")
+            return
+        if self.dirty:
+            self.apply()
+        self.send([f"LT TESTCOMBO {c}"])
 
     def poll(self):
         if self.link:

@@ -21,6 +21,8 @@
 //                    there. A combo that moves the lift (e.g. lift BACKWARD)
 //                    wins over a held R1; the lift stays under its control until
 //                    R1/R2 are released.
+//   INTAKE           "when intake button L1 / L2 is pressed (or released), play
+//                    this COMBO". The intake keeps spinning as usual.
 //
 // A STEP is: DEVICE + COMMAND (+ speed and duration for motors) + DELAY.
 //   DEVICE   any motor (left/right drive, intake, lift, claw arm)
@@ -98,6 +100,16 @@ struct LiftAction {
     int mode = LIFT_MODE_HOLD;     // LiftBtnMode (ignored with no button)
 };
 
+// INTAKE FUNCTIONS: play a combo when an intake button is pressed or released. The intake itself
+// keeps working as usual (L1 in, L2 out); the combo runs on top of it.
+enum LiftTrigger { LIFT_TRIG_PRESSED = 0, LIFT_TRIG_RELEASED = 1 };
+struct LiftIntake {
+    int button = LIFT_BTN_L1;       // LiftButton (L1 / L2 are the intake buttons)
+    int trigger = LIFT_TRIG_PRESSED; // LiftTrigger
+    int combo = -1;                 // index into LiftTuning::combos, -1 = does nothing
+};
+constexpr int LIFT_MAX_INTAKE = 4;
+
 struct LiftTuning {
     bool startEnabled = false;
     double startPosition = 0.0;
@@ -108,6 +120,8 @@ struct LiftTuning {
     LiftLevel levels[LIFT_MAX_LEVELS] = {};
     int actionCount = 0;
     LiftAction actions[LIFT_MAX_ACTIONS] = {};
+    int intakeCount = 0;
+    LiftIntake intake[LIFT_MAX_INTAKE] = {};
 };
 
 // -- Driver control --
@@ -138,5 +152,10 @@ void liftPlayCombo(const LiftStep *steps, int count);
 // LIFT-COMBO-DECLS-END
 // -- On-robot tuner (returns when the driver holds the screen's top-right corner) --
 void liftTunerControl();
+// Feeds one "LT ..." line from the laptop tool to the tuner. Called by the driver menu's link reader.
+void liftTuningHandleLine(const char *line);
+// The same tuner opened on its INTAKE page: pick which combo plays when L1 / L2 is pressed or
+// released. Shares the laptop link with the lift tuner (the laptop tool's Intake tab).
+void intakeTunerControl();
 // True while the tuner owns the brain screen.
 extern bool liftTunerActive;
