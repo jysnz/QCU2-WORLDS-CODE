@@ -1,4 +1,5 @@
 #include "functions.hpp"
+#include "lift_tuning.hpp"
 #include "motors.hpp"
 #include "pros/rtos.hpp"
 #include "pros/screen.hpp"
@@ -88,8 +89,26 @@ void testAllMotorDirections() {
   testMotorGroupDirections("RIGHT DRIVE", right_motor_group, y);
   testMotorGroupDirections("LIFT", lift, y);
   testMotorGroupDirections("INTAKE", intake2, y);
-  testMotorsDirections("LIFT ARM", {{"Arm", &liftArm}}, y);
+  testMotorsDirections("CLAW ARM", {{"Arm", &claw_arm}}, y);
 }
+
+// --- Pistons ---
+static bool clawPistonOut = false;
+static bool liftOrientationOut = false;
+
+void setClawPiston(bool extended) {
+  clawPistonOut = extended;
+  if (extended) claw_piston.extend(); else claw_piston.retract();
+}
+void toggleClawPiston() { setClawPiston(!clawPistonOut); }
+bool clawPistonExtended() { return clawPistonOut; }
+
+void setLiftArmOrientation(bool extended) {
+  liftOrientationOut = extended;
+  if (extended) lift_arm_orientation.extend(); else lift_arm_orientation.retract();
+}
+void toggleLiftArmOrientation() { setLiftArmOrientation(!liftOrientationOut); }
+bool liftArmOrientationExtended() { return liftOrientationOut; }
 
 void drivetrainReset(){
   left_motor_group.tare_position();
@@ -97,111 +116,70 @@ void drivetrainReset(){
 }
 
 
-// Tap L1 to spin the claw clockwise until it stalls (e.g. against a hardstop
-// or a gripped object), then hold there. Hold L2 to spin it counter-clockwise
-// continuously; releasing L2 stops it. Pressing L2 also cancels an L1 run.
-void clawControl() {
-  const int CLAW_SPEED = 200;               // green gearset max velocity (rpm)
-  const uint32_t CLAW_STALL_GRACE_MS = 250; // ignore stall while spinning up
-  const double CLAW_STALL_VELOCITY = 5.0;   // rpm - below this counts as stalled
-  const int CLAW_STALL_TICKS = 5;           // consecutive slow ticks to confirm
-
-  static bool wasL1Held = false;
-  static bool clockwiseRunning = false;
-  static uint32_t clockwiseStartMs = 0;
-  static int slowTicks = 0;
-
-  bool clockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
-  bool counterClockwiseHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
-  bool clockwiseTapped = clockwiseHeld && !wasL1Held;
-  wasL1Held = clockwiseHeld;
-  uint32_t nowMs = pros::millis();
-
-  if (counterClockwiseHeld) {
-    clockwiseRunning = false;
-    claw.move_velocity(-CLAW_SPEED);
-    return;
-  }
-
-  if (clockwiseTapped && !clockwiseRunning) {
-    clockwiseRunning = true;
-    clockwiseStartMs = nowMs;
-    slowTicks = 0;
-  }
-
-  if (clockwiseRunning) {
-    claw.move_velocity(CLAW_SPEED);
-    if (nowMs - clockwiseStartMs >= CLAW_STALL_GRACE_MS &&
-        std::abs(claw.get_actual_velocity()) < CLAW_STALL_VELOCITY) {
-      slowTicks++;
-    } else {
-      slowTicks = 0;
-    }
-    if (slowTicks >= CLAW_STALL_TICKS) {
-      clockwiseRunning = false;
-    }
-  }
-
-  if (!clockwiseRunning) {
-    claw.move_velocity(0); // brake mode HOLD keeps it in place
-  }
-}
-
 // ─── Operator control ────────────────────────────────────────────────────────
 void jawheadControl() {
-  // true = tank drive (left stick -> left side, right stick -> right side); false = arcade.
-  const bool kTankDrive = true;
+  // false = arcade: left stick Y drives forward/back, right stick X turns left/right.
+  // true = tank (left stick -> left side, right stick -> right side), for testing each side.
+  const bool kTankDrive = false;
   const int MAX_SPEED = 127;
   const double IMU_CORRECTION_KP = 0.8;
   const int INU_CORRECTION_MIN_MOVE = 15;
   const int IMU_CORRECTION_MAX_TURN = 5;
   const double IMU_CORRECTION_THRESHOLD = 1.0;
-  // How far (motor degrees from the startup position) the lift may spin
-  // clockwise before X stops driving it.
-  const double LIFT_FORWARD_LIMIT = 743.2;
 
   // When true, the IMU corrects drivetrain drift during driver control.
   static bool imu_status = false;
   static double targetHeading = 0.0;
   static bool headingLocked = false;
-  static bool wasClampBtnHeld = false;
-  static bool clampOn = false;
-  static uint32_t lastClampToggleMs = 0;
   const uint32_t BUTTON_DEBOUNCE_MS = 300;
+  bool wasClawPistonBtn = false, wasOrientBtn = false;
+  uint32_t lastClawPistonMs = 0, lastOrientMs = 0;
+
+  // Applies the lift tuner's START POSITION (if enabled) before the driver takes over.
+  liftTuningBeginDriver();
 
   while (true) {
-    bool intakeForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+    bool intakeIn = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);   // L1 = intake
+    bool intakeOut = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);  // L2 = outtake
     uint32_t nowMs = pros::millis();
 
-    bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_X);
-    bool liftBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+    bool liftForward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);   // R1 = lift forward
+    bool liftBackward = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);  // R2 = lift backward
 
     // Show lift position on the controller while tuning LIFT_FORWARD_LIMIT.
     // The controller screen only updates about every 50ms, so print every
     // 100ms. Row 1 keeps clear of fieldctl's status on row 0.
     static uint32_t lastLiftPrintMs = 0;
+    static bool printDriveDiag = false;
     if (nowMs - lastLiftPrintMs >= 100) {
       lastLiftPrintMs = nowMs;
-      controller.print(1, 0, "Lift: %7.1f   ", lift.get_position());
-    }
-
-    // Tap R2 to switch the clamp cleanly on/off (edge-detected so holding R2
-    // doesn't rapid-fire clamp.toggle() every loop and leave it in a
-    // random state). (It used to be Y; Y now drives the lift arm down.)
-    bool clampToggleHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
-    bool clampToggleTapped = clampToggleHeld && !wasClampBtnHeld;
-    wasClampBtnHeld = clampToggleHeld;
-    if (clampToggleTapped && (nowMs - lastClampToggleMs >= BUTTON_DEBOUNCE_MS)) {
-      lastClampToggleMs = nowMs;
-      clampOn = !clampOn;
-      if (clampOn) {
-        clamp.extend();
+      if (!printDriveDiag) {
+        controller.print(1, 0, "Lift:%6.0f %-5s", lift.get_position(), liftTuningArmed() ? "ARMED" : "");
       } else {
-        clamp.retract();
+        // TEMP drive diagnostic (row 2): Ly = left stick Y (what the code sends the left side),
+        // Lv = average actual rpm of the left motors. Delete this block when the left side is fixed.
+        std::vector<double> lv = left_motor_group.get_actual_velocity_all();
+        double sum = 0;
+        for (double v : lv) sum += v;
+        controller.print(2, 0, "Ly%4d Lv%4.0f   ", controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y),
+                         lv.empty() ? 0.0 : sum / lv.size());
       }
+      printDriveDiag = !printDriveDiag;
     }
 
-    clawControl();
+    // B toggles the claw piston, RIGHT toggles the lift-arm orientation (edge-detected + debounced).
+    bool clawPistonHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_B);
+    if (clawPistonHeld && !wasClawPistonBtn && nowMs - lastClawPistonMs >= BUTTON_DEBOUNCE_MS) {
+      lastClawPistonMs = nowMs;
+      toggleClawPiston();
+    }
+    wasClawPistonBtn = clawPistonHeld;
+    bool orientHeld = controller.get_digital(pros::E_CONTROLLER_DIGITAL_RIGHT);
+    if (orientHeld && !wasOrientBtn && nowMs - lastOrientMs >= BUTTON_DEBOUNCE_MS) {
+      lastOrientMs = nowMs;
+      toggleLiftArmOrientation();
+    }
+    wasOrientBtn = orientHeld;
 
     int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
     int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
@@ -237,32 +215,45 @@ void jawheadControl() {
       right_motor_group.move(std::clamp(move - turn, -MAX_SPEED, MAX_SPEED));
     }
 
-    // Forward (clockwise) stops once the lift reaches LIFT_FORWARD_LIMIT.
-    // Backward is not limited, so the lift can always be brought back down.
-    if (liftForward && lift.get_position() < LIFT_FORWARD_LIMIT) {
+    // Forward (clockwise) stops once the lift reaches the forward limit (LIFT LIMIT in the lift
+    // tuner). Backward (R2) is not limited, so the lift can always be brought back down. Taking
+    // over by hand cancels a drive-to-level; with neither held, a level target keeps holding.
+    // While an angle combo that moves the lift is running (or R1/R2 are still held after it), the
+    // buttons are ignored; liftTuningStep() below drives the lift for the combo.
+    if (liftTuningManualLiftBlocked()) {
+      lift.move_velocity(0);
+    } else if (liftForward && lift.get_position() < liftTuningForwardLimit()) {
+      liftTuningCancelTarget();
       lift.move_velocity(200);
     } else if (liftBackward) {
+      liftTuningCancelTarget();
       lift.move_velocity(-200);
-    } else {
+    } else if (!liftTuningTargetActive()) {
       lift.move_velocity(0);
     }
 
-    // Lift arm (port 19): hold A to raise it, hold Y to lower it. Released = it holds (brake HOLD).
-    // If it moves the wrong way, flip the sign of the port in main.cpp: pros::Motor liftArm(-19).
-    const int LIFT_ARM_SPEED = 100;  // rpm (green gearset max is 200)
-    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
-      liftArm.move_velocity(LIFT_ARM_SPEED);
-    } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_Y)) {
-      liftArm.move_velocity(-LIFT_ARM_SPEED);
+    // Claw arm (port 19): hold X for forward, hold A for backward. Released = it holds (brake HOLD).
+    // If it moves the wrong way, flip the sign of the port in main.cpp: pros::Motor claw_arm(-19).
+    const int CLAW_ARM_SPEED = 100;  // rpm (green gearset max is 200)
+    if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_X)) {
+      claw_arm.move_velocity(CLAW_ARM_SPEED);
+    } else if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
+      claw_arm.move_velocity(-CLAW_ARM_SPEED);
     } else {
-      liftArm.move_velocity(0);
+      claw_arm.move_velocity(0);
     }
 
-    if (intakeForward) {
+    if (intakeIn) {
       intake2.move_velocity(-600);
+    } else if (intakeOut) {
+      intake2.move_velocity(600);
     } else {
       intake2.move_velocity(0);
     }
+
+    // Lift tuner motor functions (angle triggers + scoring combos) -- after the manual controls
+    // above so a firing function wins for its duration.
+    liftTuningStep();
 
     pros::delay(10);
   }

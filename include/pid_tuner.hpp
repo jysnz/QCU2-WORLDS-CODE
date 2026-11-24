@@ -2,7 +2,8 @@
 
 // ─── PID Tuner ───────────────────────────────────────────────────────────────
 // On-robot tuning mode for the LemLib angular/lateral controllers.
-// Enter by HOLDING DPAD-LEFT when driver control starts. See the full
+// Open it from the driver menu (hold DPAD-LEFT when driver control starts, then
+// tap PID TUNING); hold the top-right corner of the screen to go back. See the full
 // controls reference at the top of src/pid_tuner.cpp -- short version:
 //
 //   Y            toggle which controller LEFT/RIGHT/UP/DOWN edit (ANGULAR

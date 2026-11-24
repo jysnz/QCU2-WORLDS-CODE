@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "point_planner.hpp"
+#include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -467,6 +468,11 @@ void pointPlannerControl() {
   EdgeButton btnR1{pros::E_CONTROLLER_DIGITAL_R1};
 
   while (true) {
+    if (driverMenuLeaveRequested()) { // top-right corner of the screen held: back to the driver menu
+      pointPlannerActive = false;
+      controller.rumble("-");
+      return;
+    }
     bool leftEdge = left.pressed(), rightEdge = right.pressed();
     bool upEdge = up.pressed(), downEdge = down.pressed();
     bool aEdge = btnA.pressed(), bEdge = btnB.pressed(), yEdge = btnY.pressed();

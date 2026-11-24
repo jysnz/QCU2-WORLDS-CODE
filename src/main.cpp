@@ -1,7 +1,9 @@
 #include "main.h"
 #include "autonomous.hpp"
+#include "driver_menu.hpp"
 #include "fieldctl/fieldctl.hpp"
 #include "functions.hpp"
+#include "lift_tuning.hpp"
 #include "pid_tuner.hpp"
 #include "point_planner.hpp"
 #include "lemlib/api.hpp"
@@ -26,6 +28,10 @@
 // This is only the state at boot -- the VEXNET switch on the brain screen flips it live.
 const bool VEXNET_ENABLED = false;
 
+// true:  when driver control starts, open the driver menu straight away
+// false: open it only if DPAD-LEFT is held as driver control starts (otherwise the robot just drives)
+constexpr bool START_IN_DRIVER_MENU = false;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Motor & sensor definitions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,10 +39,11 @@ pros::MotorGroup left_motor_group({-8, 9, 10, -11, 12}, pros::MotorGears::green)
 pros::MotorGroup right_motor_group({-3, 4, -5, 6, -7}, pros::MotorGears::green);
 pros::MotorGroup intake2({17, -16}, pros::MotorGears::green);
 pros::MotorGroup lift({14, -18}, pros::MotorGears::green);
-pros::Motor liftArm(19);  // the lift arm: A = up, Y = down (see jawheadControl)
-pros::Motor claw(13);
+pros::Motor claw_arm(19);  // Y = forward, RIGHT = backward (see jawheadControl)
 
-pros::adi::Pneumatics clamp('A', false);
+// ADI ports for the two new pistons -- change the letters here if they are wired elsewhere.
+pros::adi::Pneumatics lift_arm_orientation('A', false);  // RIGHT toggles it
+pros::adi::Pneumatics claw_piston('B', false);
 
 pros::Imu imu(15);
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -65,8 +72,8 @@ void initialize() {
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
     lift.tare_position_all();
 
-    claw.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
-    liftArm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);  // holds its height when A / Y are released
+    claw_arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);  // holds its position when Y / RIGHT are released
+    liftTuningLoad();  // lift levels / start position / motor functions from the SD card (or the built-in defaults)
     dashboard::showSplash("Calibrating IMU...", "Keep the robot still");
     chassis.calibrate();
 
@@ -76,48 +83,30 @@ void initialize() {
         s.rightDrive.motors = dashboard::readMotors(right_motor_group, "R");
         s.centerLeft = {"LIFT", dashboard::readMotors(lift, "Lift")};
         auto mechanisms = dashboard::readMotors(intake2, "Intake");
-        mechanisms.push_back(dashboard::readMotor(claw, "CLAW", "Claw"));
-        mechanisms.push_back(dashboard::readMotor(liftArm, "ARM", "Lift Arm"));
+        mechanisms.push_back(dashboard::readMotor(claw_arm, "CARM", "Claw Arm"));
         s.centerRight = {"MECHANISMS", mechanisms};
     };
-    // The PID tuner / point planner own the brain screen while active
-    screen.screenBusy = [] { return pidTunerActive || pointPlannerActive; };
+    // The driver menu and the tools it opens (PID tuner / point planner / lift tuner) own the brain screen
+    screen.screenBusy = [] { return driverMenuActive || pidTunerActive || pointPlannerActive || liftTunerActive; };
     dashboard::startScreenTask(screen);
 }
 
 void opcontrol() {
-    // Hold DPAD-LEFT when driver control starts to enter the PID tuner, or
-    // DPAD-UP to enter the point planner. Normal driving runs if neither is
-    // held. A single instantaneous read here misses the press almost every
-    // time -- you can only start pressing it once you see/feel driver
-    // control begin, which is after this line would have already sampled
-    // false. Poll for a short window instead so a hold that starts right at
-    // opcontrol() still gets caught.
-    //
-    // NOTE: this used to initialize enterTuner to `true` and never set it
-    // back to `false`, so the tuner ran unconditionally and jawheadControl()
-    // (normal driving) never did. Fixed here -- both now default to `false`
-    // and only flip on an actual press.
-    bool enterTuner = false;
-    bool enterPlanner = false;
-    for (int i = 0; i < 15; i++) { // ~300ms at 20ms/tick
+    // Hold DPAD-LEFT when driver control starts to open the driver menu (PID TUNING / PATH PLANNER /
+    // LIFT TUNER / TEST MOTORS / MOTOR TEMPS -- see driver_menu.cpp). With nothing held the robot
+    // just drives. Tapping DRIVE in the menu also falls through to normal driving.
+    // A single instantaneous read here misses the press almost every time -- you can only start
+    // pressing it once you see/feel driver control begin -- so poll for a short window instead.
+    bool enterMenu = START_IN_DRIVER_MENU;
+    for (int i = 0; i < 15 && !enterMenu; i++) { // ~300ms at 20ms/tick
         if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_LEFT)) {
-            enterTuner = true;
-            break;
-        }
-        if (controller.get_digital(pros::E_CONTROLLER_DIGITAL_UP)) {
-            enterPlanner = true;
+            enterMenu = true;
             break;
         }
         pros::delay(20);
     }
 
-    if (enterTuner) {
-        pidTunerControl();
-    } else if (enterPlanner) {
-        pointPlannerControl();
-    } else {
-        jawheadControl();
-    }
+    if (enterMenu) driverMenuControl();
+    jawheadControl();
 }
 void autonomous() { runAutonomous(); }

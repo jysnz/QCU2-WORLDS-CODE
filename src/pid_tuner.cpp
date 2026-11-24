@@ -2,8 +2,10 @@
 // PID TUNER — CONTROLS REFERENCE
 // ─────────────────────────────────────────────────────────────────────────────
 // ENTERING THE TUNER
-//   Hold DPAD-LEFT when driver control starts (opcontrol). Normal driving
-//   runs if the button is not held.
+//   Hold DPAD-LEFT when driver control starts (opcontrol) to open the driver
+//   menu, then tap PID TUNING. Normal driving runs if the button is not held.
+//   To go back to the menu, hold the top-right corner of the brain screen for
+//   about a second.
 //
 // SELECTING WHAT TO TUNE
 //   Y            toggle ANGULAR (turns, cyan header) / LATERAL (drive,
@@ -59,6 +61,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "pid_tuner.hpp"
+#include "driver_menu.hpp"
 #include "motors.hpp"
 #include "lemlib/api.hpp"
 #include "pros/rtos.hpp"
@@ -703,6 +706,11 @@ void pidTunerControl() {
   EdgeButton btnL2{pros::E_CONTROLLER_DIGITAL_L2};
 
   while (true) {
+    if (driverMenuLeaveRequested()) { // top-right corner of the screen held: back to the driver menu
+      pidTunerActive = false;
+      controller.rumble("-");
+      return;
+    }
     bool upEdge = up.pressed(), downEdge = down.pressed();
     bool leftEdge = left.pressed(), rightEdge = right.pressed();
     bool aEdge = btnA.pressed(), bEdge = btnB.pressed(), xEdge = btnX.pressed();

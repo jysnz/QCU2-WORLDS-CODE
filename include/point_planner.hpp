@@ -8,7 +8,8 @@
 // redownloading each time you want to try a different point. R1 swaps the
 // tool into turnToHeading mode, where you dial in a heading and speed
 // instead.
-// Enter by HOLDING DPAD-UP when driver control starts.
+// Open it from the driver menu (hold DPAD-LEFT when driver control starts, then
+// tap PATH PLANNER); hold the top-right corner of the screen to go back.
 //
 // Controls inside the planner:
 //   R1           switch between moveToPoint and turnToHeading modes
