@@ -363,6 +363,14 @@ int distanceReadMm(int sensor, int maxAgeMs) {
     return calibrated(L.filtered[sensor], offsetMm[sensor]);
 }
 
+int distanceReadRawMm(int sensor, int maxAgeMs) {
+    if (sensor < 0 || sensor >= SLOTS) return VALUE_SENSOR_ERROR;
+    Link L = snapshot();
+    if (L.frames == 0 || (int)(pros::millis() - L.lastFrameMs) > maxAgeMs) return VALUE_NO_TARGET;
+    if (L.haveRaw && L.raw[sensor] >= 0) return calibrated(L.raw[sensor], offsetMm[sensor]);
+    return calibrated(L.filtered[sensor], offsetMm[sensor]);
+}
+
 int distanceOffsetMm(int sensor) { return sensor >= 0 && sensor < SLOTS ? offsetMm[sensor] : 0; }
 
 void setDistanceOffsetMm(int sensor, int offset) {

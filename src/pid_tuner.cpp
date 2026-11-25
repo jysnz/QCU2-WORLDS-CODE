@@ -221,19 +221,21 @@ static bool runBusy = false;
 static bool calibrating = false;
 
 // ─── Laptop mirror (tools/pid_tuner.py via tools/remote_touch.py) ────────────
-// The tuner's twin of driver_menu.cpp's sendRemoteUiState(): one line
-// describing the screen, sent whenever something changed (throttled to the
-// rate the laptop asked for) and as a 1 s heartbeat otherwise. The common
-// segments keep the same shape as the driver menu's so the laptop parses
-// both with one function; BTN carries the BACK button so the mirror can
-// tap it, and PID / RES carry everything the tuner window shows:
-//   PID:<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>,<calibrating>
-//   RES:<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
+// The tuner's state for the laptop, published through the driver menu's link (which prints it a few
+// times a second, at the rate the laptop asked for), so the laptop window can show it and run the
+// tests. One line:
+//   RUI|PID_TUNER|<mode>,<sel>,<digitExp>,<aP>,<aI>,<aD>,<lP>,<lI>,<lD>,<busy>,<calibrating>|<label>,<overshoot>,<settleMs>,<finalError>,<durationMs>
+// (mode 0 = angular, 1 = lateral; the second part is the last result.) The per-run stream -- PID|RUN,
+// PID|LEG, PID|END, PID|DONE and the CSV samples -- is printed directly while a test runs.
 static void sendTunerState(bool force = false) {
-  // Not used on this branch: its laptop window (tools/remote_touch.py) only knows the driver menu's own
-  // screens, so the tuner does not print RUI|PID_TUNER lines. The calls are kept so the code stays a
-  // straight copy of the debi branch's tuner.
-  (void)force;
+  (void)force; // the link repeats the latest line by itself; nothing to throttle here
+  char line[300];
+  snprintf(line, sizeof(line), "RUI|PID_TUNER|%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d|%s,%.2f,%d,%.2f,%d",
+           tuningAngular ? 0 : 1, selectedGain, digitExp, angularGains.gains[0], angularGains.gains[1],
+           angularGains.gains[2], lateralGains.gains[0], lateralGains.gains[1], lateralGains.gains[2],
+           runBusy ? 1 : 0, calibrating ? 1 : 0, lastLabel, lastResult.overshoot, lastResult.settleMs,
+           lastResult.finalError, lastResult.durationMs);
+  driverMenuPublish(line);
 }
 
 // How often to print a CSV sample while a run is in progress. Every sample

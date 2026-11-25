@@ -48,6 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import lift_tuner as lt  # noqa: E402  (palette, widgets and the USB helpers)
+from vexcom_link import VexcomLink, find_vexcom, is_controller_port  # noqa: E402  (laptop plugged into the controller)
 
 C = lt.C
 
@@ -66,7 +67,7 @@ PLAN_STATES = ["IDLE", "RUNNING", "DONE", "CANCELLED"]   # the brain's order (sr
 D_STATES = ["NO DATA", "BAD DATA", "STALE", "SENSOR NOT FOUND", "OUT OF RANGE", "OK"]  # the brain's State order
 START = (150, 160, 330, 205)
 TOOL_NAMES = {"PID": "PID TUNING", "PLANNER": "PATH PLANNER", "LIFT": "LIFT TUNER", "INTAKE": "INTAKE TUNER",
-              "DISTANCE": "DISTANCE SENSOR"}
+              "DISTANCE": "DISTANCE SENSOR", "ODOM": "ODOM SETUP"}
 HOME_ITEMS = [("DRIVE", "joystick driving"), ("PID TUNING", "angular + lateral"), ("PATH PLANNER", "drive to a point"),
               ("TEST MOTORS", "does each one spin"), ("LIFT TUNER", "levels, combos, angles"),
               ("INTAKE TUNER", "combos on L1 / L2"), ("MOTOR TEMPS", "every motor, live"),
@@ -129,6 +130,16 @@ def parse_rui(line):
                 px, py = chunk.split(",")
                 pts.append((float(px), float(py)))
             return screen, {"status": status, "block": block, "count": count, "x": x, "y": y, "theta": th, "path": pts}
+        if screen == "PID_TUNER":   # <mode>,<sel>,<digitExp>,<aP,aI,aD>,<lP,lI,lD>,<busy>,<cal>|<label>,<over>,<settle>,<err>,<ms>
+            gains, _, res = raw.partition("|")
+            v = [float(x) for x in gains.split(",")]
+            if len(v) != 11:
+                return None
+            pid = {"mode": int(v[0]), "sel": int(v[1]), "digitExp": int(v[2]), "angular": v[3:6], "lateral": v[6:9],
+                   "busy": v[9] == 1, "calibrating": v[10] == 1}
+            r = res.split(",")
+            result = (r[0], float(r[1]), int(r[2]), float(r[3]), int(r[4])) if len(r) == 5 else None
+            return screen, {"screen": "PID_TUNER", "pid": pid, "result": result}
         if screen == "DISTANCE":
             f = raw.split("|", 13)  # 13 numbers, then the footer text (which is free text)
             if len(f) < 14:
@@ -364,6 +375,16 @@ class Mirror(tk.Canvas):
         self.text(20, 80, "The robot is driving.", WHITE, 19)
         self.text(20, 112, "To open the menu again, hold DPAD-LEFT as driver control starts.", GRAY, 12)
 
+    def draw_pid_tuner(self, data):
+        self.header("PID TUNER", "open on the brain", True)
+        self.text(20, 84, "The PID Tuner window is open on the laptop.", WHITE, 14)
+        self.text(20, 110, "Type gains, run tests and watch the graph there.", GRAY, 12)
+        pid = data["pid"]
+        if pid["calibrating"]:
+            self.footer("CALIBRATING -- keep the robot still", ORANGE)
+        else:
+            self.footer("running -- graph in the PID Tuner window" if pid["busy"] else "idle", GRAY)
+
     def draw_other(self, data):
         self.header("DRIVER MENU", "unknown screen")
 
@@ -374,6 +395,7 @@ class Link(lt.SerialLink):
 
     def __init__(self, port, debug=False):
         self.debug = debug
+        self.pid_lines = queue.Queue()
         super().__init__(port)
 
     def _read(self):
@@ -389,6 +411,8 @@ class Link(lt.SerialLink):
                     if self.debug:
                         print("<", line)
                     self.lines.put(line)
+                elif line.startswith(("PID|", "CSV,")):   # the PID tuner's run stream
+                    self.pid_lines.put(line.rstrip("\r\n"))
 
     def send(self, lines):
         if self.debug:
@@ -599,6 +623,7 @@ class App(lt.tk.Tk):
         self.link, self.tuner_proc = None, None
         self.screen, self.data, self.last_line, self.last_rui = "WAIT", None, None, 0.0
         self.planner = None
+        self.pid_tuner = None
         k = max(1, round(2 * lt.SCALE))
         self.columnconfigure(0, weight=1)
 
@@ -676,7 +701,13 @@ class App(lt.tk.Tk):
             self.after(2000, self._retry)
             return
         try:
-            self.link = Link(port, self.debug)
+            vexcom = find_vexcom() if is_controller_port(port) else None
+            if is_controller_port(port) and not vexcom:
+                self.set_conn("Controller found, vexcom missing", "bad")
+                self.lblNote.configure(text="The controller's radio needs vexcom.exe (installed with the PROS VS Code extension).", fg=C.danger)
+                self.after(3000, self._retry)
+                return
+            self.link = VexcomLink(port, vexcom, self.debug) if vexcom else Link(port, self.debug)
         except Exception as e:
             self.set_conn(f"Can't open {port}", "bad")
             self.lblNote.configure(text=f"{e}  (is another program using the port?)", fg=C.danger)
@@ -717,8 +748,11 @@ class App(lt.tk.Tk):
             if getattr(self.link, "tick", None):
                 self.link.tick()
             if self.link.dead:
+                err = getattr(self.link, "error", None)
                 self.link = None
                 self.set_conn("Connection lost", "bad")
+                if err:
+                    self.lblNote.configure(text=err, fg=C.danger)
                 self.after(2000, self._retry)
             else:
                 try:
@@ -726,6 +760,7 @@ class App(lt.tk.Tk):
                         self.on_line(self.link.lines.get_nowait())
                 except queue.Empty:
                     pass
+                self._pump_pid_lines()
                 if (not self.demo and self.link and not getattr(self, "got_line", True)
                         and time.time() - getattr(self, "connected_at", time.time()) > 3):
                     # The port opened, but not one line has come back: the brain is not talking on it.
@@ -755,6 +790,7 @@ class App(lt.tk.Tk):
         self.last_rui = time.time()
         self.got_line = True
         self._to_planner(parsed)
+        self._to_pid_tuner(parsed)
         if self.link:
             self.set_conn(f"Connected to {getattr(self.link, 'port', 'brain')}" if not self.demo else "Demo robot", "ok")
         if line == self.last_line:
@@ -763,6 +799,43 @@ class App(lt.tk.Tk):
         self.screen, self.data = parsed
         self.mirror.show(self.screen, self.data)
         self.update_actions()
+
+    # -- the PID tuner window (tools/pid_tuner.py, debi's) --
+    def _to_pid_tuner(self, parsed):
+        screen, data = parsed
+        if screen == "PID_TUNER" and self.pid_tuner is None:
+            try:
+                from pid_tuner import PidTunerWindow
+            except Exception as e:  # noqa: BLE001
+                self.lblNote.configure(text=f"pid_tuner.py failed to load: {e}", fg=C.danger)
+                return
+            self.pid_tuner = PidTunerWindow(self, PlannerLink(self))
+            self.pid_tuner.onReconnect = self.connect
+            self.pid_tuner.bind("<Destroy>", lambda e: setattr(self, "pid_tuner", None) if e.widget is self.pid_tuner else None)
+        if self.pid_tuner is None:
+            return
+        if screen == "PID_TUNER":
+            if self.pid_tuner.state() == "withdrawn":
+                self.pid_tuner.deiconify()
+            state = data
+        else:   # the brain is somewhere else: the window says so and keeps its graph
+            state = {"screen": screen, "pid": None, "result": None}
+        try:
+            self.pid_tuner.applyState(state)
+        except Exception as e:  # noqa: BLE001
+            self.lblNote.configure(text=f"PID tuner window: {e}", fg=C.danger)
+
+    def _pump_pid_lines(self):
+        lines = getattr(self.link, "pid_lines", None)
+        if lines is None:
+            return
+        try:
+            while True:
+                line = lines.get_nowait()
+                if self.pid_tuner is not None:
+                    self.pid_tuner.feedLine(line)
+        except queue.Empty:
+            pass
 
     # -- the map planner (tools/path_planner.py, debi's) --
     def _to_planner(self, parsed):
@@ -794,12 +867,12 @@ class App(lt.tk.Tk):
     def update_actions(self):
         labels = {"HOME": "Driver menu", "TEMPS": "Motor temps", "TEST_CONFIRM": "Motor test", "TEST_RUN": "Motor test",
                   "TOOL": TOOL_NAMES.get(self.data, "") + " is open on the brain" if self.screen == "TOOL" else "",
-                  "DISTANCE": "Distance sensor", "PLANNER": "Map path planner (the window opens on the laptop)",
+                  "DISTANCE": "Distance sensor", "PID_TUNER": "PID tuner (the window opens on the laptop)", "PLANNER": "Map path planner (the window opens on the laptop)",
                   "DRIVE": "The robot is driving"}
         self.lblScreen.configure(text=labels.get(self.screen, ""))
         self.btnLeave.pack_forget()
         self.btnTuner.pack_forget()
-        if self.screen in ("TOOL", "DISTANCE", "PLANNER"):
+        if self.screen in ("TOOL", "DISTANCE", "PLANNER", "PID_TUNER"):
             self.btnLeave.pack(side="right")
             if self.data in ("LIFT", "INTAKE"):
                 self.btnTuner.pack(side="right", padx=(0, lt.S(8)))

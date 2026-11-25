@@ -7,6 +7,7 @@
 #include "pros/adi.hpp"
 #include "pros/imu.hpp"
 #include "pros/motors.hpp"
+#include "pros/rotation.hpp"
 
 // ─── Motors ──────────────────────────────────────────────────────────────────
 extern pros::MotorGroup left_motor_group;
@@ -20,7 +21,24 @@ extern pros::adi::Pneumatics lift_arm_orientation; // RIGHT toggles it
 extern pros::adi::Pneumatics claw_piston;          // B toggles it (the claw is pneumatic only)
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
-extern pros::Imu imu;
+// IMU whose readings are scaled by 360 / scale, so a turn that reads `scale` degrees counts
+// as exactly 360 (same idea as mikLib's inertial scale). LemLib reads heading through
+// get_rotation(), so the correction reaches odometry without patching LemLib.
+class ScaledImu : public pros::Imu {
+  double scale;
+
+public:
+  ScaledImu(std::uint8_t port, double scale) : pros::Imu(port), scale(scale) {}
+  double get_rotation() const override { return pros::Imu::get_rotation() * 360.0 / scale; }
+  double get_heading() const override {
+    double h = std::fmod(pros::Imu::get_heading() * 360.0 / scale, 360.0);
+    return h < 0 ? h + 360.0 : h; // scaling can push a reading outside 0..360
+  }
+  double rawRotation() const { return pros::Imu::get_rotation(); } // unscaled, for calibration
+};
+extern ScaledImu imu;
+extern pros::Rotation verticalRotation;   // port 1 (reversed)
+extern pros::Rotation horizontalRotation; // port 20 (reversed)
 extern pros::Controller controller;
 
 // ─── LemLib chassis ──────────────────────────────────────────────────────────

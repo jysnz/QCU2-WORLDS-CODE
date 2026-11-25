@@ -46,12 +46,12 @@ constexpr bool DRIVE_XSHUT_HIGH_FOR_ONE_SENSOR = true;  // see setup(): keeps a 
 constexpr uint8_t I2C_ADDRS[3] = {0x30, 0x31, 0x32};   // only used when SENSOR_COUNT > 1
 
 constexpr uint32_t BAUD = 115200;      // must match DISTANCE_BAUD in distance_diag.hpp on the brain
-constexpr uint32_t FRAME_MS = 50;      // time between frames sent to the brain
+constexpr uint32_t FRAME_MS = 20;      // time between frames sent to the brain
 constexpr uint32_t RETRY_MS = 1000;    // how often to retry a sensor that did not start
 
 // Sensor timing: a longer budget means less noise but fewer readings per second.
-constexpr uint32_t TIMING_BUDGET_US = 40000;
-constexpr uint16_t RANGE_PERIOD_MS = 50;       // continuous ranging period (>= the budget)
+constexpr uint32_t TIMING_BUDGET_US = 20000;
+constexpr uint16_t RANGE_PERIOD_MS = 20;       // continuous ranging period (>= the budget)
 constexpr int MAX_VALID_MM = 1300;             // the VL53L0X reads to about 1.2 m; beyond that it is nothing
 
 // 0..2 = print raw / median / kalman of that sensor for the Serial Plotter, -1 = print the frames instead.

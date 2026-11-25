@@ -45,6 +45,9 @@ void distanceStartReader();
 // Filtered distance of `sensor` (0..2) in mm with its calibration offset added. Returns -1 when there is no
 // target or no recent frame (older than maxAgeMs), -2 when that sensor is dead or unused.
 int distanceReadMm(int sensor = 0, int maxAgeMs = 300);
+// Same, but from the sensor's raw readings (offset applied): no median / Kalman lag. Falls back to the filtered value
+// when the ESP32 sends no raw line. For things that must react at once (the claw auto-grab).
+int distanceReadRawMm(int sensor = 0, int maxAgeMs = 150);
 
 // The calibration offset (mm) of a sensor, as set on the page.
 int distanceOffsetMm(int sensor);

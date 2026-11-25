@@ -1,0 +1,25 @@
+{
+ "startEnabled": false,
+ "start": 0.0,
+ "limit": 1714.4,
+ "combos": [],
+ "levels": [
+  {
+   "name": "Low",
+   "angle": 150.0,
+   "combo": -1
+  },
+  {
+   "name": "Mid",
+   "angle": 400.0,
+   "combo": -1
+  },
+  {
+   "name": "High",
+   "angle": 700.0,
+   "combo": -1
+  }
+ ],
+ "actions": [],
+ "intake": []
+}

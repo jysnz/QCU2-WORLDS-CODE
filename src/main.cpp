@@ -45,14 +45,33 @@ pros::Motor claw_arm(19);  // Y = forward, RIGHT = backward (see jawheadControl)
 pros::adi::Pneumatics lift_arm_orientation('A', false);  // RIGHT toggles it
 pros::adi::Pneumatics claw_piston('B', false);
 
-pros::Imu imu(15);
+// What the IMU reads after the robot is turned a true 360 degrees (356.05 was measured on the debi
+// branch's robot; re-measure for this one). 360.0 = no correction.
+constexpr double INERTIAL_SCALE = 355.43;
+ScaledImu imu(21, INERTIAL_SCALE);
+pros::Rotation verticalRotation(-1);    // vertical tracking wheel (negative port = reversed so pushing forward reads positive)
+pros::Rotation horizontalRotation(-20); // horizontal tracking wheel (negative port = reversed so pushing right makes X rise)
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 
 // ─── LemLib Setup ───
-lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, 15, lemlib::Omniwheel::NEW_325, 458, 2);
-lemlib::OdomSensors sensors(nullptr, nullptr, nullptr, nullptr, &imu);
-lemlib::ControllerSettings lateral_controller(10, 0, 28, 3, 1, 100, 3, 500, 20);
-lemlib::ControllerSettings angular_controller(5.60, 0.001, 28.590, 0, 0, 0, 0, 0, 0);
+// Robot body size, inches (not used by LemLib; for reference / planner use).
+constexpr double ROBOT_WIDTH = 13.5;
+constexpr double ROBOT_LENGTH = 14.5;
+constexpr double TRACK_WIDTH = 10.744;
+constexpr double DRIVE_RPM = 450;
+// Tracking wheel distance from the tracking centre, inches (signed). Diameters are the effective
+// 2" calibrated on the debi branch -- re-calibrate from a 48in push if odometry distances are off.
+constexpr float VERTICAL_WHEEL_DIAMETER = 2.0365; // 2 * 24 / 23.57 (pushed 24 in, read 23.57)
+constexpr float HORIZONTAL_WHEEL_DIAMETER = 2;
+constexpr float VERTICAL_WHEEL_OFFSET = -0.638;
+constexpr float HORIZONTAL_WHEEL_OFFSET = -3.399;
+lemlib::TrackingWheel verticalTracking(&verticalRotation, VERTICAL_WHEEL_DIAMETER, VERTICAL_WHEEL_OFFSET);
+lemlib::TrackingWheel horizontalTracking(&horizontalRotation, HORIZONTAL_WHEEL_DIAMETER, HORIZONTAL_WHEEL_OFFSET);
+
+lemlib::Drivetrain drivetrain(&left_motor_group, &right_motor_group, TRACK_WIDTH, lemlib::Omniwheel::NEW_325, DRIVE_RPM, 2);
+lemlib::OdomSensors sensors(&verticalTracking, nullptr, &horizontalTracking, nullptr, &imu);
+lemlib::ControllerSettings lateral_controller(40, 0, 190, 3, 1, 100, 3, 500, 20);
+lemlib::ControllerSettings angular_controller(13, 0, 90, 0, 0, 0, 0, 0, 0);
 lemlib::ExpoDriveCurve throttle_curve(3, 10, 1.019);
 lemlib::ExpoDriveCurve steer_curve(3, 10, 1.019);
 

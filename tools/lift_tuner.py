@@ -16,7 +16,7 @@ WHAT YOU CAN SET (five tabs)
                         edit any of them any time. A combo is a list of steps on any
                         motor or piston (left/right drive, intake, lift, claw arm,
                         claw piston, lift-arm orientation). Each
-                        combo is saved into the code as a function, e.g. combo_Score().
+                        combo is saved into the code as a function, e.g. combo_Score(async), and so is every level, e.g. level_High(async).
     Scoring levels      Named lift heights; each one plays a combo of your choice once
                         the lift gets there (UP / LEFT on the controller step through
                         the levels).
@@ -248,14 +248,23 @@ def ident(name):
     return "c" + t if t[0].isdigit() else t
 
 
+def _idents(names, prefix):
+    seen, out = {}, []
+    for n in names:
+        base = ident(n)
+        seen[base] = seen.get(base, 0) + 1
+        out.append(f"{prefix}_{base}" if seen[base] == 1 else f"{prefix}_{base}_{seen[base]}")
+    return out
+
+
 def combo_idents(m):
     """Function name per combo: combo_<Name>, de-duplicated with _2, _3 ..."""
-    seen, out = {}, []
-    for c in m["combos"]:
-        base = ident(c["name"])
-        seen[base] = seen.get(base, 0) + 1
-        out.append(f"combo_{base}" if seen[base] == 1 else f"combo_{base}_{seen[base]}")
-    return out
+    return _idents([c["name"] for c in m["combos"]], "combo")
+
+
+def level_idents(m):
+    """Function name per level: level_<Name>, de-duplicated with _2, _3 ..."""
+    return _idents([lv["name"] for lv in m["levels"]], "level")
 
 
 def model_to_commands(m):
@@ -344,23 +353,27 @@ def code_block(m):
 
 
 def combo_functions(m):
-    """One blocking C++ function per combo, e.g. combo_Score() -- callable from autonomous()."""
+    """One C++ function per combo and per level, e.g. combo_Score(bool async) / level_High(bool async).
+    async = false waits until it is done (use in autonomous()); async = true starts it and returns."""
     L = []
     for c, fn in zip(m["combos"], combo_idents(m)):
-        L.append(f"void {fn}() {{")
+        L.append(f"void {fn}(bool async) {{")
         if c["steps"]:
             L.append("    static const LiftStep steps[] = {")
             for s in c["steps"]:
                 L.append(f"        {{{s['delay']}, {s['dev']}, {s['cmd']}, {s['speed']}, {s['dur']}}},  // {step_summary(s)}")
             L.append("    };")
-            L.append(f"    liftPlayCombo(steps, {len(c['steps'])});")
+            L.append(f"    liftPlayCombo(steps, {len(c['steps'])}, async);")
         L.append("}")
         L.append("")
+    for i, fn in enumerate(level_idents(m)):
+        L.append(f"void {fn}(bool async) {{ liftGoToLevel({i}, async); }}")
     return "\n".join(L) + ("\n" if L else "")
 
 
 def combo_decls(m):
-    return "".join(f"void {fn}();  // {c['name']}\n" for c, fn in zip(m["combos"], combo_idents(m)))
+    return ("".join(f"void {fn}(bool async = false);  // {c['name']}\n" for c, fn in zip(m["combos"], combo_idents(m))) +
+            "".join(f"void {fn}(bool async = false);  // level {lv['name']}\n" for lv, fn in zip(m["levels"], level_idents(m))))
 
 
 def replace_region(text, begin, end, body, nl, indent=""):
@@ -2129,7 +2142,17 @@ class App(tk.Tk):
                 self.update_status()
                 return
             try:
-                self.link = SerialLink(port)
+                import vexcom_link
+                if vexcom_link.is_controller_port(port):
+                    # plugged into the controller: plain serial carries no program output, so go through vexcom
+                    vexcom = vexcom_link.find_vexcom()
+                    if not vexcom:
+                        self.set_conn("vexcom not found", "bad")
+                        self.notify("Plugged into the controller, but vexcom (PROS extension) wasn't found. Plug into the brain or install PROS.", "danger")
+                        return
+                    self.link = vexcom_link.VexcomLink(port, vexcom, keep=("LTL|", "LTC|"))
+                else:
+                    self.link = SerialLink(port)
             except Exception as e:
                 self.set_conn(f"Can't open {port}", "bad")
                 self.notify(str(e), "danger")

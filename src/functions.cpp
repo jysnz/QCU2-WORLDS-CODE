@@ -228,7 +228,7 @@ void jawheadControl() {
   bool nudgeActive = false;
   double nudgeTarget = 0.0;
   uint32_t nudgeUntilMs = 0;
-  const double LIFT_AT_ZERO_DEG = 3.0; // "the lift is at 0": at or BELOW this (a lift that reads negative still counts)
+  const double LIFT_AT_ZERO_DEG = 20.0; // the auto-grab works with the lift anywhere from 0 to 20 degrees (a negative reading counts too)
   // Claw auto-grab: something in the claw (the sensor reads 0 to 10 mm, after its -60 offset) closes the claw
   // and raises the lift, but only with the lift at 0. Set false to switch it off.
   const bool CLAW_AUTO_GRAB = true;
@@ -317,7 +317,7 @@ void jawheadControl() {
     if (CLAW_AUTO_GRAB) {
       bool atZero = liftPositionDeg() <= LIFT_AT_ZERO_DEG;
       bool busy = nudgeActive || floorSettling || liftTuningManualLiftBlocked();
-      autoGrabMm = distanceReadMm(0);
+      autoGrabMm = distanceReadRawMm(0); // raw: the filtered value lags
       if (autoGrab.update(autoGrabMm, atZero, clawPistonExtended(), busy, nowMs)) {
         setClawPiston(true);
         raiseLift(nowMs);

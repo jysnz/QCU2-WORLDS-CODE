@@ -12,6 +12,7 @@
 #include "fieldctl/fieldctl.hpp"
 #include "lift_tuning.hpp"
 #include "motors.hpp"
+#include "odom_setup.hpp"
 #include "pid_tuner.hpp"
 #include "laptop_plan.hpp"
 #include "path_planner.hpp"
@@ -87,7 +88,12 @@ static bool takeLinkTouch(int &x, int &y) {
 void driverMenuPublish(const char *line) { publish(line); }
 
 // -- Hooks for the PID tuner (see driver_menu.hpp) --
-bool takeRemoteKey(RemoteKey) { return false; }
+static std::atomic<bool> remoteKeys[RK_COUNT];
+static std::atomic<bool> remotePidStop{false};
+static std::vector<RemotePidCommand> remotePidCmds; // oldest first, guarded by linkMtx
+static const char *const kRemoteKeyNames[RK_COUNT] = {"LEFT", "RIGHT", "UP", "DOWN", "A",  "B",
+                                                       "X",    "L1",    "L2", "Y",    "R1", "R2"};
+bool takeRemoteKey(RemoteKey k) { return remoteKeys[k].exchange(false); }
 bool takeRemoteTouch(int &x, int &y) { return takeLinkTouch(x, y); }
 int remoteSendIntervalMs() {
     linkMtx.take();
@@ -95,8 +101,38 @@ int remoteSendIntervalMs() {
     linkMtx.give();
     return ms;
 }
-bool takeRemotePidCommand(RemotePidCommand &) { return false; }
-bool takeRemotePidStop() { return false; }
+bool takeRemotePidCommand(RemotePidCommand &out) {
+    linkMtx.take();
+    bool got = !remotePidCmds.empty();
+    if (got) {
+        out = remotePidCmds.front();
+        remotePidCmds.erase(remotePidCmds.begin());
+    }
+    linkMtx.give();
+    return got;
+}
+bool takeRemotePidStop() { return remotePidStop.exchange(false); }
+
+// "PID <verb> ..." from tools/pid_tuner.py. Returns false if the line is not one of them.
+static bool parsePidLine(const char *rest) {
+    if (strncmp(rest, "STOP", 4) == 0) {
+        remotePidStop = true;
+        return true;
+    }
+    RemotePidCommand c;
+    if (sscanf(rest, "SET %d %d %f", &c.mode, &c.index, &c.value) == 3) c.kind = RemotePidCommand::SET;
+    else if (sscanf(rest, "MODE %d", &c.mode) == 1) c.kind = RemotePidCommand::MODE;
+    else if (sscanf(rest, "SEL %d", &c.index) == 1) c.kind = RemotePidCommand::SEL;
+    else if (sscanf(rest, "DIGIT %d", &c.index) == 1) c.kind = RemotePidCommand::DIGIT;
+    else if (sscanf(rest, "TEST %d %d", &c.mode, &c.index) == 2) c.kind = RemotePidCommand::TEST;
+    else if (sscanf(rest, "SWEEP %d", &c.mode) == 1) c.kind = RemotePidCommand::SWEEP;
+    else if (strncmp(rest, "CAL", 3) == 0) c.kind = RemotePidCommand::CAL;
+    else return false;
+    linkMtx.take();
+    if (remotePidCmds.size() < 32) remotePidCmds.push_back(c);
+    linkMtx.give();
+    return true;
+}
 
 static void linkReader(void *) {
     char line[200];
@@ -118,6 +154,13 @@ static void linkReader(void *) {
             linkMtx.give();
         } else if (strncmp(line, "LEAVE", 5) == 0) {
             remoteLeave = true;
+        } else if (strncmp(line, "PID ", 4) == 0) {
+            parsePidLine(line + 4);
+        } else if (strncmp(line, "KEY ", 4) == 0) {
+            char name[16];
+            if (sscanf(line + 4, "%15s", name) == 1)
+                for (int k = 0; k < RK_COUNT; k++)
+                    if (strcmp(name, kRemoteKeyNames[k]) == 0) remoteKeys[k] = true;
         } else if (strncmp(line, "RATE ", 5) == 0 && sscanf(line + 5, "%d", &a) == 1) {
             linkMtx.take();
             linkIntervalMs = std::clamp(a, 100, 1000);
@@ -215,7 +258,7 @@ struct Item {
     const char *label;
     const char *sub;
 };
-enum { ITEM_DRIVE, ITEM_PID, ITEM_PLANNER, ITEM_TEST, ITEM_LIFT, ITEM_INTAKE, ITEM_TEMPS, ITEM_DISTANCE, ITEM_COUNT };
+enum { ITEM_DRIVE, ITEM_PID, ITEM_PLANNER, ITEM_TEST, ITEM_LIFT, ITEM_INTAKE, ITEM_TEMPS, ITEM_DISTANCE, ITEM_ODOM, ITEM_COUNT };
 const Item kItems[ITEM_COUNT] = {
     {"DRIVE", "joystick driving"},
     {"PID TUNING", "angular + lateral"},
@@ -225,6 +268,7 @@ const Item kItems[ITEM_COUNT] = {
     {"INTAKE TUNER", "combos on L1 / L2"},
     {"MOTOR TEMPS", "every motor, live"},
     {"DISTANCE", "sensor check + calibrate"},
+    {"ODOM SETUP", "pose, trackers, calibrate"},
 };
 const int kGridX0 = 15, kGridX1 = 465, kGridY0 = 58, kRowH = 48, kGap = 4, kCols = 3;
 
@@ -473,6 +517,7 @@ void driverMenuControl() {
                     case ITEM_LIFT: runTool("LIFT", liftTunerControl); break;
                     case ITEM_INTAKE: runTool("INTAKE", intakeTunerControl); break;
                     case ITEM_DISTANCE: runTool("DISTANCE", distanceDiagControl); break;
+                    case ITEM_ODOM: runTool("ODOM", odomSetupControl); break;
                     case ITEM_TEST: screen = Screen::TEST_CONFIRM; break;
                     case ITEM_TEMPS: screen = Screen::TEMPS; break;
                     }
