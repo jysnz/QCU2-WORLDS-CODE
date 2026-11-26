@@ -163,3 +163,6 @@ void liftTuningHandleLine(const char *line);
 void intakeTunerControl();
 // True while the tuner owns the brain screen.
 extern bool liftTunerActive;
+// Called by the laptop link task: while the laptop window is open, sends it the live lift angle and the
+// settings even when no tuner screen is open (driver control, menu).
+void liftTuningSendTelemetry();

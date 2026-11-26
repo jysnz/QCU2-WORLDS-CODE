@@ -3,7 +3,7 @@
 
 // --- Claw auto-grab ---------------------------------------------------------
 // When the distance sensor sees something inside the claw, close the claw and raise the lift -- once per
-// object, and only with the lift at 0. Header only and free of robot calls, so it can be tested on a PC.
+// object, and only with the lift in the pickup range. Header only and free of robot calls.
 //
 // The sensor's readings already include the -60 mm offset (distance_diag.hpp), so "0 to 10 mm" is an object
 // sitting in the claw.
@@ -18,7 +18,7 @@ struct ClawAutoGrab {
   //
   // It re-arms as soon as the reading has stayed outside 0..MAX_MM for REARM_AFTER_MS. (An empty claw reads
   // a few mm above MAX_MM, not "nothing", so waiting for a far reading would never re-arm it.)
-  bool update(int mm, bool liftAtZero, bool clawClosed, bool busy, uint32_t nowMs) {
+  bool update(int mm, bool liftInRange, bool clawClosed, bool busy, uint32_t nowMs) {
     bool inClaw = mm >= 0 && mm <= MAX_MM;
     if (!inClaw) {
       if (!outside_) {
@@ -34,7 +34,7 @@ struct ClawAutoGrab {
       return false;
     }
     if (!armed) return false;
-    if (!liftAtZero || busy) return false;  // keep waiting: it fires as soon as the lift is at 0
+    if (!liftInRange || busy) return false;
     armed = false;
     return true;
   }

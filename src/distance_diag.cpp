@@ -388,7 +388,7 @@ void distanceDiagControl() {
     char note[64] = "";
     std::uint32_t noteUntilMs = 0, lastDrawMs = 0;
     bool wasTouched = true; // a touch already down when the page opens is not a tap
-    ClawAutoGrab autoClaw;  // closes the claw when sensor 1 reads 0..10 mm (once per object)
+    ClawAutoGrab autoClaw;
 
     while (true) {
         if (driverMenuLeaveRequested()) return; // top-right corner held, or LEAVE from the laptop
@@ -447,8 +447,9 @@ void distanceDiagControl() {
                 noteUntilMs = now + 2000;
             }
         }
-        // Auto-claw: the reading (with its offset) is 0..10 mm -> the claw turns on. The lift is not touched here.
-        if (autoClaw.update(distanceReadMm(0), true, clawPistonExtended(), false, now)) {
+        updateLiftLimitSwitch();
+        // The diagnostic closes the claw in the pickup range without raising the lift.
+        if (autoClaw.update(distanceReadMm(0), liftInClawPickupRange(), clawPistonExtended(), false, now)) {
             setClawPiston(true);
             std::snprintf(note, sizeof(note), "In the claw (0-10 mm): claw ON");
             noteUntilMs = now + 3000;

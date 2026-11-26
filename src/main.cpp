@@ -41,9 +41,10 @@ pros::MotorGroup intake2({17, -16}, pros::MotorGears::green);
 pros::MotorGroup lift({14, -18}, pros::MotorGears::green);
 pros::Motor claw_arm(19);  // Y = forward, RIGHT = backward (see jawheadControl)
 
-// ADI ports for the two new pistons -- change the letters here if they are wired elsewhere.
+// ADI devices on the Brain.
 pros::adi::Pneumatics lift_arm_orientation('A', false);  // RIGHT toggles it
 pros::adi::Pneumatics claw_piston('B', false);
+pros::adi::DigitalIn lift_limit_switch('D');
 
 // What the IMU reads after the robot is turned a true 360 degrees (356.05 was measured on the debi
 // branch's robot; re-measure for this one). 360.0 = no correction.
@@ -87,10 +88,9 @@ void initialize() {
     lift.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
     // (No current limit set on the lift now -- add yours here: lift.set_current_limit_all(<mA>);)
-    // Lift position is counted from wherever it sits at startup, so power on
-    // with the lift fully down - that becomes 0.
+    // The bottom limit switch sets the encoder zero.
     lift.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
-    lift.tare_position_all();
+    startLiftLimitSwitchWatcher();
 
     claw_arm.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);  // holds its position when Y / RIGHT are released
     liftTuningLoad();  // lift levels / start position / motor functions from the SD card (or the built-in defaults)
@@ -130,6 +130,6 @@ void opcontrol() {
     jawheadControl();
 }
 void autonomous() {
-    homeLift(); // lowers the lift to the hard stop and calls that 0 (once per run; driver control reuses it)
+    homeLift();
     runAutonomous();
 }

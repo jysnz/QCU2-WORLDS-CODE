@@ -6,13 +6,15 @@
 //
 // LAPTOP LINK (tools/lift_tuner.py). Lines on the same USB cable `pros terminal`
 // uses, newline terminated:
+//   (sent on a tuner screen, and anywhere else while the laptop window is open: it sends LT PING)
 //   robot -> laptop  LTL|live,goalActive,sel,curLevel,comboRunning,saved   every 150 ms
 //                    LTC|startEn,start,limit|<combo>;..|<level>;..|<act>;..  every 1 s / on change
 //                      combo = name:<step>/<step>..   step = delay,dev,cmd,speed,dur
 //                      level = name:angle:comboIndex (-1 = none)
 //                      act   = angle,when,delay,dev,cmd,speed,dur,combo,button,mode
 //                              (combo -1 = use the single step; button 0 = none; mode 0 hold / 1 tap)
-//   laptop -> robot  LT BEGIN | LT START en deg | LT LIMIT deg | LT CLEAR
+//   laptop -> robot  LT PING (every 500 ms)
+//                    LT BEGIN | LT START en deg | LT LIMIT deg | LT CLEAR
 //                    LT COMBO name | LT STEP delay dev cmd speed dur  (to the last combo)
 //                    LT LEVEL angle name comboIndex
 //                    LT ACT angle when dev cmd speed dur [combo button mode] | LT APPLY
@@ -312,7 +314,7 @@ void liftTuningCancelTarget() {
 
 void liftTuningBeginDriver() {
     mtx.take();
-    if (cfg.startEnabled) lift.set_zero_position_all(cfg.startPosition);
+    if (cfg.startEnabled && !liftIsHomed()) lift.set_zero_position_all(cfg.startPosition);
     curLevel = -1;
     targetActive = false;
     combo.active = false;
@@ -326,17 +328,21 @@ void liftTuningBeginDriver() {
 static void serviceSlots(uint32_t nowMs) {
     for (int d = 0; d < LIFT_FIRST_PISTON; d++) {
         if (!slots[d].active) continue;
-        // 0 is the lift's only limit: a step that drives it down stops at the floor.
-        if (d == LIFT_DEV_LIFT && slots[d].velocity < 0 && liftPositionDeg() <= LIFT_FLOOR_DEG) {
-            slots[d].active = false;
-            motorFor(d)->move_velocity(0);
-            continue;
+        // Downward lift steps slow down near the bottom and end at the floor.
+        int velocity = slots[d].velocity;
+        if (d == LIFT_DEV_LIFT && velocity < 0) {
+            velocity = -liftDownRpm(-velocity);
+            if (velocity == 0) {
+                slots[d].active = false;
+                motorFor(d)->move_velocity(0);
+                continue;
+            }
         }
         if ((int32_t)(nowMs - slots[d].until) >= 0) {
             slots[d].active = false;
             motorFor(d)->move_velocity(0);
         } else {
-            motorFor(d)->move_velocity(slots[d].velocity);
+            motorFor(d)->move_velocity(velocity);
         }
     }
 }
@@ -553,6 +559,8 @@ Requests req;
 char statusMsg[40] = "";
 uint32_t statusUntilMs = 0;
 int savedState = 0; // 0 none, 1 saved, -1 failed
+uint32_t laptopSeenMs = 0; // when the last "LT ..." line arrived (0 = never)
+const uint32_t LAPTOP_TIMEOUT_MS = 2000;
 
 void setStatus(const char *msg) {
     snprintf(statusMsg, sizeof(statusMsg), "%s", msg);
@@ -568,6 +576,7 @@ void handleLine(const char *line) {
     double x;
     int i, j, k;
     mtx.take();
+    laptopSeenMs = pros::millis();
     if (strncmp(line, "LT BEGIN", 8) == 0) {
         pending = cfg;
     } else if (strncmp(line, "LT APPLY", 8) == 0) {
@@ -619,7 +628,9 @@ void put(char *buf, size_t n, size_t &o, const char *fmt, ...) {
 }
 
 void sendConfig(const LiftTuning &t) {
+    static pros::Mutex bufMtx; // the tuner loop and the laptop link task can both get here
     static char buf[2200];
+    bufMtx.take();
     size_t o = 0;
     put(buf, sizeof(buf), o, "LTC|%d,%.2f,%.2f|", t.startEnabled ? 1 : 0, t.startPosition, t.forwardLimit);
     for (int i = 0; i < t.comboCount; i++) {
@@ -643,6 +654,7 @@ void sendConfig(const LiftTuning &t) {
     for (int i = 0; i < t.intakeCount; i++)
         put(buf, sizeof(buf), o, "%s%d,%d,%d", i ? ";" : "", t.intake[i].button, t.intake[i].trigger, t.intake[i].combo);
     printf("%s\n", buf);
+    bufMtx.give();
 }
 
 // -- Brain screen --
@@ -695,7 +707,7 @@ void drawScreen(const LiftTuning &t, double live, int sel, bool goalActive, bool
     }
 
     bool showMsg = pros::millis() < statusUntilMs;
-    frame.text(FONT_SMALL, 10, 222, showMsg ? statusMsg : "R1/R2 lift  X/A claw arm  L1/L2 intake  B claw  RIGHT orient  (tune on laptop)", showMsg ? C_OK : C_DIM);
+    frame.text(FONT_SMALL, 10, 222, showMsg ? statusMsg : "Sticks drive  R1/R2 lift  X/A arm  L1/L2 intake  B claw  RIGHT orient", showMsg ? C_OK : C_DIM);
     frame.present();
 }
 
@@ -727,7 +739,7 @@ void drawIntakeScreen(const LiftTuning &t, int sel, bool comboRunning) {
         frame.text(FONT_SMALL, rx1 - 12, y0 + 8, hasCombo ? t.combos[f.combo].name : "no combo", hasCombo ? C_OK : C_DIM, Canvas::RIGHT);
     }
     bool showMsg = pros::millis() < statusUntilMs;
-    frame.text(FONT_SMALL, 10, 222, showMsg ? statusMsg : "L1/L2 intake, R1/R2 lift, X/A claw, B/RIGHT pistons  (tune on laptop)", showMsg ? C_OK : C_DIM);
+    frame.text(FONT_SMALL, 10, 222, showMsg ? statusMsg : "Sticks drive, L1/L2 intake, R1/R2 lift, X/A arm, B/RIGHT pistons", showMsg ? C_OK : C_DIM);
     frame.present();
 }
 
@@ -742,15 +754,17 @@ static void runTuner(int page) {
     bool goalActive = false;
     double goalAngle = 0;
     bool liftDrivenByHand = false, clawDrivenByHand = false, intakeDrivenByHand = false;
+    bool driveDrivenByHand = false;
     bool prevPistonB = false, prevPistonRight = false;
     uint32_t lastStateMs = 0, lastConfigMs = 0, lastDrawMs = 0, lastPrintMs = 0;
     int printRow = 0;
-    liftTuningBeginDriver(); // fresh executor state; the encoder stays as it is (the start position is not applied)
+    liftTuningBeginDriver(); // fresh executor state
     setStatus("Tuner ready");
 
     while (true) {
         if (driverMenuLeaveRequested()) { // top-right corner of the screen held: back to the driver menu
             lift.move_velocity(0);
+            driveByHand(0, 0);
             mtx.take();
             combo.active = false;
             targetActive = false;
@@ -765,7 +779,8 @@ static void runTuner(int page) {
             return;
         }
         uint32_t nowMs = pros::millis();
-        double live = lift.get_position();
+        updateLiftLimitSwitch();
+        double live = liftPositionDeg();
 
         // -- Laptop requests --
         mtx.take();
@@ -824,23 +839,40 @@ static void runTuner(int page) {
         }
         if (goalActive && std::fabs(live - goalAngle) < 3.0) goalActive = false;
 
-        // Controller: the mechanisms drive as in driver control (no drivetrain); the tuner itself is run from the laptop
-        // window (tools/lift_tuner.py). R1/R2 lift up/down (down stops at 0), X/A claw arm, L1/L2 intake/outtake,
-        // B claw piston, RIGHT lift-arm orientation.
+        // Controller: the robot drives as in driver control; the tuner itself is run from the laptop window
+        // (tools/lift_tuner.py). Left stick forward/back, right stick turn, R1/R2 lift up/down (down stops at 0
+        // or the switch), X/A claw arm, L1/L2 intake/outtake, B claw piston, RIGHT lift-arm orientation.
         {
             auto held = [](pros::controller_digital_e_t b) { return controller.get_digital(b); };
             bool r1 = held(pros::E_CONTROLLER_DIGITAL_R1), r2 = held(pros::E_CONTROLLER_DIGITAL_R2);
             bool bx = held(pros::E_CONTROLLER_DIGITAL_X), ba = held(pros::E_CONTROLLER_DIGITAL_A);
             bool l1 = held(pros::E_CONTROLLER_DIGITAL_L1), l2 = held(pros::E_CONTROLLER_DIGITAL_L2);
             bool pb = held(pros::E_CONTROLLER_DIGITAL_B), pr = held(pros::E_CONTROLLER_DIGITAL_RIGHT);
+            // Arcade drive. Idle sticks are left alone so a combo's drive step is not cancelled.
+            int move = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+            int turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+            if (std::abs(move) <= DRIVE_STICK_DEADBAND) move = 0;
+            if (std::abs(turn) <= DRIVE_STICK_DEADBAND) turn = 0;
+            if (move != 0 || turn != 0) {
+                driveByHand(std::clamp(move + turn, -127, 127), std::clamp(move - turn, -127, 127));
+                driveDrivenByHand = true;
+            } else if (driveDrivenByHand) {
+                driveDrivenByHand = false;
+                driveByHand(0, 0);
+            }
             if ((r1 || r2) && !liftTuningManualLiftBlocked()) {
                 goalActive = false;
                 liftTuningCancelTarget();
-                lift.move_velocity(r1 ? 200 : (live <= LIFT_FLOOR_DEG ? 0 : -100));
+                const int downRpm = r1 ? 0 : liftDownRpm(100);
+                if (r1) lift.move_velocity(200);
+                else if (downRpm > 0) lift.move_velocity(-downRpm);
+                else stopLift();
                 liftDrivenByHand = true;
             } else if (liftDrivenByHand) {
                 liftDrivenByHand = false;
-                lift.move_velocity(0);
+                stopLift();
+            } else if (liftPositionDeg() < LIFT_FLOOR_DEG - 1.0 && !liftTuningManualLiftBlocked()) {
+                stopLift(); // sagged below 0 while idle
             }
             if (bx || ba) { claw_arm.move_velocity(bx ? 100 : -100); clawDrivenByHand = true; }
             else if (clawDrivenByHand) { clawDrivenByHand = false; claw_arm.move_velocity(0); }
@@ -894,5 +926,24 @@ static void runTuner(int page) {
 }
 
 void liftTuningHandleLine(const char *line) { handleLine(line); }
+
+void liftTuningSendTelemetry() {
+    if (liftTunerActive) return; // the tuner loop sends its own
+    static uint32_t lastConfigMs = 0;
+    static LiftTuning snap; // static: too big to put on the link task's stack
+    const uint32_t nowMs = pros::millis();
+    mtx.take();
+    const bool laptopOpen = laptopSeenMs != 0 && nowMs - laptopSeenMs < LAPTOP_TIMEOUT_MS;
+    const bool goalActive = targetActive, comboRunning = combo.active;
+    const int level = curLevel;
+    snap = cfg;
+    mtx.give();
+    if (!laptopOpen) return;
+    printf("LTL|%.2f,%d,0,%d,%d,%d\n", liftPositionDeg(), goalActive ? 1 : 0, level, comboRunning ? 1 : 0, savedState);
+    if (nowMs - lastConfigMs >= 1000) {
+        lastConfigMs = nowMs;
+        sendConfig(snap);
+    }
+}
 void liftTunerControl() { runTuner(0); }
 void intakeTunerControl() { runTuner(1); }

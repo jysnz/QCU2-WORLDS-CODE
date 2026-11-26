@@ -19,6 +19,7 @@ extern pros::Motor claw_arm; // port 19: Y = forward, RIGHT = backward
 // ─── Pneumatics ──────────────────────────────────────────────────────────────
 extern pros::adi::Pneumatics lift_arm_orientation; // RIGHT toggles it
 extern pros::adi::Pneumatics claw_piston;          // B toggles it (the claw is pneumatic only)
+extern pros::adi::DigitalIn lift_limit_switch;     // bottom of lift travel
 
 // ─── Sensors ─────────────────────────────────────────────────────────────────
 // IMU whose readings are scaled by 360 / scale, so a turn that reads `scale` degrees counts

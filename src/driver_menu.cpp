@@ -179,7 +179,10 @@ static void linkWriter(void *) {
         std::string s = linkState;
         int ms = linkIntervalMs;
         linkMtx.give();
-        if (!fieldctl::vexnet()) printf("%s\n", s.c_str());
+        if (!fieldctl::vexnet()) {
+            printf("%s\n", s.c_str());
+            liftTuningSendTelemetry(); // only prints while the lift tuner window is open
+        }
         pros::delay(ms);
     }
 }
@@ -263,7 +266,7 @@ const Item kItems[ITEM_COUNT] = {
     {"DRIVE", "joystick driving"},
     {"PID TUNING", "angular + lateral"},
     {"PATH PLANNER", "drive to a point"},
-    {"TEST MOTORS", "does each one spin"},
+    {"TEST MOTORS", "drivetrain, 2 s each"},
     {"LIFT TUNER", "levels, combos, angles"},
     {"INTAKE TUNER", "combos on L1 / L2"},
     {"MOTOR TEMPS", "every motor, live"},
@@ -371,9 +374,14 @@ struct TestEntry {
     int port;
     bool reversed;
     int state; // 0 waiting, 1 spinning, 2 answered, 3 no answer
+    int rpm;       // speed measured during the spin
+    int elapsedMs; // how long it has been spinning
 };
 std::vector<TestEntry> tests;
 bool testFinished = false, testAborted = false;
+const int kTestSpinMs = 2000;  // each motor turns this long
+const int kTestSpinUpMs = 500; // speed samples before this are ignored
+const int kTestPauseMs = 300;  // lets it stop before the next one starts
 
 void addTests(const char *prefix, const pros::AbstractMotor &motors) {
     std::vector<std::int8_t> ports = motors.get_port_all();
@@ -387,11 +395,11 @@ void addTests(const char *prefix, const pros::AbstractMotor &motors) {
 }
 
 void drawConfirm() {
-    header("TEST MOTORS", "spins every motor briefly", true);
+    header("TEST MOTORS", "drivetrain only", true);
     frame.text(FONT_MEDIUM, 20, 70, "Put the robot on blocks first.", WHITE);
-    frame.text(FONT_SMALL, 20, 98, "Every motor turns for about a third of a second, one at a time.", GRAY);
-    frame.text(FONT_SMALL, 20, 116, "You will see which ones answer. The direction is set by the sign", GRAY);
-    frame.text(FONT_SMALL, 20, 134, "of the port in main.cpp (minus = reversed).", GRAY);
+    frame.text(FONT_SMALL, 20, 98, "The drive motors turn one at a time, 2 seconds each.", GRAY);
+    frame.text(FONT_SMALL, 20, 116, "Every wheel should roll forward. If one rolls backward, flip", GRAY);
+    frame.text(FONT_SMALL, 20, 134, "the sign of its port in main.cpp. BACK stops the test.", GRAY);
     frame.card(150, 160, 330, 205, 8, CARD, CYAN);
     frame.text(FONT_MEDIUM, 240, 172, "START", GREEN, Canvas::CENTER);
     frame.present();
@@ -401,69 +409,104 @@ const Rect kStart = {150, 160, 330, 205};
 
 void drawTest() {
     header("TEST MOTORS", testFinished ? "done" : "running...", true);
-    const int cols = 3, rowsPerCol = 5, left = 15, gap = 8, tileH = 28, top = 58;
-    int tileW = (465 - left - (cols - 1) * gap) / cols;
-    // Column 1: left drive. Column 2: right drive. Column 3: everything else.
+    const int left = 15, gap = 8, top = 71, tileH = 25, pitch = 29;
+    const int tileW = (465 - left - gap) / 2;
+    const int perSide = (int)left_motor_group.size(); // column 1: left drive, column 2: right drive
+    frame.text(FONT_SMALL, left, 54, "LEFT DRIVE", CYAN);
+    frame.text(FONT_SMALL, left + tileW + gap, 54, "RIGHT DRIVE", ORANGE);
     int answered = 0, failed = 0;
     for (size_t i = 0; i < tests.size(); i++) {
         const TestEntry &e = tests[i];
-        int col = (int)i / rowsPerCol, row = (int)i % rowsPerCol;
-        int x = left + col * (tileW + gap), y = top + row * (tileH + 5);
+        int col = (int)i < perSide ? 0 : 1, row = (int)i - col * perSide;
+        int x = left + col * (tileW + gap), y = top + row * pitch;
         std::uint32_t edge = e.state == 1 ? CYAN : (e.state == 3 ? RED : AXIS);
         frame.card(x, y, x + tileW, y + tileH, 5, CARD, edge);
         char name[24];
         snprintf(name, sizeof(name), "%s  P%d%s", e.label, e.port, e.reversed ? " rev" : "");
-        frame.text(FONT_SMALL, x + 8, y + 7, name, WHITE);
-        const char *status = e.state == 1 ? "..." : e.state == 2 ? "OK" : e.state == 3 ? "NO ANSWER" : "";
+        frame.text(FONT_SMALL, x + 8, y + 5, name, WHITE);
+        char status[24] = "";
+        if (e.state == 1) snprintf(status, sizeof(status), "%.1f s  %d rpm", (kTestSpinMs - e.elapsedMs) / 1000.0, e.rpm);
+        else if (e.state == 2) snprintf(status, sizeof(status), "OK  %d rpm", e.rpm);
+        else if (e.state == 3) snprintf(status, sizeof(status), "NO ANSWER");
         std::uint32_t sc = e.state == 3 ? RED : (e.state == 2 ? GREEN : CYAN);
-        frame.text(FONT_SMALL, x + tileW - 8, y + 7, status, sc, Canvas::RIGHT);
+        frame.text(FONT_SMALL, x + tileW - 8, y + 5, status, sc, Canvas::RIGHT);
+        if (e.state == 1) { // progress through the 2 seconds
+            int w = (tileW - 16) * std::clamp(e.elapsedMs, 0, kTestSpinMs) / kTestSpinMs;
+            frame.fillRect(x + 8, y + tileH - 4, x + 8 + w, y + tileH - 2, CYAN);
+        }
         answered += e.state == 2;
         failed += e.state == 3;
     }
     char msg[64];
     if (testAborted) snprintf(msg, sizeof(msg), "stopped. %d answered, %d did not.", answered, failed);
     else if (testFinished) snprintf(msg, sizeof(msg), "%d of %d motors answered.%s", answered, (int)tests.size(), failed ? "  Check the red ones." : "");
-    else snprintf(msg, sizeof(msg), "testing %d of %d...", answered + failed + 1, (int)tests.size());
+    else snprintf(msg, sizeof(msg), "testing %d of %d...  wheel should roll forward", answered + failed + 1, (int)tests.size());
     footer(msg, failed ? RED : (testFinished ? GREEN : CYAN));
     frame.present();
     std::string st = sf("RUI|TEST_RUN|%d|%d|", testFinished ? 1 : 0, testAborted ? 1 : 0);
-    for (size_t i = 0; i < tests.size(); i++)
-        st += sf("%s%s,%d,%d,%d", i ? ";" : "", tests[i].label, tests[i].port, tests[i].reversed ? 1 : 0, tests[i].state);
+    for (size_t i = 0; i < tests.size(); i++) // label,port,rev,state,rpm,elapsedMs
+        st += sf("%s%s,%d,%d,%d,%d,%d", i ? ";" : "", tests[i].label, tests[i].port, tests[i].reversed ? 1 : 0,
+                 tests[i].state, tests[i].rpm, tests[i].elapsedMs);
     publish(st);
 }
 
-// Spins each motor on a fresh handle for a moment and sees whether it answered.
+// Spins each drive motor on its own for kTestSpinMs and sees whether it answered. BACK stops it at once.
 void runMotorTest() {
     tests.clear();
     addTests("L", left_motor_group);
     addTests("R", right_motor_group);
-    addTests("Lift", lift);
-    addTests("In", intake2);
-    addTests("Arm", claw_arm);
     testFinished = testAborted = false;
     bool wasTouched = true;
-    for (TestEntry &e : tests) {
+    auto stopRequested = [&] {
         pros::screen_touch_status_s_t t = pros::screen::touch_status();
         bool down = t.touch_status != pros::E_TOUCH_RELEASED;
         int rx, ry;
         bool remoteBack = takeLinkTouch(rx, ry) && inRect(kBack, rx, ry); // BACK clicked on the laptop
-        if ((down && !wasTouched && inRect(kBack, t.x, t.y)) || remoteBack) {
-            testAborted = true;
+        bool tapped = down && !wasTouched && inRect(kBack, t.x, t.y);
+        wasTouched = down;
+        return tapped || remoteBack;
+    };
+    for (TestEntry &e : tests) {
+        e.state = 1;
+        // The configured sign is kept, so positive voltage should roll every wheel forward.
+        pros::Motor m(e.reversed ? -e.port : e.port);
+        m.move_voltage(6000);
+        double sum = 0;
+        int samples = 0;
+        const std::uint32_t start = pros::millis();
+        std::uint32_t lastDrawMs = 0;
+        while (!testAborted && (int)(pros::millis() - start) < kTestSpinMs) {
+            e.elapsedMs = (int)(pros::millis() - start);
+            const double v = m.get_actual_velocity();
+            const bool valid = std::isfinite(v) && std::fabs(v) < 1000.0; // an unplugged motor reads a huge number
+            e.rpm = valid ? (int)std::lround(std::fabs(v)) : 0;
+            if (valid && e.elapsedMs >= kTestSpinUpMs) {
+                sum += std::fabs(v);
+                samples++;
+            }
+            if (!lastDrawMs || pros::millis() - lastDrawMs >= 100) {
+                lastDrawMs = pros::millis();
+                drawTest();
+            }
+            testAborted = stopRequested();
+            pros::delay(20);
+        }
+        m.move_voltage(0);
+        if (testAborted) {
+            e.state = 0;
+            e.rpm = 0;
             break;
         }
-        wasTouched = down;
-        e.state = 1;
+        const double average = samples ? sum / samples : 0.0;
+        e.rpm = (int)std::lround(average);
+        e.state = average > 5.0 ? 2 : 3;
         drawTest();
-        pros::Motor m(e.port);
-        m.move_voltage(6000);
-        pros::delay(300);
-        double v = m.get_actual_velocity();
-        m.move_voltage(0);
-        pros::delay(200);
-        e.state = std::isfinite(v) && std::fabs(v) > 1.0 ? 2 : 3;
+        for (int waited = 0; waited < kTestPauseMs && !testAborted; waited += 20) {
+            testAborted = stopRequested();
+            pros::delay(20);
+        }
+        if (testAborted) break;
     }
-    for (TestEntry &e : tests)
-        if (e.state == 1) e.state = 0;
     testFinished = true;
     drawTest();
 }

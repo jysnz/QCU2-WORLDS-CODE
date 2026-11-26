@@ -19,8 +19,8 @@
 //   INTAKE TUNER  its own screen for the intake buttons: pick which combo plays when
 //                 L1 / L2 is pressed or released. Also talks to tools/lift_tuner.py
 //                 (its Intake tab).
-//   TEST MOTORS   spins every motor briefly, one at a time, and reports which
-//                 ones answered. Put the robot on blocks first.
+//   TEST MOTORS   spins each drivetrain motor for 2 s, one at a time, and reports which
+//                 ones answered and how fast. Put the robot on blocks first.
 //   MOTOR TEMPS   live temperature of every motor.
 //   DISTANCE      checks the VL53L0X distance sensor (see distance_diag.hpp): is it working, what does
 //                 it read, and a calibration offset.

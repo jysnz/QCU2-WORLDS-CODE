@@ -1218,7 +1218,8 @@ class StepList(tk.Frame):
         self.update_state()
 
     def use_live(self):
-        self.v_angle.set(f"{self.live_angle():.1f}")
+        if self.app.has_live():
+            self.v_angle.set(f"{self.live_angle():.1f}")
 
     def refresh_cmds(self):
         dev = DEVICES.index(self.v_dev.get())
@@ -1532,6 +1533,8 @@ class App(tk.Tk):
         self.loaded_from_robot = False
         self.dirty = False
         self.live = 0.0
+        self.t_live = 0.0        # when the robot last sent the lift angle (0 = never)
+        self.t_ping = 0.0
         self.moving = False
         self.combo_running = False
         self.curLevel = -1
@@ -1698,7 +1701,8 @@ class App(tk.Tk):
                         command=self.on_start_edit, style="App.TCheckbutton").pack(side="left")
         self.v_start = tk.StringVar()
         Field(r, self.v_start, 8, unit="deg").pack(side="left", padx=(S(20), S(8)))
-        Btn(r, "Use live", lambda: (self.v_start.set(f"{self.live:.1f}"), self.v_startEn.set(True), self.on_start_edit()),
+        Btn(r, "Use live", lambda: self.has_live() and (
+                self.v_start.set(f"{self.live:.1f}"), self.v_startEn.set(True), self.on_start_edit()),
             compact=True, tip="Copies the lift's current angle into this box and turns the start position on."
             ).pack(side="left")
         rule(wrap, (S(22), S(22)))
@@ -1708,7 +1712,8 @@ class App(tk.Tk):
         r2.pack(fill="x")
         self.v_limit = tk.StringVar()
         Field(r2, self.v_limit, 8, unit="deg").pack(side="left")
-        Btn(r2, "Use live", lambda: (self.v_limit.set(f"{self.live:.1f}"), self.on_start_edit()), compact=True,
+        Btn(r2, "Use live", lambda: self.has_live() and (
+                self.v_limit.set(f"{self.live:.1f}"), self.on_start_edit()), compact=True,
             tip="Copies the lift's current angle into this box.").pack(side="left", padx=(S(8), 0))
         for v in (self.v_start, self.v_limit):
             v.trace_add("write", lambda *a: self.on_start_edit())
@@ -1808,7 +1813,8 @@ class App(tk.Tk):
         ar = tk.Frame(a, bg=C.base)
         ar.pack(anchor="w")
         Field(ar, self.v_langle, 7, unit="deg").pack(side="left")
-        Btn(ar, "Use live", lambda: (self.v_langle.set(f"{self.live:.1f}"), self.on_level_edit()), compact=True,
+        Btn(ar, "Use live", lambda: self.has_live() and (
+                self.v_langle.set(f"{self.live:.1f}"), self.on_level_edit()), compact=True,
             tip="Copies the lift's current angle into this level.").pack(side="left", padx=(S(8), 0))
         ar2 = tk.Frame(det.body, bg=C.base)
         ar2.pack(fill="x", pady=(S(12), 0))
@@ -2122,6 +2128,14 @@ class App(tk.Tk):
         self.btnApply.configure(variant="primary" if self.dirty else "secondary")
 
     # ── robot ──
+    def has_live(self):
+        """True if the angle on screen is current. Warns otherwise, so a stale 0.0 is never copied."""
+        if self.link and time.time() - self.t_live < 1.5:
+            return True
+        self.notify("No lift angle from the robot. Check that the program with this update is uploaded and running.",
+                    "warning")
+        return False
+
     def connect(self):
         if self.link:
             self.link.close()
@@ -2158,6 +2172,7 @@ class App(tk.Tk):
                 self.notify(str(e), "danger")
                 return
         self.loaded_from_robot = False
+        self.t_live = self.t_ping = 0.0
         self.update_status()
 
     def send(self, lines):
@@ -2280,17 +2295,25 @@ class App(tk.Tk):
                 self.link = None
                 self.update_status()
             else:
+                now = time.time()
+                if now - self.t_ping >= 0.5:   # tells the robot this window is open, so it sends the lift angle
+                    self.t_ping = now
+                    self.link.send(["LT PING"])
                 try:
                     while True:
                         self.on_line(self.link.lines.get_nowait())
                 except queue.Empty:
                     pass
+                if now - self.t_live >= 1.5:
+                    self.lblLive.configure(fg=C.muted)
+                    self.lblMoving.configure(text="No data from the robot")
         self.after(60, self.poll)
 
     def on_line(self, line):
         if line.startswith("LTL|"):
             s = parse_ltl(line)
             if s:
+                self.t_live = time.time()
                 prevLevel = self.curLevel
                 self.live, self.moving, self.combo_running, self.curLevel = s["live"], s["moving"], s["combo"], s["level"]
                 if prevLevel != self.curLevel and self.model["levels"]:

@@ -69,7 +69,7 @@ START = (150, 160, 330, 205)
 TOOL_NAMES = {"PID": "PID TUNING", "PLANNER": "PATH PLANNER", "LIFT": "LIFT TUNER", "INTAKE": "INTAKE TUNER",
               "DISTANCE": "DISTANCE SENSOR", "ODOM": "ODOM SETUP"}
 HOME_ITEMS = [("DRIVE", "joystick driving"), ("PID TUNING", "angular + lateral"), ("PATH PLANNER", "drive to a point"),
-              ("TEST MOTORS", "does each one spin"), ("LIFT TUNER", "levels, combos, angles"),
+              ("TEST MOTORS", "drivetrain, 2 s each"), ("LIFT TUNER", "levels, combos, angles"),
               ("INTAKE TUNER", "combos on L1 / L2"), ("MOTOR TEMPS", "every motor, live"),
               ("DISTANCE", "sensor check + calibrate")]
 
@@ -114,8 +114,8 @@ def parse_rui(line):
             done, aborted, rows = (raw.split("|", 2) + ["", ""])[:3]
             tests = []
             for t in filter(None, rows.split(";")):
-                label, port, rev, state = t.split(",")
-                tests.append((label, int(port), rev == "1", int(state)))
+                label, port, rev, state, rpm, ms = t.split(",")
+                tests.append((label, int(port), rev == "1", int(state), int(rpm), int(ms)))
             return screen, (done == "1", aborted == "1", tests)
         if screen == "TOOL":
             return screen, raw.split("|")[0]
@@ -276,28 +276,34 @@ class Mirror(tk.Canvas):
                     RED if hottest >= HOT_C else (ORANGE if hottest >= WARM_C else CYAN))
 
     def draw_test_confirm(self, data):
-        self.header("TEST MOTORS", "spins every motor briefly", True)
+        self.header("TEST MOTORS", "drivetrain only", True)
         self.text(20, 68, "Put the robot on blocks first.", WHITE, 19)
-        self.text(20, 98, "Every motor turns for about a third of a second, one at a time.", GRAY, 12)
-        self.text(20, 116, "You will see which ones answer. The direction is set by the sign", GRAY, 12)
-        self.text(20, 134, "of the port in main.cpp (minus = reversed).", GRAY, 12)
+        self.text(20, 98, "The drive motors turn one at a time, 2 seconds each.", GRAY, 12)
+        self.text(20, 116, "Every wheel should roll forward. If one rolls backward, flip", GRAY, 12)
+        self.text(20, 134, "the sign of its port in main.cpp. BACK stops the test.", GRAY, 12)
         self.rrect(*START, 8, CARD, CYAN)
         self.text(240, 172, "START", GREEN, 19, "n")
 
     def draw_test_run(self, data):
         done, aborted, tests = data
         self.header("TEST MOTORS", "done" if done else "running...", True)
-        cols, rows_per_col, left, gap, tile_h, top = 3, 5, 15, 8, 28, 58
-        tile_w = (465 - left - (cols - 1) * gap) // cols
+        left, gap, top, tile_h, pitch = 15, 8, 71, 25, 29
+        tile_w = (465 - left - gap) // 2
+        per_side = sum(1 for t in tests if t[0].startswith("L"))   # column 1: left drive, column 2: right
+        self.text(left, 54, "LEFT DRIVE", CYAN, 12)
+        self.text(left + tile_w + gap, 54, "RIGHT DRIVE", ORANGE, 12)
         answered = failed = 0
-        for i, (label, port, rev, state) in enumerate(tests):
-            col, row = i // rows_per_col, i % rows_per_col
-            x, y = left + col * (tile_w + gap), top + row * (tile_h + 5)
+        for i, (label, port, rev, state, rpm, ms) in enumerate(tests):
+            col = 0 if i < per_side else 1
+            x, y = left + col * (tile_w + gap), top + (i - col * per_side) * pitch
             edge = CYAN if state == 1 else (RED if state == 3 else AXIS)
             self.rrect(x, y, x + tile_w, y + tile_h, 5, CARD, edge)
-            self.text(x + 8, y + 7, f"{label}  P{port}{' rev' if rev else ''}", WHITE, 12)
-            status = {1: "...", 2: "OK", 3: "NO ANSWER"}.get(state, "")
-            self.text(x + tile_w - 8, y + 7, status, RED if state == 3 else (GREEN if state == 2 else CYAN), 12, "ne")
+            self.text(x + 8, y + 5, f"{label}  P{port}{' rev' if rev else ''}", WHITE, 12)
+            status = {1: f"{max(0, 2000 - ms) / 1000:.1f} s  {rpm} rpm", 2: f"OK  {rpm} rpm",
+                      3: "NO ANSWER"}.get(state, "")
+            self.text(x + tile_w - 8, y + 5, status, RED if state == 3 else (GREEN if state == 2 else CYAN), 12, "ne")
+            if state == 1:
+                self.rect(x + 8, y + tile_h - 4, x + 8 + (tile_w - 16) * min(ms, 2000) / 2000, y + tile_h - 2, CYAN)
             answered += state == 2
             failed += state == 3
         if aborted:
@@ -305,7 +311,7 @@ class Mirror(tk.Canvas):
         elif done:
             msg = f"{answered} of {len(tests)} motors answered." + ("  Check the red ones." if failed else "")
         else:
-            msg = f"testing {answered + failed + 1} of {len(tests)}..."
+            msg = f"testing {answered + failed + 1} of {len(tests)}...  wheel should roll forward"
         self.footer(msg, RED if failed else (GREEN if done else CYAN))
 
     def draw_tool(self, name):
@@ -437,8 +443,8 @@ class FakeRobot:
         self.t_state = 0.0
         self.t_test = None
         self.tests = [(f"{p}{i + 1}", port, rev, 0) for p, ports in
-                      (("L", [-8, 9, 10, -11, 12]), ("R", [-3, 4, -5, 6, -7]), ("Lift", [14, -18]), ("In", [17, -16]),
-                       ("Arm", [19])) for i, port, rev in ((i, abs(x), x < 0) for i, x in enumerate(ports))]
+                      (("L", [-8, 9, 10, -11, 12]), ("R", [-3, 4, -5, 6, -7]))
+                      for i, port, rev in ((i, abs(x), x < 0) for i, x in enumerate(ports))]
 
     def send(self, lines):
         for line in lines:
@@ -580,12 +586,15 @@ class FakeRobot:
         if s == "TEST_CONFIRM":
             return "RUI|TEST_CONFIRM|"
         if s == "TEST_RUN":
-            step = int((time.time() - self.t_test) / 0.5)
+            elapsed = time.time() - self.t_test
+            step = int(elapsed / 2.3)   # 2 s spinning + a short pause, like the brain
+            ms = min(2000, int((elapsed - step * 2.3) * 1000))
             done = step >= len(self.tests)
             rows = []
             for i, (label, port, rev, _) in enumerate(self.tests):
                 state = 0 if i > step else (1 if i == step and not done else (3 if label == "R3" else 2))
-                rows.append(f"{label},{port},{1 if rev else 0},{state}")
+                rpm = 140 if state in (1, 2) else 0
+                rows.append(f"{label},{port},{1 if rev else 0},{state},{rpm},{ms if state == 1 else 0}")
             return f"RUI|TEST_RUN|{1 if done else 0}|0|" + ";".join(rows)
         if s == "TOOL":
             return f"RUI|TOOL|{self.tool}|"
